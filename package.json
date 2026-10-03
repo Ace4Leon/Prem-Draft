@@ -1,0 +1,12 @@
+{
+  "name": "premier-league-all-time-auction-draft",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real-time Premier League all-time auction draft game",
+  "main": "server.js",
+  "scripts": {"start":"node server.js"},
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}
