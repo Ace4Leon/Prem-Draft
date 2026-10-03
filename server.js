@@ -50,70 +50,139 @@ function roomPublic(room){
   return {
     code: room.code, hostId: room.hostId, phase: room.phase,
     managers: [...room.managers.values()].map(managerPublic),
-    current: room.current ? {player: room.current.player, bid: room.current.bid, bidderId: room.current.bidderId, timeLeft: room.current.timeLeft, mandatoryIds: room.current.mandatoryIds} : null,
+    current: room.current ? {player: room.current.player, bid: room.current.bid, bidderId: room.current.bidderId, timeLeft: room.current.timeLeft, mandatoryIds: room.current.mandatoryIds, bidPosition: room.current.bidPosition} : null,
     auctionIndex: room.auctionIndex, poolSize: room.pool.length,
     winner: room.winner || null
   };
 }
 function openSlots(m){
   if(!m.formation) return [];
-  const required = [...FORMATIONS[m.formation]];
-  const used = Array(required.length).fill(false);
+  const remaining = [...FORMATIONS[m.formation]];
   for(const p of m.squad){
-    const idx = required.findIndex((slot,i)=>!used[i] && p.positions.includes(slot));
-    if(idx>=0) used[idx]=true;
+    const assigned = p.assignedPosition || p.positions?.[0];
+    const idx = remaining.indexOf(assigned);
+    if(idx >= 0) remaining.splice(idx, 1);
   }
-  return required.filter((_,i)=>!used[i]);
+  return remaining;
 }
-function playerFitsManager(player,m){ return openSlots(m).some(slot=>player.positions.includes(slot)); }
+function positionChoices(player,m){
+  const open = openSlots(m);
+  // positions are stored primary-first in the database, so this always
+  // prefers the player's real/primary position before secondary positions.
+  return player.positions.filter(pos => open.includes(pos));
+}
+function playerFitsManager(player,m){ return positionChoices(player,m).length > 0; }
 function maxBid(m){
   const slots = openSlots(m).length;
   return Math.max(0, m.budget - Math.max(0, slots-1)*MIN_BID);
 }
-function totalDemandForPosition(room, pos){
-  let n=0;
-  for(const m of room.managers.values()) n += openSlots(m).filter(s=>s===pos).length;
-  return n;
-}
-function remainingEligible(room,pos){
-  const rest = room.pool.slice(room.auctionIndex);
-  return rest.filter(p=>p.positions.includes(pos)).length + (room.current && room.current.player.positions.includes(pos) ? 1 : 0);
-}
-function computeMandatory(room, player){
-  const ids=[];
+function slotEntries(room){
+  const out=[];
   for(const m of room.managers.values()){
-    const slots=openSlots(m);
-    let must=false;
-    for(const pos of player.positions){
-      if(slots.includes(pos)){
-        const demand=totalDemandForPosition(room,pos);
-        const supply=remainingEligible(room,pos);
-        if(supply<=demand) must=true;
+    openSlots(m).forEach((pos,i)=>out.push({key:`${m.id}:${pos}:${i}`,managerId:m.id,pos}));
+  }
+  return out;
+}
+function canMatchPlayersToSlots(players, slots){
+  if(slots.length===0) return true;
+  if(players.length < slots.length) return false;
+  const match = new Map(); // player id -> slot index
+  function dfs(slotIndex, seen){
+    const slot=slots[slotIndex];
+    for(const p of players){
+      if(seen.has(p.id) || !p.positions.includes(slot.pos)) continue;
+      seen.add(p.id);
+      if(!match.has(p.id) || dfs(match.get(p.id), seen)){
+        match.set(p.id, slotIndex);
+        return true;
       }
     }
-    if(must && maxBid(m)>=MIN_BID) ids.push(m.id);
+    return false;
   }
-  return ids;
+  for(let i=0;i<slots.length;i++) if(!dfs(i,new Set())) return false;
+  return true;
 }
+function slotsAfterAssignment(room, managerId, pos){
+  const slots=slotEntries(room);
+  const idx=slots.findIndex(s=>s.managerId===managerId && s.pos===pos);
+  if(idx<0) return null;
+  slots.splice(idx,1);
+  return slots;
+}
+function futurePlayers(room){ return room.pool.slice(room.auctionIndex); }
+function feasibleAssignment(room, managerId, pos){
+  const slots=slotsAfterAssignment(room,managerId,pos);
+  return !!slots && canMatchPlayersToSlots(futurePlayers(room),slots);
+}
+function bestAssignmentFor(room, player, m){
+  for(const pos of positionChoices(player,m)){
+    if(feasibleAssignment(room,m.id,pos)) return pos;
+  }
+  return null;
+}
+function skippingCurrentIsSafe(room){
+  return canMatchPlayersToSlots(futurePlayers(room),slotEntries(room));
+}
+function forcedOptions(room, player){
+  const options=[];
+  for(const m of room.managers.values()){
+    if(maxBid(m)<MIN_BID) continue;
+    for(const pos of positionChoices(player,m)){
+      if(feasibleAssignment(room,m.id,pos)) options.push({manager:m,pos});
+    }
+  }
+  return options;
+}
+function computeMandatory(room, player){
+  if(skippingCurrentIsSafe(room)) return [];
+  return [...new Set(forcedOptions(room,player).map(x=>x.manager.id))];
+}
+
 function allComplete(room){ return [...room.managers.values()].every(m=>m.squad.length===11); }
 function buildPool(room){
   const needs={};
   for(const m of room.managers.values()) for(const p of FORMATIONS[m.formation]) needs[p]=(needs[p]||0)+1;
-  const selected=[]; const selectedIds=new Set();
-  const positions=Object.keys(needs);
-  for(const pos of positions){
-    const want=needs[pos]+1;
-    const candidates=shuffle(PLAYER_DB.filter(p=>p.positions.includes(pos) && !selectedIds.has(p.id)));
-    for(const p of candidates.slice(0,want)){ selected.push(p); selectedIds.add(p.id); }
+  const positions=Object.keys(needs).sort((a,b)=>{
+    const ca=PLAYER_DB.filter(p=>p.positions.includes(a)).length;
+    const cb=PLAYER_DB.filter(p=>p.positions.includes(b)).length;
+    return ca-cb;
+  });
+
+  // Try several randomised builds. Each exact position gets only one extra
+  // player beyond total demand, matching the agreed "one skip" rule.
+  for(let attempt=0; attempt<200; attempt++){
+    const selected=[]; const selectedIds=new Set();
+    let failed=false;
+    for(const pos of positions){
+      const want=needs[pos]+1;
+      const candidates=shuffle(PLAYER_DB.filter(p=>p.positions.includes(pos) && !selectedIds.has(p.id)));
+      if(candidates.length < want){ failed=true; break; }
+      for(const p of candidates.slice(0,want)){ selected.push(p); selectedIds.add(p.id); }
+    }
+    if(failed) continue;
+    const slots=[];
+    for(const m of room.managers.values()) FORMATIONS[m.formation].forEach((pos,i)=>slots.push({key:`${m.id}:${pos}:${i}`,managerId:m.id,pos}));
+    if(canMatchPlayersToSlots(selected,slots)) return shuffle(selected);
   }
-  return shuffle(selected);
+  throw new Error('Could not build a balanced player pool for these formations.');
 }
 function startNext(room){
-  if(allComplete(room) || room.auctionIndex>=room.pool.length){
+  if(allComplete(room)){
     room.phase='finished'; room.current=null; clearInterval(room.timer); room.timer=null; io.to(room.code).emit('state', roomPublic(room)); return;
   }
-  const player=room.pool[room.auctionIndex++];
-  room.current={player,bid:0,bidderId:null,timeLeft:START_TIMER,mandatoryIds:[]};
+
+  // Never waste 15 seconds on a footballer that cannot fill an open slot for
+  // any manager. Keep advancing until a usable player is found.
+  let player=null;
+  while(room.auctionIndex < room.pool.length){
+    const candidate=room.pool[room.auctionIndex++];
+    if([...room.managers.values()].some(m=>playerFitsManager(candidate,m))){ player=candidate; break; }
+  }
+  if(!player){
+    room.phase='finished'; room.current=null; clearInterval(room.timer); room.timer=null; io.to(room.code).emit('state', roomPublic(room)); return;
+  }
+
+  room.current={player,bid:0,bidderId:null,bidPosition:null,timeLeft:START_TIMER,mandatoryIds:[]};
   room.current.mandatoryIds=computeMandatory(room,player);
   io.to(room.code).emit('state', roomPublic(room));
   clearInterval(room.timer);
@@ -129,13 +198,19 @@ function finishAuction(room){
   const c=room.current; if(!c) return;
   if(c.bidderId){
     const m=room.managers.get(c.bidderId);
-    if(m && playerFitsManager(c.player,m)) { m.budget-=c.bid; m.squad.push({...c.player, price:c.bid}); }
-  } else if(c.mandatoryIds.length){
-    // Forced fallback: if nobody clicks, one mandatory manager receives the player for £1m.
-    // Prefer the manager with fewest compatible alternatives left, then lower remaining budget.
-    const eligible=c.mandatoryIds.map(id=>room.managers.get(id)).filter(Boolean).sort((a,b)=>maxBid(a)-maxBid(b));
-    const m=eligible[0];
-    if(m && playerFitsManager(c.player,m) && maxBid(m)>=1){ m.budget-=1; m.squad.push({...c.player, price:1, forced:true}); }
+    if(m && c.bidPosition && positionChoices(c.player,m).includes(c.bidPosition)) {
+      m.budget-=c.bid;
+      m.squad.push({...c.player, assignedPosition:c.bidPosition, price:c.bid});
+    }
+  } else if(!skippingCurrentIsSafe(room)){
+    // If passing would make an XI impossible, this player cannot be skipped.
+    // Pick a legal manager/position that preserves completion of every XI.
+    const options=forcedOptions(room,c.player).sort((a,b)=>maxBid(a.manager)-maxBid(b.manager));
+    const pick=options[0];
+    if(pick){
+      pick.manager.budget-=MIN_BID;
+      pick.manager.squad.push({...c.player, assignedPosition:pick.pos, price:MIN_BID, forced:true});
+    }
   }
   room.current=null;
   io.to(room.code).emit('state', roomPublic(room));
@@ -169,16 +244,18 @@ io.on('connection', socket=>{
     if(room.managers.size<2) return cb?.({ok:false,error:'At least 2 managers are required.'});
     if([...room.managers.values()].some(m=>!m.formation||!m.ready)) return cb?.({ok:false,error:'Everyone must choose a formation and be ready.'});
     for(const m of room.managers.values()){m.budget=STARTING_BUDGET;m.squad=[];}
-    room.pool=buildPool(room); room.auctionIndex=0; room.phase='draft'; cb?.({ok:true}); startNext(room);
+    try { room.pool=buildPool(room); } catch(e) { return cb?.({ok:false,error:e.message}); } room.auctionIndex=0; room.phase='draft'; cb?.({ok:true}); startNext(room);
   });
   socket.on('bid', ({amount},cb)=>{
     const room=rooms.get(socket.data.room); const m=room?.managers.get(socket.id); const c=room?.current;
     if(!room||room.phase!=='draft'||!m||!c) return;
     if(!playerFitsManager(c.player,m)) return cb?.({ok:false,error:'This player does not fit an open position in your formation.'});
+    const assignPos=bestAssignmentFor(room,c.player,m);
+    if(!assignPos) return cb?.({ok:false,error:'Buying this player in your remaining slots would make it impossible for all teams to complete an XI.'});
     let bid=Number(amount); const min=c.bid+1; if(!Number.isFinite(bid)) bid=min; bid=Math.floor(bid);
     if(bid<min) return cb?.({ok:false,error:`Minimum bid is £${min}m.`});
     const cap=maxBid(m); if(bid>cap) return cb?.({ok:false,error:`Your maximum safe bid is £${cap}m.`});
-    c.bid=bid;c.bidderId=m.id;
+    c.bid=bid;c.bidderId=m.id;c.bidPosition=assignPos;
     if(c.timeLeft<RESET_TIMER) c.timeLeft=RESET_TIMER;
     cb?.({ok:true}); io.to(room.code).emit('state',roomPublic(room));
   });
