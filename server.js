@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const { PACKS, PLAYER_DB } = require('./data/players');
+const { assessLineup, publicAssessment, simulateCompetition } = require('./data/allTimePremSimulation');
 
 const app = express();
 const server = http.createServer(app);
@@ -112,6 +113,10 @@ function freeformScarcityWarnings(room){
   return warnings;
 }
 function roomPublic(room){
+  const ratingsVisible = room.pack==='all_time_prem' && (room.phase==='reveal' || room.phase==='results');
+  const teamRatings = ratingsVisible && room.teamAssessments
+    ? Object.fromEntries([...room.teamAssessments.entries()].map(([id,a])=>[id,publicAssessment(a)]))
+    : null;
   return {
     code: room.code,
     hostId: room.hostId,
@@ -122,6 +127,9 @@ function roomPublic(room){
     packLabels: {...PACKS, chaos:'Chaos Mode'},
     packCounts: packCounts(),
     freeformFormations: Object.keys(FREEFORM_FORMATIONS),
+    simulationAvailable: room.pack==='all_time_prem',
+    teamRatings,
+    simulation: room.phase==='results' ? room.simulation : null,
     managers: [...room.managers.values()].map(managerPublic),
     current: room.current ? {
       player: room.current.player,
@@ -379,6 +387,40 @@ function buildFreeformPool(room){
 
 function buildPool(room){ return room.mode==='freeform' ? buildFreeformPool(room) : buildHardPool(room); }
 
+function hardLineupEntries(m){
+  const slots=HARD_FORMATIONS[m.formation]||[];
+  const used=new Set();
+  return slots.map(slot=>{
+    let idx=m.squad.findIndex((p,i)=>!used.has(i)&&(p.assignedPosition||p.positions?.[0])===slot);
+    if(idx<0) idx=m.squad.findIndex((p,i)=>!used.has(i)&&p.positions?.includes(slot));
+    if(idx<0) throw new Error(`Could not build ${m.name}'s Hard Mode XI for simulation.`);
+    used.add(idx);
+    return {player:m.squad[idx],slot};
+  });
+}
+function freeformLineupEntries(m){
+  const slots=FREEFORM_FORMATIONS[m.finalFormation]||[];
+  if(slots.length!==11||!Array.isArray(m.lineup)||m.lineup.length!==11) throw new Error(`Could not build ${m.name}'s Freeform XI for simulation.`);
+  return slots.map((slot,i)=>{
+    const player=m.squad.find(p=>p.id===m.lineup[i]);
+    if(!player) throw new Error(`Could not find a selected player in ${m.name}'s XI.`);
+    return {player,slot};
+  });
+}
+function buildTeamAssessments(room){
+  const map=new Map();
+  for(const m of room.managers.values()){
+    const entries=room.mode==='freeform' ? freeformLineupEntries(m) : hardLineupEntries(m);
+    map.set(m.id,assessLineup(entries));
+  }
+  return map;
+}
+function enterReveal(room){
+  room.teamAssessments=buildTeamAssessments(room);
+  room.simulation=null;
+  room.phase='reveal';
+  io.to(room.code).emit('state',roomPublic(room));
+}
 function enterPostDraft(room){
   clearInterval(room.timer); room.timer=null; room.current=null;
   if(room.mode==='freeform'){
@@ -388,10 +430,13 @@ function enterPostDraft(room){
       m.lineup=[];
       m.teamReady=false;
     }
+    io.to(room.code).emit('state',roomPublic(room));
+  } else if(room.pack==='all_time_prem') {
+    enterReveal(room);
   } else {
     room.phase='finished';
+    io.to(room.code).emit('state',roomPublic(room));
   }
-  io.to(room.code).emit('state',roomPublic(room));
 }
 
 function startNext(room){
@@ -478,7 +523,7 @@ io.on('connection', socket=>{
   socket.on('createRoom', ({name},cb)=>{
     const code=roomCode();
     const m={id:socket.id,name:cleanName(name),formation:null,ready:false,budget:STARTING_BUDGET,squad:[],finalFormation:null,lineup:[],teamReady:false};
-    const room={code,hostId:socket.id,phase:'lobby',mode:DEFAULT_MODE,pack:DEFAULT_PACK,managers:new Map([[socket.id,m]]),pool:[],auctionIndex:0,current:null,timer:null};
+    const room={code,hostId:socket.id,phase:'lobby',mode:DEFAULT_MODE,pack:DEFAULT_PACK,managers:new Map([[socket.id,m]]),pool:[],auctionIndex:0,current:null,timer:null,teamAssessments:null,simulation:null};
     rooms.set(code,room); socket.join(code); socket.data.room=code; cb?.({ok:true,code,state:roomPublic(room)});
     io.to(code).emit('state',roomPublic(room));
   });
@@ -533,6 +578,7 @@ io.on('connection', socket=>{
     if([...room.managers.values()].some(m=>!m.ready)) return cb?.({ok:false,error:'Everyone must be ready.'});
     if(room.mode==='hard' && [...room.managers.values()].some(m=>!m.formation)) return cb?.({ok:false,error:'Everyone must choose a formation and be ready.'});
     for(const m of room.managers.values()) resetManagerForDraft(m);
+    room.teamAssessments=null; room.simulation=null;
     try { room.pool=buildPool(room); } catch(e) { return cb?.({ok:false,error:e.message}); }
     room.auctionIndex=0; room.phase='draft'; cb?.({ok:true}); startNext(room);
   });
@@ -593,16 +639,26 @@ io.on('connection', socket=>{
     m.teamReady=!!ready;
     cb?.({ok:true});
     if(allTeamsReady(room)){
-      room.phase='finished';
-      io.to(room.code).emit('state',roomPublic(room));
+      if(room.pack==='all_time_prem') enterReveal(room);
+      else { room.phase='finished'; io.to(room.code).emit('state',roomPublic(room)); }
     } else {
       io.to(room.code).emit('state',roomPublic(room));
     }
   });
 
+  socket.on('startSimulation', (_,cb)=>{
+    const room=rooms.get(socket.data.room);
+    if(!room||room.phase!=='reveal'||room.pack!=='all_time_prem'||socket.id!==room.hostId||!room.teamAssessments) return;
+    const teams=[...room.managers.values()].map(m=>({id:m.id,name:m.name,assessment:room.teamAssessments.get(m.id)}));
+    room.simulation=simulateCompetition(teams);
+    room.phase='results';
+    cb?.({ok:true});
+    io.to(room.code).emit('state',roomPublic(room));
+  });
+
   socket.on('playAgain', (_,cb)=>{
-    const room=rooms.get(socket.data.room); if(!room||room.phase!=='finished'||socket.id!==room.hostId) return;
-    room.phase='lobby'; room.pool=[]; room.auctionIndex=0; room.current=null;
+    const room=rooms.get(socket.data.room); if(!room||!['finished','reveal','results'].includes(room.phase)||socket.id!==room.hostId) return;
+    room.phase='lobby'; room.pool=[]; room.auctionIndex=0; room.current=null; room.teamAssessments=null; room.simulation=null;
     for(const m of room.managers.values()){
       resetManagerForDraft(m);
       m.ready=false;
