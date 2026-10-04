@@ -131,3 +131,7 @@ button{border:0;border-radius:13px;padding:13px 16px;font-weight:800;cursor:poin
   .scoreline>strong{font-size:22px}
   .match-card{padding:10px}
 }
+.player-counter{font-size:11px;font-weight:900;letter-spacing:.08em;color:#6b7280;margin-bottom:10px}
+.out-button{width:100%;background:#f3f4f6;color:#374151;border:1px solid #d1d5db}
+.out-button.active{background:#fff7ed;color:#9a3412;border-color:#fdba74}
+.out-status{margin-top:10px;font-size:12px;color:#9a3412;font-weight:800}
