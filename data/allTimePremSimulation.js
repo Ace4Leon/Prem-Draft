@@ -784,41 +784,53 @@ function assessLineup(entries,pack='all_time_prem'){
   const rawFormationSuitability=avg(details.map(d=>traitSuitability(d.profile,d.slot)));
   const formationSuitability=clamp(0.70*(50+0.55*rawFormationSuitability)+0.30*fitScore,30,99);
 
-  // Generic squad role balance, independent of where the manager placed each player.
+  // Team Balance v2: elite balance is difficult to reach. Instead of awarding 100 as soon as
+  // a minimum threshold is crossed, every unit climbs gradually toward an elite benchmark.
+  const benchmarkScore=(value,target)=>clamp(value/target*100,20,100);
+  const idealRoleScore=(value,target)=>clamp(100-Math.abs(value-target)*20,25,100);
+
+  // Generic squad role distribution, independent of the chosen formation. The targets sum to 10
+  // outfield-player equivalents and allow attacking/defensive shapes without rewarding extremes.
   const outfield=details.filter(d=>d.slot!=='GK');
   const roleTotals=outfield.reduce((a,d)=>{
     a.d+=d.profile.role.defence; a.m+=d.profile.role.midfield; a.a+=d.profile.role.attack; return a;
   },{d:0,m:0,a:0});
   const roleBalance=avg([
-    rangeScore(roleTotals.d,2.5,4.8),
-    rangeScore(roleTotals.m,2.4,4.8),
-    rangeScore(roleTotals.a,2.0,4.3)
+    idealRoleScore(roleTotals.d,3.4),
+    idealRoleScore(roleTotals.m,3.4),
+    idealRoleScore(roleTotals.a,3.2)
   ]);
 
-  // Midfield complementarity is deliberately important: three elite holding midfielders should not score like a balanced trio.
+  // Midfield complementarity: protection, progression, creativity and goal threat all matter.
+  // The weakest area still matters, but midfield no longer dominates the whole Team Balance rating.
   const mids=details.filter(d=>['DM','CM','AM','LM','RM'].includes(d.slot));
   const midTrait={};
   for(const t of ['protection','progression','creativity','goalThreat']) midTrait[t]=avg(mids.map(d=>d.profile.traits[t]*d.fit));
   const midParts=[
-    shortageScore(midTrait.protection,42), shortageScore(midTrait.progression,62),
-    shortageScore(midTrait.creativity,56), shortageScore(midTrait.goalThreat,34)
+    benchmarkScore(midTrait.protection,70), benchmarkScore(midTrait.progression,85),
+    benchmarkScore(midTrait.creativity,85), benchmarkScore(midTrait.goalThreat,60)
   ];
-  const midfieldBalance=mids.length ? 0.45*avg(midParts)+0.55*Math.min(...midParts) : 35;
+  const midfieldBalance=mids.length ? 0.55*avg(midParts)+0.45*Math.min(...midParts) : 30;
 
+  // Attack balance now includes width as well as creation, finishing and directness.
   const attackers=details.filter(d=>['AM','LM','RM','LW','RW','ST'].includes(d.slot));
   const attackCreat=avg(attackers.map(d=>d.profile.traits.creativity*d.fit));
   const attackGoal=avg(attackers.map(d=>d.profile.traits.goalThreat*d.fit));
   const attackDirect=avg(attackers.map(d=>d.profile.traits.directness*d.fit));
+  const attackWidth=avg(attackers.map(d=>d.profile.traits.width*d.fit));
   const attackBalance=attackers.length ? avg([
-    shortageScore(attackCreat,48),shortageScore(attackGoal,68),shortageScore(attackDirect,58)
-  ]) : 35;
+    benchmarkScore(attackCreat,75), benchmarkScore(attackGoal,94),
+    benchmarkScore(attackDirect,90), benchmarkScore(attackWidth,60)
+  ]) : 30;
 
+  // A genuinely balanced defensive unit needs both protection and the ability to move the ball.
   const defenders=details.filter(d=>['GK','LB','RB','CB','DM'].includes(d.slot));
-  const defProtection=avg(defenders.filter(d=>d.slot!=='GK').map(d=>d.profile.traits.protection*d.fit));
-  const defProgression=avg(defenders.filter(d=>d.slot!=='GK').map(d=>d.profile.traits.progression*d.fit));
-  const defenceBalance=avg([shortageScore(defProtection,67),shortageScore(defProgression,42)]);
+  const defOutfield=defenders.filter(d=>d.slot!=='GK');
+  const defProtection=avg(defOutfield.map(d=>d.profile.traits.protection*d.fit));
+  const defProgression=avg(defOutfield.map(d=>d.profile.traits.progression*d.fit));
+  const defenceBalance=avg([benchmarkScore(defProtection,82),benchmarkScore(defProgression,60)]);
 
-  let teamBalance=0.30*roleBalance+0.40*midfieldBalance+0.15*attackBalance+0.15*defenceBalance;
+  let teamBalance=0.25*roleBalance+0.25*midfieldBalance+0.20*attackBalance+0.30*defenceBalance;
   const keeper=details.find(d=>d.slot==='GK');
   if(!keeper || keeper.player.positions[0]!=='GK') teamBalance=Math.min(teamBalance,55);
 
@@ -915,11 +927,12 @@ function scheduleFor(teams){
   const games=[];
   if(teams.length===2){
     const [a,b]=teams;
-    games.push([a,b],[b,a],[a,b],[b,a]);
+    for(let i=0;i<5;i++) games.push([a,b],[b,a]);
     return games;
   }
+  const repeats=teams.length===3 ? 2 : 1;
   for(let i=0;i<teams.length;i++) for(let j=i+1;j<teams.length;j++){
-    games.push([teams[i],teams[j]],[teams[j],teams[i]]);
+    for(let r=0;r<repeats;r++) games.push([teams[i],teams[j]],[teams[j],teams[i]]);
   }
   // Shuffle fixture order without changing home/away counts.
   for(let i=games.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[games[i],games[j]]=[games[j],games[i]];}
