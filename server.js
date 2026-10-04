@@ -3,7 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const { PACKS, PLAYER_DB } = require('./data/players');
-const { assessLineup, publicAssessment, simulateCompetition } = require('./data/allTimePremSimulation');
+const { assessLineup, publicAssessment, simulateCompetition, positionalFit } = require('./data/allTimePremSimulation');
 
 const app = express();
 const server = http.createServer(app);
@@ -80,7 +80,7 @@ function packCounts(){
 }
 function publicPlayer(p){
   if(!p) return null;
-  return {id:p.id,name:p.name,positions:p.positions,assignedPosition:p.assignedPosition};
+  return {id:p.id,name:p.name,positions:p.positions,assignedPosition:p.assignedPosition,price:p.price,forced:!!p.forced};
 }
 function managerPublic(m){
   return {
@@ -142,9 +142,12 @@ function roomPublic(room){
       timeLeft: room.current.timeLeft,
       mandatoryIds: room.current.mandatoryIds,
       bidPosition: room.current.bidPosition,
-      scarcityWarnings: freeformScarcityWarnings(room)
+      scarcityWarnings: freeformScarcityWarnings(room),
+      outIds: [...(room.current.outIds || new Set())],
+      eligibleIds: currentContenders(room).map(m=>m.id)
     } : null,
     auctionIndex: room.auctionIndex,
+    shownCount: room.shownCount || 0,
     poolSize: room.pool.length
   };
 }
@@ -247,6 +250,41 @@ function computeMandatoryFreeform(room){
 
 function allComplete(room){ return [...room.managers.values()].every(m=>m.squad.length===11); }
 function allTeamsReady(room){ return [...room.managers.values()].every(m=>m.teamReady); }
+
+
+// Auction participation / early resolution. A player is always visible for at least
+// five seconds (15 -> 10) before an auction can resolve early.
+function managerCanBidCurrent(room,m){
+  const c=room.current;
+  if(!c || !m) return false;
+  const nextBid=c.bid+1;
+  if(room.mode==='freeform'){
+    return m.squad.length<11 && maxBidFreeform(m)>=nextBid;
+  }
+  if(!playerFitsManagerHard(c.player,m)) return false;
+  if(maxBidHard(m)<nextBid) return false;
+  return !!bestAssignmentFor(room,c.player,m);
+}
+function currentContenders(room){
+  return [...room.managers.values()].filter(m=>managerCanBidCurrent(room,m));
+}
+function maybeResolveCurrent(room){
+  const c=room.current;
+  if(!c || c.timeLeft>RESET_TIMER) return false;
+  const contenders=currentContenders(room);
+  const outIds=c.outIds || new Set();
+  if(c.bidderId){
+    const rivals=contenders.filter(m=>m.id!==c.bidderId);
+    if(rivals.every(m=>outIds.has(m.id))){
+      finishAuction(room);
+      return true;
+    }
+  } else if(contenders.length===0 || contenders.every(m=>outIds.has(m.id))){
+    finishAuction(room);
+    return true;
+  }
+  return false;
+}
 
 function tierAwareShuffle(candidates){
   // Keep randomness while mixing quality tiers so generated pools are not accidentally all stars/depth.
@@ -402,6 +440,41 @@ function hardLineupEntries(m){
     return {player:m.squad[idx],slot};
   });
 }
+
+function bestFitLineup(m,formation){
+  const slots=FREEFORM_FORMATIONS[formation]||[];
+  const players=m.squad||[];
+  if(slots.length!==11||players.length!==11) return players.map(p=>p.id);
+  const size=1<<players.length;
+  const dp=new Array(size).fill(-Infinity);
+  const parent=new Array(size).fill(null);
+  dp[0]=0;
+  const bitCount=mask=>{let n=0;while(mask){mask&=mask-1;n++;}return n;};
+  for(let mask=0;mask<size;mask++){
+    if(!Number.isFinite(dp[mask])) continue;
+    const slotIndex=bitCount(mask);
+    if(slotIndex>=slots.length) continue;
+    for(let i=0;i<players.length;i++){
+      if(mask&(1<<i)) continue;
+      const next=mask|(1<<i);
+      const score=dp[mask]+positionalFit(players[i],slots[slotIndex]);
+      if(score>dp[next]+1e-9){
+        dp[next]=score;
+        parent[next]={prev:mask,playerIndex:i};
+      }
+    }
+  }
+  const lineup=new Array(11);
+  let mask=size-1;
+  for(let slotIndex=10;slotIndex>=0;slotIndex--){
+    const step=parent[mask];
+    if(!step) return players.map(p=>p.id);
+    lineup[slotIndex]=players[step.playerIndex].id;
+    mask=step.prev;
+  }
+  return lineup;
+}
+
 function freeformLineupEntries(m){
   const slots=FREEFORM_FORMATIONS[m.finalFormation]||[];
   if(slots.length!==11||!Array.isArray(m.lineup)||m.lineup.length!==11) throw new Error(`Could not build ${m.name}'s Freeform XI for simulation.`);
@@ -457,7 +530,8 @@ function startNext(room){
     io.to(room.code).emit('state', roomPublic(room)); return;
   }
 
-  room.current={player,bid:0,bidderId:null,bidPosition:null,timeLeft:START_TIMER,mandatoryIds:[]};
+  room.shownCount=(room.shownCount||0)+1;
+  room.current={player,bid:0,bidderId:null,bidPosition:null,timeLeft:START_TIMER,mandatoryIds:[],outIds:new Set()};
   room.current.mandatoryIds=room.mode==='freeform' ? computeMandatoryFreeform(room) : computeMandatoryHard(room,player);
   io.to(room.code).emit('state', roomPublic(room));
   clearInterval(room.timer);
@@ -465,7 +539,7 @@ function startNext(room){
     if(!room.current) return;
     room.current.timeLeft--;
     if(room.current.timeLeft<=0) finishAuction(room);
-    else io.to(room.code).emit('tick',{timeLeft:room.current.timeLeft});
+    else if(!maybeResolveCurrent(room)) io.to(room.code).emit('tick',{timeLeft:room.current.timeLeft});
   },1000);
 }
 
@@ -524,7 +598,7 @@ io.on('connection', socket=>{
   socket.on('createRoom', ({name},cb)=>{
     const code=roomCode();
     const m={id:socket.id,name:cleanName(name),formation:null,ready:false,budget:STARTING_BUDGET,squad:[],finalFormation:null,lineup:[],teamReady:false};
-    const room={code,hostId:socket.id,phase:'lobby',mode:DEFAULT_MODE,pack:DEFAULT_PACK,managers:new Map([[socket.id,m]]),pool:[],auctionIndex:0,current:null,timer:null,teamAssessments:null,simulation:null};
+    const room={code,hostId:socket.id,phase:'lobby',mode:DEFAULT_MODE,pack:DEFAULT_PACK,managers:new Map([[socket.id,m]]),pool:[],auctionIndex:0,shownCount:0,current:null,timer:null,teamAssessments:null,simulation:null};
     rooms.set(code,room); socket.join(code); socket.data.room=code; cb?.({ok:true,code,state:roomPublic(room)});
     io.to(code).emit('state',roomPublic(room));
   });
@@ -581,7 +655,7 @@ io.on('connection', socket=>{
     for(const m of room.managers.values()) resetManagerForDraft(m);
     room.teamAssessments=null; room.simulation=null;
     try { room.pool=buildPool(room); } catch(e) { return cb?.({ok:false,error:e.message}); }
-    room.auctionIndex=0; room.phase='draft'; cb?.({ok:true}); startNext(room);
+    room.auctionIndex=0; room.shownCount=0; room.phase='draft'; cb?.({ok:true}); startNext(room);
   });
 
   socket.on('bid', ({amount},cb)=>{
@@ -604,8 +678,21 @@ io.on('connection', socket=>{
     if(bid<min) return cb?.({ok:false,error:`Minimum bid is £${min}m.`});
     if(bid>cap) return cb?.({ok:false,error:`Your maximum safe bid is £${cap}m.`});
     c.bid=bid; c.bidderId=m.id;
+    c.outIds?.delete(m.id);
     if(c.timeLeft<RESET_TIMER) c.timeLeft=RESET_TIMER;
-    cb?.({ok:true}); io.to(room.code).emit('state',roomPublic(room));
+    cb?.({ok:true});
+    if(!maybeResolveCurrent(room)) io.to(room.code).emit('state',roomPublic(room));
+  });
+
+  socket.on('setAuctionOut', ({out},cb)=>{
+    const room=rooms.get(socket.data.room); const m=room?.managers.get(socket.id); const c=room?.current;
+    if(!room||room.phase!=='draft'||!m||!c) return cb?.({ok:false,error:'No active auction.'});
+    if(c.bidderId===m.id && out) return cb?.({ok:false,error:'You are currently winning this player.'});
+    if(out && !managerCanBidCurrent(room,m)) return cb?.({ok:false,error:'You cannot bid on this player.'});
+    if(!c.outIds) c.outIds=new Set();
+    if(out) c.outIds.add(m.id); else c.outIds.delete(m.id);
+    cb?.({ok:true});
+    if(!maybeResolveCurrent(room)) io.to(room.code).emit('state',roomPublic(room));
   });
 
   socket.on('setFinalFormation', ({formation})=>{
@@ -613,9 +700,7 @@ io.on('connection', socket=>{
     if(!room||room.phase!=='team_build'||room.mode!=='freeform'||!m||!FREEFORM_FORMATIONS[formation]) return;
     m.finalFormation=formation;
     m.teamReady=false;
-    const squadIds=m.squad.map(p=>p.id);
-    const validExisting=Array.isArray(m.lineup)&&m.lineup.length===11&&new Set(m.lineup).size===11&&m.lineup.every(id=>squadIds.includes(id));
-    if(!validExisting) m.lineup=[...squadIds];
+    m.lineup=bestFitLineup(m,formation);
     io.to(room.code).emit('state',roomPublic(room));
   });
 
@@ -658,7 +743,7 @@ io.on('connection', socket=>{
 
   socket.on('playAgain', (_,cb)=>{
     const room=rooms.get(socket.data.room); if(!room||!['finished','reveal','results'].includes(room.phase)||socket.id!==room.hostId) return;
-    room.phase='lobby'; room.pool=[]; room.auctionIndex=0; room.current=null; room.teamAssessments=null; room.simulation=null;
+    room.phase='lobby'; room.pool=[]; room.auctionIndex=0; room.shownCount=0; room.current=null; room.teamAssessments=null; room.simulation=null;
     for(const m of room.managers.values()){
       resetManagerForDraft(m);
       m.ready=false;
