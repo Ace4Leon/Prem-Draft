@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const { PACKS, PLAYER_DB } = require('./data/players');
 
 const app = express();
 const server = http.createServer(app);
@@ -13,6 +14,7 @@ const STARTING_BUDGET = 100;
 const START_TIMER = 15;
 const RESET_TIMER = 10;
 const MIN_BID = 1;
+const DEFAULT_PACK = 'all_time_prem';
 
 const FORMATIONS = {
   '4-4-2': ['GK','LB','CB','CB','RB','LM','CM','CM','RM','ST','ST'],
@@ -23,18 +25,6 @@ const FORMATIONS = {
   '5-3-2': ['GK','LB','CB','CB','CB','RB','CM','CM','CM','ST','ST']
 };
 
-const PLAYER_DB = [
-  ['Petr Cech',['GK']],['Edwin van der Sar',['GK']],['David de Gea',['GK']],['Alisson',['GK']],['Pepe Reina',['GK']],['Shay Given',['GK']],['Joe Hart',['GK']],['Brad Friedel',['GK']],['Hugo Lloris',['GK']],['Jens Lehmann',['GK']],['Tim Howard',['GK']],['Emiliano Martinez',['GK']],
-  ['Ashley Cole',['LB']],['Patrice Evra',['LB']],['Andrew Robertson',['LB']],['Leighton Baines',['LB']],['Gael Clichy',['LB']],['John Arne Riise',['LB']],['Cesar Azpilicueta',['LB','RB','CB']],['Luke Shaw',['LB']],
-  ['Kyle Walker',['RB']],['Gary Neville',['RB']],['Branislav Ivanovic',['RB','CB']],['Trent Alexander-Arnold',['RB']],['Pablo Zabaleta',['RB']],['Bacary Sagna',['RB']],['Kieran Trippier',['RB']],['Lauren',['RB']],
-  ['John Terry',['CB']],['Rio Ferdinand',['CB']],['Nemanja Vidic',['CB']],['Virgil van Dijk',['CB']],['Vincent Kompany',['CB']],['Sol Campbell',['CB']],['Jamie Carragher',['CB']],['Ricardo Carvalho',['CB']],['Ledley King',['CB']],['Kolo Toure',['CB']],['Jaap Stam',['CB']],['William Gallas',['CB']],['Sami Hyypia',['CB']],['Martin Keown',['CB']],['Wes Morgan',['CB']],['Toby Alderweireld',['CB']],['Jan Vertonghen',['CB']],['Ruben Dias',['CB']],['Gary Cahill',['CB']],['Joleon Lescott',['CB']],
-  ['Claude Makelele',['DM','CM']],['N’Golo Kante',['DM','CM']],['Rodri',['DM','CM']],['Michael Carrick',['DM','CM']],['Gilberto Silva',['DM','CM']],['Javier Mascherano',['DM','CM']],['Fernandinho',['DM','CM']],['Declan Rice',['DM','CM']],
-  ['Steven Gerrard',['CM','AM']],['Frank Lampard',['CM','AM']],['Paul Scholes',['CM']],['Patrick Vieira',['CM','DM']],['Yaya Toure',['CM','AM','DM']],['Cesc Fabregas',['CM','AM']],['David Silva',['CM','AM']],['Kevin De Bruyne',['CM','AM']],['Roy Keane',['CM','DM']],['Xabi Alonso',['CM','DM']],['Luka Modric',['CM']],['Mousa Dembele',['CM']],['Gareth Barry',['CM','DM']],['Mikel Arteta',['CM','AM']],['James Milner',['CM','LM','RM']],['Tim Cahill',['CM','AM']],['Michael Essien',['CM','DM']],['Jordan Henderson',['CM','DM']],['Bruno Fernandes',['AM','CM']],['Martin Odegaard',['AM','CM']],['Juan Mata',['AM','RM']],['Mesut Ozil',['AM']],
-  ['Ryan Giggs',['LM','LW']],['Gareth Bale',['LW','LM','RW']],['Eden Hazard',['LW','AM']],['Robert Pires',['LW','LM']],['Sadio Mane',['LW','RW','ST']],['Son Heung-min',['LW','ST']],['Raheem Sterling',['LW','RW']],['Damien Duff',['LM','LW']],['Nani',['LW','RW']],
-  ['Mohamed Salah',['RW','ST']],['Cristiano Ronaldo',['LW','RW','ST']],['David Beckham',['RM']],['Riyad Mahrez',['RW','RM']],['Freddie Ljungberg',['RM','RW']],['Antonio Valencia',['RM','RW']],['Bukayo Saka',['RW']],['Bernardo Silva',['RW','AM','CM']],
-  ['Thierry Henry',['ST','LW']],['Sergio Aguero',['ST']],['Wayne Rooney',['ST','AM']],['Harry Kane',['ST']],['Didier Drogba',['ST']],['Alan Shearer',['ST']],['Ruud van Nistelrooy',['ST']],['Robin van Persie',['ST']],['Luis Suarez',['ST']],['Erling Haaland',['ST']],['Fernando Torres',['ST']],['Andy Cole',['ST']],['Dwight Yorke',['ST']],['Teddy Sheringham',['ST']],['Dimitar Berbatov',['ST']],['Jermain Defoe',['ST']],['Peter Crouch',['ST']],['Jamie Vardy',['ST']],['Carlos Tevez',['ST']],['Nicolas Anelka',['ST']],['Jimmy Floyd Hasselbaink',['ST']],['Olivier Giroud',['ST']],['Romelu Lukaku',['ST']],['Emmanuel Adebayor',['ST']],['Robbie Keane',['ST']]
-].map(([name, positions], i) => ({ id: i+1, name, positions }));
-
 const rooms = new Map();
 
 function roomCode() {
@@ -44,15 +34,27 @@ function roomCode() {
   return out;
 }
 function cleanName(s){ return String(s||'').trim().slice(0,20) || 'Manager'; }
-function shuffle(a){ return [...a].sort(()=>Math.random()-0.5); }
+function shuffle(a){
+  const out=[...a];
+  for(let i=out.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[out[i],out[j]]=[out[j],out[i]];}
+  return out;
+}
+function packPlayers(pack){ return pack === 'chaos' ? PLAYER_DB : PLAYER_DB.filter(p=>p.packs.includes(pack)); }
+function packCounts(){
+  const counts={chaos:PLAYER_DB.length};
+  for(const key of Object.keys(PACKS)) counts[key]=packPlayers(key).length;
+  return counts;
+}
 function managerPublic(m){ return {id:m.id,name:m.name,formation:m.formation,ready:m.ready,budget:m.budget,squad:m.squad}; }
 function roomPublic(room){
   return {
     code: room.code, hostId: room.hostId, phase: room.phase,
+    pack: room.pack,
+    packLabels: {...PACKS, chaos:'Chaos Mode'},
+    packCounts: packCounts(),
     managers: [...room.managers.values()].map(managerPublic),
     current: room.current ? {player: room.current.player, bid: room.current.bid, bidderId: room.current.bidderId, timeLeft: room.current.timeLeft, mandatoryIds: room.current.mandatoryIds, bidPosition: room.current.bidPosition} : null,
-    auctionIndex: room.auctionIndex, poolSize: room.pool.length,
-    winner: room.winner || null
+    auctionIndex: room.auctionIndex, poolSize: room.pool.length
   };
 }
 function openSlots(m){
@@ -67,8 +69,6 @@ function openSlots(m){
 }
 function positionChoices(player,m){
   const open = openSlots(m);
-  // positions are stored primary-first in the database, so this always
-  // prefers the player's real/primary position before secondary positions.
   return player.positions.filter(pos => open.includes(pos));
 }
 function playerFitsManager(player,m){ return positionChoices(player,m).length > 0; }
@@ -78,15 +78,13 @@ function maxBid(m){
 }
 function slotEntries(room){
   const out=[];
-  for(const m of room.managers.values()){
-    openSlots(m).forEach((pos,i)=>out.push({key:`${m.id}:${pos}:${i}`,managerId:m.id,pos}));
-  }
+  for(const m of room.managers.values()) openSlots(m).forEach((pos,i)=>out.push({key:`${m.id}:${pos}:${i}`,managerId:m.id,pos}));
   return out;
 }
 function canMatchPlayersToSlots(players, slots){
   if(slots.length===0) return true;
   if(players.length < slots.length) return false;
-  const match = new Map(); // player id -> slot index
+  const match = new Map();
   function dfs(slotIndex, seen){
     const slot=slots[slotIndex];
     for(const p of players){
@@ -115,47 +113,57 @@ function feasibleAssignment(room, managerId, pos){
   return !!slots && canMatchPlayersToSlots(futurePlayers(room),slots);
 }
 function bestAssignmentFor(room, player, m){
-  for(const pos of positionChoices(player,m)){
-    if(feasibleAssignment(room,m.id,pos)) return pos;
-  }
+  for(const pos of positionChoices(player,m)) if(feasibleAssignment(room,m.id,pos)) return pos;
   return null;
 }
-function skippingCurrentIsSafe(room){
-  return canMatchPlayersToSlots(futurePlayers(room),slotEntries(room));
-}
-function forcedOptions(room, player){
+function skippingCurrentIsSafe(room){ return canMatchPlayersToSlots(futurePlayers(room),slotEntries(room)); }
+function forcedManagerOptions(room, player){
   const options=[];
   for(const m of room.managers.values()){
     if(maxBid(m)<MIN_BID) continue;
-    for(const pos of positionChoices(player,m)){
-      if(feasibleAssignment(room,m.id,pos)) options.push({manager:m,pos});
-    }
+    const pos=bestAssignmentFor(room,player,m);
+    if(pos) options.push({manager:m,pos});
   }
   return options;
 }
 function computeMandatory(room, player){
   if(skippingCurrentIsSafe(room)) return [];
-  return [...new Set(forcedOptions(room,player).map(x=>x.manager.id))];
+  return forcedManagerOptions(room,player).map(x=>x.manager.id);
+}
+function allComplete(room){ return [...room.managers.values()].every(m=>m.squad.length===11); }
+
+function tierAwareShuffle(candidates){
+  // Keep randomness, but avoid every draft accidentally being all superstars or all depth players.
+  const buckets=new Map();
+  for(const p of candidates){ if(!buckets.has(p.tier)) buckets.set(p.tier,[]); buckets.get(p.tier).push(p); }
+  const ordered=[];
+  const tiers=[...buckets.keys()].sort((a,b)=>a-b);
+  while(ordered.length<candidates.length){
+    for(const t of tiers){
+      const b=buckets.get(t);
+      if(b.length){ const i=Math.floor(Math.random()*b.length); ordered.push(b.splice(i,1)[0]); }
+    }
+  }
+  // add a final shuffle so tier isn't visible as an auction-order pattern
+  return shuffle(ordered);
 }
 
-function allComplete(room){ return [...room.managers.values()].every(m=>m.squad.length===11); }
 function buildPool(room){
+  const db=packPlayers(room.pack);
   const needs={};
   for(const m of room.managers.values()) for(const p of FORMATIONS[m.formation]) needs[p]=(needs[p]||0)+1;
   const positions=Object.keys(needs).sort((a,b)=>{
-    const ca=PLAYER_DB.filter(p=>p.positions.includes(a)).length;
-    const cb=PLAYER_DB.filter(p=>p.positions.includes(b)).length;
+    const ca=db.filter(p=>p.positions.includes(a)).length;
+    const cb=db.filter(p=>p.positions.includes(b)).length;
     return ca-cb;
   });
 
-  // Try several randomised builds. Each exact position gets only one extra
-  // player beyond total demand, matching the agreed "one skip" rule.
-  for(let attempt=0; attempt<200; attempt++){
+  for(let attempt=0; attempt<300; attempt++){
     const selected=[]; const selectedIds=new Set();
     let failed=false;
     for(const pos of positions){
       const want=needs[pos]+1;
-      const candidates=shuffle(PLAYER_DB.filter(p=>p.positions.includes(pos) && !selectedIds.has(p.id)));
+      const candidates=tierAwareShuffle(db.filter(p=>p.positions.includes(pos) && !selectedIds.has(p.id)));
       if(candidates.length < want){ failed=true; break; }
       for(const p of candidates.slice(0,want)){ selected.push(p); selectedIds.add(p.id); }
     }
@@ -164,15 +172,14 @@ function buildPool(room){
     for(const m of room.managers.values()) FORMATIONS[m.formation].forEach((pos,i)=>slots.push({key:`${m.id}:${pos}:${i}`,managerId:m.id,pos}));
     if(canMatchPlayersToSlots(selected,slots)) return shuffle(selected);
   }
-  throw new Error('Could not build a balanced player pool for these formations.');
+  throw new Error('Could not build a balanced player pool for these formations and this pack.');
 }
+
 function startNext(room){
   if(allComplete(room)){
     room.phase='finished'; room.current=null; clearInterval(room.timer); room.timer=null; io.to(room.code).emit('state', roomPublic(room)); return;
   }
 
-  // Never waste 15 seconds on a footballer that cannot fill an open slot for
-  // any manager. Keep advancing until a usable player is found.
   let player=null;
   while(room.auctionIndex < room.pool.length){
     const candidate=room.pool[room.auctionIndex++];
@@ -203,11 +210,11 @@ function finishAuction(room){
       m.squad.push({...c.player, assignedPosition:c.bidPosition, price:c.bid});
     }
   } else if(!skippingCurrentIsSafe(room)){
-    // If passing would make an XI impossible, this player cannot be skipped.
-    // Pick a legal manager/position that preserves completion of every XI.
-    const options=forcedOptions(room,c.player).sort((a,b)=>maxBid(a.manager)-maxBid(b.manager));
-    const pick=options[0];
-    if(pick){
+    // Agreed rule: if the player cannot safely be skipped and nobody bids,
+    // choose randomly among eligible MANAGERS (not position-options), for £1m.
+    const options=forcedManagerOptions(room,c.player);
+    if(options.length){
+      const pick=options[Math.floor(Math.random()*options.length)];
       pick.manager.budget-=MIN_BID;
       pick.manager.squad.push({...c.player, assignedPosition:pick.pos, price:MIN_BID, forced:true});
     }
@@ -221,7 +228,7 @@ io.on('connection', socket=>{
   socket.on('createRoom', ({name},cb)=>{
     const code=roomCode();
     const m={id:socket.id,name:cleanName(name),formation:null,ready:false,budget:STARTING_BUDGET,squad:[]};
-    const room={code,hostId:socket.id,phase:'lobby',managers:new Map([[socket.id,m]]),pool:[],auctionIndex:0,current:null,timer:null};
+    const room={code,hostId:socket.id,phase:'lobby',pack:DEFAULT_PACK,managers:new Map([[socket.id,m]]),pool:[],auctionIndex:0,current:null,timer:null};
     rooms.set(code,room); socket.join(code); socket.data.room=code; cb?.({ok:true,code,state:roomPublic(room)});
     io.to(code).emit('state',roomPublic(room));
   });
@@ -230,6 +237,14 @@ io.on('connection', socket=>{
     if(!room || room.phase!=='lobby') return cb?.({ok:false,error:'Room not found or draft already started.'});
     const m={id:socket.id,name:cleanName(name),formation:null,ready:false,budget:STARTING_BUDGET,squad:[]};
     room.managers.set(socket.id,m); socket.join(code); socket.data.room=code; cb?.({ok:true,state:roomPublic(room)}); io.to(code).emit('state',roomPublic(room));
+  });
+  socket.on('setPack', ({pack})=>{
+    const room=rooms.get(socket.data.room);
+    const valid=pack==='chaos'||Object.prototype.hasOwnProperty.call(PACKS,pack);
+    if(!room||room.phase!=='lobby'||socket.id!==room.hostId||!valid) return;
+    room.pack=pack;
+    for(const m of room.managers.values()) m.ready=false;
+    io.to(room.code).emit('state',roomPublic(room));
   });
   socket.on('setFormation', ({formation})=>{
     const room=rooms.get(socket.data.room); if(!room||room.phase!=='lobby'||!FORMATIONS[formation]) return;
@@ -244,7 +259,8 @@ io.on('connection', socket=>{
     if(room.managers.size<2) return cb?.({ok:false,error:'At least 2 managers are required.'});
     if([...room.managers.values()].some(m=>!m.formation||!m.ready)) return cb?.({ok:false,error:'Everyone must choose a formation and be ready.'});
     for(const m of room.managers.values()){m.budget=STARTING_BUDGET;m.squad=[];}
-    try { room.pool=buildPool(room); } catch(e) { return cb?.({ok:false,error:e.message}); } room.auctionIndex=0; room.phase='draft'; cb?.({ok:true}); startNext(room);
+    try { room.pool=buildPool(room); } catch(e) { return cb?.({ok:false,error:e.message}); }
+    room.auctionIndex=0; room.phase='draft'; cb?.({ok:true}); startNext(room);
   });
   socket.on('bid', ({amount},cb)=>{
     const room=rooms.get(socket.data.room); const m=room?.managers.get(socket.id); const c=room?.current;
