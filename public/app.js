@@ -201,6 +201,44 @@ function teamBuild(){
   document.querySelector('#teamReady').onclick=()=>socket.emit('setTeamReady',{ready:!m.teamReady},r=>{if(r&&!r.ok)showToast(r.error)});
 }
 
+
+function ratingsHtml(m){
+  const r=state.teamRatings?.[m.id];
+  if(!r)return '';
+  return `<div class="ratings"><div class="overall-rating"><span>OVERALL</span><strong>${r.overall}</strong></div><div class="rating-grid"><div><span>Attack</span><b>${r.attack}</b></div><div><span>Midfield</span><b>${r.midfield}</b></div><div><span>Defence</span><b>${r.defence}</b></div><div><span>Positional Fit</span><b>${r.positionalFit}</b></div><div><span>Team Balance</span><b>${r.teamBalance}</b></div><div><span>Formation Fit</span><b>${r.formationSuitability}</b></div></div></div>`;
+}
+function revealedTeamHtml(m){
+  if(state.mode==='freeform'){
+    return `<div class="card team-reveal"><div class="budget"><div><h2>${esc(m.name)}</h2><div class="muted">${esc(m.finalFormation||'XI')}</div></div><b>£${m.budget}m left</b></div>${ratingsHtml(m)}${pitchHtml(m,false)}</div>`;
+  }
+  return `<div class="card team-reveal"><div class="budget"><div><h2>${esc(m.name)}</h2><div class="muted">${esc(m.formation||'XI')}</div></div><b>£${m.budget}m left</b></div>${ratingsHtml(m)}<div class="squad">${hardSquadHtml(m)}</div></div>`;
+}
+function reveal(){
+  const host=state.hostId===meId;
+  shell(`<div class="card"><h1>Teams revealed</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p><p class="muted small">Individual player ratings remain hidden. These team scores judge the XI as deployed.</p></div>${state.managers.map(revealedTeamHtml).join('')}<div class="card"><h2>Season simulation</h2><p class="muted">Every team will play home and away. With two managers, you will play four matches total (two home, two away). Close teams can upset each other; major quality gaps should usually tell.</p></div>${host?'<button class="primary big" id="simulate">Simulate season</button>':'<div class="card muted">Waiting for the host to start the simulation.</div>'}`);
+  if(host)document.querySelector('#simulate').onclick=()=>socket.emit('startSimulation',{},r=>{if(r&&!r.ok)showToast(r.error)});
+}
+function scorerList(goals){
+  return (goals||[]).length ? goals.map(g=>`${esc(g.player)} ${g.minute}'`).join(' · ') : '—';
+}
+function matchHtml(m,label='League match'){
+  const pen=m.penalties?` <span class="pens">(${m.penalties.home}–${m.penalties.away} pens)</span>`:'';
+  const et=m.wentExtraTime?' · AET':'';
+  return `<div class="match-card"><div class="match-label">${esc(label)}${et}</div><div class="scoreline"><div><b>${esc(m.homeName)}</b><span>HOME</span></div><strong>${m.homeGoals}–${m.awayGoals}${pen}</strong><div class="right-team"><b>${esc(m.awayName)}</b><span>AWAY</span></div></div><div class="scorers"><div><b>${esc(m.homeName)}:</b> ${scorerList(m.homeScorers)}</div><div><b>${esc(m.awayName)}:</b> ${scorerList(m.awayScorers)}</div></div></div>`;
+}
+function standingsHtml(rows){
+  return `<div class="table-wrap"><table class="standings"><thead><tr><th>#</th><th>Manager</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(rows||[]).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.name)}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td><b>${r.pts}</b></td></tr>`).join('')}</tbody></table></div>`;
+}
+function results(){
+  const host=state.hostId===meId;
+  const sim=state.simulation;
+  if(!sim)return reveal();
+  const champion=state.managers.find(m=>m.id===sim.championId);
+  const playoffs=(sim.playoffs||[]).length?`<div class="card"><h2>Title tiebreak</h2><p class="muted small">The league tiebreakers could not separate the leaders, so the title was decided on the pitch.</p>${sim.playoffs.map(m=>matchHtml(m,'Tiebreak playoff')).join('')}</div>`:'';
+  shell(`<div class="card champion"><div class="muted">SIMULATION WINNER</div><h1>🏆 ${esc(champion?.name||'Winner')}</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p></div><div class="card"><h2>Final table</h2>${standingsHtml(sim.table)}</div>${playoffs}<div class="card"><h2>Match results</h2><div class="matches">${(sim.matches||[]).map(m=>matchHtml(m)).join('')}</div></div><div class="card"><h2>Team ratings</h2><p class="muted small">The ratings used to drive the simulation. Individual player ratings stay hidden.</p>${state.managers.map(m=>`<div class="rating-summary"><div><b>${esc(m.name)}</b><span>${state.mode==='freeform'?esc(m.finalFormation||'XI'):esc(m.formation||'XI')}</span></div><strong>${state.teamRatings?.[m.id]?.overall??'—'}</strong></div>`).join('')}</div>${host?'<button class="primary big" id="again">Play again</button>':'<div class="card muted">Waiting for the host to start another game.</div>'}`);
+  if(host)document.querySelector('#again').onclick=()=>socket.emit('playAgain',{});
+}
+
 function finished(){
   const host=state.hostId===meId;
   if(state.mode==='freeform'){
@@ -216,6 +254,8 @@ function render(){
   if(state.phase==='lobby')lobby();
   else if(state.phase==='draft')draft();
   else if(state.phase==='team_build')teamBuild();
+  else if(state.phase==='reveal')reveal();
+  else if(state.phase==='results')results();
   else finished();
 }
 
