@@ -1,38 +1,236 @@
-const socket=io(); const app=document.querySelector('#app'); const toast=document.querySelector('#toast');
-let state=null, meId=null, tab='draft';
-const FORMATIONS=['4-4-2','4-3-3','4-2-3-1','3-5-2','3-4-3','5-3-2'];
-const SLOTS={
-'4-4-2':['GK','LB','CB','CB','RB','LM','CM','CM','RM','ST','ST'],
-'4-3-3':['GK','LB','CB','CB','RB','CM','CM','CM','LW','ST','RW'],
-'4-2-3-1':['GK','LB','CB','CB','RB','DM','DM','LW','AM','RW','ST'],
-'3-5-2':['GK','CB','CB','CB','LM','CM','CM','AM','RM','ST','ST'],
-'3-4-3':['GK','CB','CB','CB','LM','CM','CM','RM','LW','ST','RW'],
-'5-3-2':['GK','LB','CB','CB','CB','RB','CM','CM','CM','ST','ST']};
-function showToast(msg){toast.textContent=msg;toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2400)}
+const socket=io();
+const app=document.querySelector('#app');
+const toast=document.querySelector('#toast');
+let state=null;
+let meId=null;
+let tab='draft';
+let selectedLineupSlot=null;
+
+const HARD_FORMATIONS=['4-4-2','4-3-3','4-2-3-1','3-5-2','3-4-3','5-3-2'];
+const HARD_SLOTS={
+  '4-4-2':['GK','LB','CB','CB','RB','LM','CM','CM','RM','ST','ST'],
+  '4-3-3':['GK','LB','CB','CB','RB','CM','CM','CM','LW','ST','RW'],
+  '4-2-3-1':['GK','LB','CB','CB','RB','DM','DM','LW','AM','RW','ST'],
+  '3-5-2':['GK','CB','CB','CB','LM','CM','CM','AM','RM','ST','ST'],
+  '3-4-3':['GK','CB','CB','CB','LM','CM','CM','RM','LW','ST','RW'],
+  '5-3-2':['GK','LB','CB','CB','CB','RB','CM','CM','CM','ST','ST']
+};
+
+// Slot arrays use the same order as the server. Rows control how the XI is drawn on screen.
+const FF_LAYOUTS={
+  '4-3-3':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','LW','ST','RW'],rows:[[8,9,10],[5,6,7],[1,2,3,4],[0]]},
+  '4-4-2':{slots:['GK','LB','CB','CB','RB','LM','CM','CM','RM','ST','ST'],rows:[[9,10],[5,6,7,8],[1,2,3,4],[0]]},
+  '4-2-3-1':{slots:['GK','LB','CB','CB','RB','DM','DM','LW','AM','RW','ST'],rows:[[10],[7,8,9],[5,6],[1,2,3,4],[0]]},
+  '4-1-4-1':{slots:['GK','LB','CB','CB','RB','DM','LM','CM','CM','RM','ST'],rows:[[10],[6,7,8,9],[5],[1,2,3,4],[0]]},
+  '4-3-1-2':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','AM','ST','ST'],rows:[[9,10],[8],[5,6,7],[1,2,3,4],[0]]},
+  '4-2-2-2':{slots:['GK','LB','CB','CB','RB','DM','DM','AM','AM','ST','ST'],rows:[[9,10],[7,8],[5,6],[1,2,3,4],[0]]},
+  '4-1-2-1-2':{slots:['GK','LB','CB','CB','RB','DM','CM','CM','AM','ST','ST'],rows:[[9,10],[8],[6,7],[5],[1,2,3,4],[0]]},
+  '4-3-2-1':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','AM','AM','ST'],rows:[[10],[8,9],[5,6,7],[1,2,3,4],[0]]},
+  '3-5-2':{slots:['GK','CB','CB','CB','LM','CM','CM','AM','RM','ST','ST'],rows:[[9,10],[7],[4,5,6,8],[1,2,3],[0]]},
+  '3-4-3':{slots:['GK','CB','CB','CB','LM','CM','CM','RM','LW','ST','RW'],rows:[[8,9,10],[4,5,6,7],[1,2,3],[0]]},
+  '3-4-2-1':{slots:['GK','CB','CB','CB','LM','CM','CM','RM','AM','AM','ST'],rows:[[10],[8,9],[4,5,6,7],[1,2,3],[0]]},
+  '3-4-1-2':{slots:['GK','CB','CB','CB','LM','CM','CM','RM','AM','ST','ST'],rows:[[9,10],[8],[4,5,6,7],[1,2,3],[0]]},
+  '5-3-2':{slots:['GK','LB','CB','CB','CB','RB','CM','CM','CM','ST','ST'],rows:[[9,10],[6,7,8],[1,2,3,4,5],[0]]},
+  '5-2-3':{slots:['GK','LB','CB','CB','CB','RB','CM','CM','LW','ST','RW'],rows:[[8,9,10],[6,7],[1,2,3,4,5],[0]]},
+  '5-4-1':{slots:['GK','LB','CB','CB','CB','RB','LM','CM','CM','RM','ST'],rows:[[10],[6,7,8,9],[1,2,3,4,5],[0]]},
+  '5-2-1-2':{slots:['GK','LB','CB','CB','CB','RB','CM','CM','AM','ST','ST'],rows:[[9,10],[8],[6,7],[1,2,3,4,5],[0]]}
+};
+
+function showToast(msg){
+  toast.textContent=msg;
+  toast.classList.add('show');
+  setTimeout(()=>toast.classList.remove('show'),2600);
+}
 function q(name){return new URLSearchParams(location.search).get(name)}
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
 function me(){return state?.managers.find(m=>m.id===meId)}
 function managerName(id){return state?.managers.find(m=>m.id===id)?.name||'—'}
 function packName(){return state?.packLabels?.[state.pack]||'Player Pack'}
-function assignedSlots(m){const slots=(SLOTS[m.formation]||[]).map((pos,i)=>({pos,i,player:null})); for(const p of m.squad){const assigned=p.assignedPosition||p.positions?.[0];let s=slots.find(x=>!x.player&&x.pos===assigned);if(!s)s=slots.find(x=>!x.player&&p.positions.includes(x.pos));if(s)s.player=p;}return slots}
+function modeName(){return state?.modeLabels?.[state.mode]||'Game Mode'}
 function shell(content){app.innerHTML=`<div class="wrap"><div class="brand">⚽ Prem Draft</div>${content}</div>`}
-function home(){const code=q('room')||'';shell(`<div class="card"><h1>Football Auction Draft</h1><p class="muted">Build your best XI with a £100m budget.</p><label>Manager name</label><input id="name" maxlength="20" placeholder="Your name"><div style="height:10px"></div>${code?`<div class="row"><input id="code" value="${esc(code)}"><button class="primary" id="join">Join room</button></div>`:`<button class="primary big" id="create">Create game</button><div style="height:10px"></div><div class="row"><input id="code" placeholder="Room code"><button class="secondary" id="join">Join</button></div>`}</div>`);
- if(document.querySelector('#create')) document.querySelector('#create').onclick=()=>{const name=document.querySelector('#name').value;socket.emit('createRoom',{name},r=>{if(!r.ok)return showToast(r.error);meId=socket.id;history.replaceState({},'',`?room=${r.code}`);state=r.state;render()})};
- document.querySelector('#join').onclick=()=>{const name=document.querySelector('#name').value,code=document.querySelector('#code').value;socket.emit('joinRoom',{code,name},r=>{if(!r.ok)return showToast(r.error);meId=socket.id;state=r.state;history.replaceState({},'',`?room=${state.code}`);render()})};
+
+function assignedSlots(m){
+  const slots=(HARD_SLOTS[m.formation]||[]).map((pos,i)=>({pos,i,player:null}));
+  for(const p of m.squad){
+    const assigned=p.assignedPosition||p.positions?.[0];
+    let s=slots.find(x=>!x.player&&x.pos===assigned);
+    if(!s)s=slots.find(x=>!x.player&&p.positions.includes(x.pos));
+    if(s)s.player=p;
+  }
+  return slots;
 }
-function lobby(){const m=me(),host=state.hostId===meId; const packOptions=Object.entries(state.packLabels||{}).map(([key,label])=>`<option value="${key}" ${state.pack===key?'selected':''}>${esc(label)} (${state.packCounts?.[key]||0} players)</option>`).join(''); shell(`<div class="card"><div class="muted">ROOM CODE</div><div class="row"><div class="code grow">${state.code}</div><button class="secondary" id="copy">Copy link</button></div></div><div class="card"><h2>Player pack</h2>${host?`<select id="pack">${packOptions}</select><p class="muted small">Changing the pack makes everyone ready up again.</p>`:`<div class="pack-display"><b>${esc(packName())}</b><span class="muted">${state.packCounts?.[state.pack]||0} players</span></div>`}</div><div class="card"><h2>Your formation</h2><select id="formation"><option value="">Choose formation</option>${FORMATIONS.map(f=>`<option ${m.formation===f?'selected':''}>${f}</option>`).join('')}</select><div style="height:10px"></div><button class="${m.ready?'secondary':'primary'} big" id="ready" ${!m.formation?'disabled':''}>${m.ready?'Not ready':'Ready'}</button></div><div class="card"><h2>Managers</h2>${state.managers.map(x=>`<div class="manager"><div><b>${esc(x.name)}</b><div class="muted">${x.formation||'No formation'}</div></div><div class="${x.ready?'ready':'notready'}">${x.ready?'READY':'WAITING'}</div></div>`).join('')}</div>${host?`<button class="primary big" id="start">Start draft</button>`:''}`);
- document.querySelector('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(location.href);showToast('Invite link copied')}catch{showToast('Copy the page address from your browser')}};
- if(host) document.querySelector('#pack').onchange=e=>socket.emit('setPack',{pack:e.target.value});
- document.querySelector('#formation').onchange=e=>socket.emit('setFormation',{formation:e.target.value}); document.querySelector('#ready').onclick=()=>socket.emit('setReady',{ready:!m.ready});
- if(host) document.querySelector('#start').onclick=()=>socket.emit('startDraft',{},r=>{if(r&&!r.ok)showToast(r.error)});
+function hardSquadHtml(m){
+  return assignedSlots(m).map(s=>`<div class="slot"><b>${s.pos}</b><div>${s.player?esc(s.player.name):'—'}</div></div><div class="slot slot-price">${s.player?`£${s.player.price}m`:''}</div>`).join('');
 }
-function squadHtml(m){return assignedSlots(m).map(s=>`<div class="slot"><b>${s.pos}</b><div>${s.player?esc(s.player.name):'—'}</div></div><div class="slot" style="text-align:right">${s.player?`£${s.player.price}m`:''}</div>`).join('')}
-function draft(){const m=me(); const c=state.current; const currentBid=c?.bid||0; const next=currentBid+1; const mandatory=c?.mandatoryIds?.includes(meId); shell(`<div class="pack-strip">${esc(packName())}</div><div class="tabs"><button class="tab ${tab==='draft'?'active':''}" data-tab="draft">Draft</button><button class="tab ${tab==='team'?'active':''}" data-tab="team">My Team</button><button class="tab ${tab==='managers'?'active':''}" data-tab="managers">Managers</button></div><div id="panel"></div>`); document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;draft()}); const panel=document.querySelector('#panel');
- if(tab==='draft') panel.innerHTML=`<div class="card budget"><div><div class="muted">YOUR BUDGET</div><strong>£${m.budget}m</strong></div><div style="text-align:right"><div class="muted">SQUAD</div><strong>${m.squad.length}/11</strong></div></div>${c ? `<div class="card auction"><div id="timer" class="timer ${c.timeLeft<=5?'warn':''}">${c.timeLeft}</div><div class="player">${esc(c.player.name)}</div><div class="positions">${c.player.positions.join(' / ')}</div>${mandatory ? '<div class="required">This player cannot safely be skipped. If nobody bids, they will be randomly assigned for £1m to one eligible manager.</div>' : ''}<div class="bidvalue">£${currentBid}m</div><div class="leader">${c.bidderId ? esc(managerName(c.bidderId)) + ' leads' : 'No bids yet'}</div><div style="height:14px"></div><button class="primary big" id="bid">BID £${next}m</button><div style="height:9px"></div><div class="row"><button class="secondary grow jump" data-jump="2">+£2m</button><button class="secondary grow jump" data-jump="5">+£5m</button><button class="secondary grow" id="custom">Custom</button></div></div>` : '<div class="card">Loading next player…</div>'}`;
- if(tab==='team') panel.innerHTML=`<div class="card"><h2>${m.formation} · £${m.budget}m left</h2><div class="squad">${squadHtml(m)}</div></div>`;
- if(tab==='managers') panel.innerHTML=state.managers.map(x=>`<div class="card"><div class="budget"><h3>${esc(x.name)}</h3><b>£${x.budget}m · ${x.squad.length}/11</b></div><div>${x.squad.map(p=>`<span class="pill">${esc(p.name)} · ${p.assignedPosition} · £${p.price}m</span>`).join('')||'<span class="muted">No players yet</span>'}</div></div>`).join('');
- if(tab==='draft'&&c){const send=(amt)=>socket.emit('bid',{amount:amt},r=>{if(r&&!r.ok)showToast(r.error)});document.querySelector('#bid').onclick=()=>send(next);document.querySelectorAll('.jump').forEach(b=>b.onclick=()=>send(currentBid+Number(b.dataset.jump)));document.querySelector('#custom').onclick=()=>{const v=prompt('Bid amount in £m',String(next));if(v)send(Number(v))}}
+function freeformDraftSquadHtml(m){
+  return m.squad.length ? m.squad.map((p,i)=>`<div class="simple-player"><div><b>${i+1}. ${esc(p.name)}</b><div class="muted small">${p.positions.join(' / ')}</div></div><b>£${p.price}m</b></div>`).join('') : '<div class="muted">No players yet.</div>';
 }
-function finished(){const host=state.hostId===meId;shell(`<div class="card"><h1>Draft complete</h1><p class="muted">${esc(packName())}</p></div>${state.managers.map(m=>`<div class="card"><div class="budget"><h2>${esc(m.name)}</h2><b>${m.formation} · £${m.budget}m left</b></div><div class="squad">${squadHtml(m)}</div></div>`).join('')}${host?'<button class="primary big" id="again">Play again</button>':'<div class="card muted">Waiting for the host to start another game.</div>'}`);if(host)document.querySelector('#again').onclick=()=>socket.emit('playAgain',{})}
-function render(){if(!state)return home();if(state.phase==='lobby')lobby();else if(state.phase==='draft')draft();else finished()}
-socket.on('state',s=>{state=s;if(!meId)meId=socket.id;render()});socket.on('tick',({timeLeft})=>{if(state?.current){state.current.timeLeft=timeLeft;const t=document.querySelector('#timer');if(t){t.textContent=timeLeft;t.classList.toggle('warn',timeLeft<=5)}}});home();
+
+function home(){
+  const code=q('room')||'';
+  shell(`<div class="card"><h1>Football Auction Draft</h1><p class="muted">Build your XI with a £100m budget.</p><label>Manager name</label><input id="name" maxlength="20" placeholder="Your name"><div class="spacer10"></div>${code?`<div class="row mobile-stack"><input id="code" value="${esc(code)}"><button class="primary" id="join">Join room</button></div>`:`<button class="primary big" id="create">Create game</button><div class="spacer10"></div><div class="row mobile-stack"><input id="code" placeholder="Room code"><button class="secondary" id="join">Join</button></div>`}</div>`);
+  const create=document.querySelector('#create');
+  if(create) create.onclick=()=>{
+    const name=document.querySelector('#name').value;
+    socket.emit('createRoom',{name},r=>{
+      if(!r.ok)return showToast(r.error);
+      meId=socket.id; history.replaceState({},'',`?room=${r.code}`); state=r.state; render();
+    });
+  };
+  document.querySelector('#join').onclick=()=>{
+    const name=document.querySelector('#name').value,code=document.querySelector('#code').value;
+    socket.emit('joinRoom',{code,name},r=>{
+      if(!r.ok)return showToast(r.error);
+      meId=socket.id; state=r.state; history.replaceState({},'',`?room=${state.code}`); render();
+    });
+  };
+}
+
+function lobby(){
+  const m=me(),host=state.hostId===meId;
+  const packOptions=Object.entries(state.packLabels||{}).map(([key,label])=>`<option value="${key}" ${state.pack===key?'selected':''}>${esc(label)} (${state.packCounts?.[key]||0} players)</option>`).join('');
+  const modeOptions=Object.entries(state.modeLabels||{}).map(([key,label])=>`<option value="${key}" ${state.mode===key?'selected':''}>${esc(label)}</option>`).join('');
+  const modeDescription=state.mode==='freeform'
+    ? 'Draft any 11 players. Positions are advice only. Choose and arrange your formation after the auction.'
+    : 'Choose your formation now. Every signing must fit an open position and players stay in the slot they are assigned.';
+
+  const formationCard=state.mode==='hard' ? `<div class="card"><h2>Your formation</h2><select id="formation"><option value="">Choose formation</option>${HARD_FORMATIONS.map(f=>`<option ${m.formation===f?'selected':''}>${f}</option>`).join('')}</select><div class="spacer10"></div><button class="${m.ready?'secondary':'primary'} big" id="ready" ${!m.formation?'disabled':''}>${m.ready?'Not ready':'Ready'}</button></div>` : `<div class="card"><h2>Your draft</h2><p class="muted">No formation yet. Draft any 11 players; you will build your XI after the auction.</p><button class="${m.ready?'secondary':'primary'} big" id="ready">${m.ready?'Not ready':'Ready'}</button></div>`;
+
+  shell(`<div class="card"><div class="muted">ROOM CODE</div><div class="row"><div class="code grow">${state.code}</div><button class="secondary" id="copy">Copy link</button></div></div>
+  <div class="card"><h2>Game mode</h2>${host?`<select id="mode">${modeOptions}</select>`:`<div class="pack-display"><b>${esc(modeName())}</b></div>`}<p class="muted small">${esc(modeDescription)}</p></div>
+  <div class="card"><h2>Player pack</h2>${host?`<select id="pack">${packOptions}</select><p class="muted small">Changing the pack makes everyone ready up again.</p>`:`<div class="pack-display"><b>${esc(packName())}</b><span class="muted">${state.packCounts?.[state.pack]||0} players</span></div>`}</div>
+  ${formationCard}
+  <div class="card"><h2>Managers</h2>${state.managers.map(x=>`<div class="manager"><div><b>${esc(x.name)}</b><div class="muted">${state.mode==='hard'?(x.formation||'No formation'):'Formation after draft'}</div></div><div class="${x.ready?'ready':'notready'}">${x.ready?'READY':'WAITING'}</div></div>`).join('')}</div>
+  ${host?`<button class="primary big" id="start">Start draft</button>`:''}`);
+
+  document.querySelector('#copy').onclick=async()=>{
+    try{await navigator.clipboard.writeText(location.href);showToast('Invite link copied')}catch{showToast('Copy the page address from your browser')}
+  };
+  if(host){
+    document.querySelector('#mode').onchange=e=>socket.emit('setMode',{mode:e.target.value});
+    document.querySelector('#pack').onchange=e=>socket.emit('setPack',{pack:e.target.value});
+  }
+  if(state.mode==='hard') document.querySelector('#formation').onchange=e=>socket.emit('setFormation',{formation:e.target.value});
+  document.querySelector('#ready').onclick=()=>socket.emit('setReady',{ready:!m.ready});
+  if(host) document.querySelector('#start').onclick=()=>socket.emit('startDraft',{},r=>{if(r&&!r.ok)showToast(r.error)});
+}
+
+function scarcityHtml(c){
+  const warnings=c?.scarcityWarnings||[];
+  return warnings.map(w=>{
+    const managerText=w.managersLacking===1?'1 manager still has no natural':'Managers still without a natural';
+    const lackingText=w.managersLacking===1?`${managerText} ${w.position}.`:`${w.managersLacking} managers still have no natural ${w.position}.`;
+    const afterText=w.remainingAfter===1?`If this player is skipped, only 1 eligible ${w.position} will remain.`:`If this player is skipped, only ${w.remainingAfter} eligible ${w.position}s will remain.`;
+    return `<div class="scarcity"><b>${w.position} scarcity warning</b><div>${esc(lackingText)} ${esc(afterText)}</div></div>`;
+  }).join('');
+}
+
+function draft(){
+  const m=me(); const c=state.current; const currentBid=c?.bid||0; const next=currentBid+1; const mandatory=c?.mandatoryIds?.includes(meId);
+  shell(`<div class="mode-strip">${esc(modeName())} · ${esc(packName())}</div><div class="tabs"><button class="tab ${tab==='draft'?'active':''}" data-tab="draft">Draft</button><button class="tab ${tab==='team'?'active':''}" data-tab="team">My Team</button><button class="tab ${tab==='managers'?'active':''}" data-tab="managers">Managers</button></div><div id="panel"></div>`);
+  document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;draft()});
+  const panel=document.querySelector('#panel');
+
+  if(tab==='draft'){
+    const complete=m.squad.length>=11;
+    panel.innerHTML=`<div class="card budget"><div><div class="muted">YOUR BUDGET</div><strong>£${m.budget}m</strong></div><div class="right"><div class="muted">SQUAD</div><strong>${m.squad.length}/11</strong></div></div>${c ? `<div class="card auction"><div id="timer" class="timer ${c.timeLeft<=5?'warn':''}">${c.timeLeft}</div><div class="player">${esc(c.player.name)}</div><div class="positions">${c.player.positions.join(' / ')}</div>${state.mode==='freeform'?scarcityHtml(c):''}${mandatory?`<div class="required">${state.mode==='freeform'?'The draft has reached its compulsory endgame. If nobody bids, this player will be randomly assigned for £1m to a manager who still has space.':'This player cannot safely be skipped. If nobody bids, they will be randomly assigned for £1m to one eligible manager.'}</div>`:''}<div class="bidvalue">£${currentBid}m</div><div class="leader">${c.bidderId?esc(managerName(c.bidderId))+' leads':'No bids yet'}</div><div class="spacer14"></div>${complete?'<button class="secondary big" disabled>Your squad is complete</button>':`<button class="primary big" id="bid">BID £${next}m</button><div class="spacer9"></div><div class="row"><button class="secondary grow jump" data-jump="2">+£2m</button><button class="secondary grow jump" data-jump="5">+£5m</button><button class="secondary grow" id="custom">Custom</button></div>`}</div>`:'<div class="card">Loading next player…</div>'}`;
+  }
+  if(tab==='team'){
+    panel.innerHTML=state.mode==='freeform'
+      ? `<div class="card"><div class="budget"><h2>Your 11</h2><b>£${m.budget}m left</b></div>${freeformDraftSquadHtml(m)}</div>`
+      : `<div class="card"><h2>${m.formation} · £${m.budget}m left</h2><div class="squad">${hardSquadHtml(m)}</div></div>`;
+  }
+  if(tab==='managers'){
+    panel.innerHTML=state.managers.map(x=>`<div class="card"><div class="budget"><h3>${esc(x.name)}</h3><b>£${x.budget}m · ${x.squad.length}/11</b></div><div>${x.squad.map(p=>`<span class="pill">${esc(p.name)} · ${state.mode==='hard'?esc(p.assignedPosition||'—'):esc(p.positions.join('/'))} · £${p.price}m</span>`).join('')||'<span class="muted">No players yet</span>'}</div></div>`).join('');
+  }
+
+  if(tab==='draft'&&c&&m.squad.length<11){
+    const send=amt=>socket.emit('bid',{amount:amt},r=>{if(r&&!r.ok)showToast(r.error)});
+    document.querySelector('#bid').onclick=()=>send(next);
+    document.querySelectorAll('.jump').forEach(b=>b.onclick=()=>send(currentBid+Number(b.dataset.jump)));
+    document.querySelector('#custom').onclick=()=>{
+      const v=prompt('Bid amount in £m',String(next));
+      if(v)send(Number(v));
+    };
+  }
+}
+
+function playerForLineup(m,slotIndex){
+  const id=m.lineup?.[slotIndex];
+  return m.squad.find(p=>p.id===id)||null;
+}
+function pitchHtml(m,editable=false){
+  const layout=FF_LAYOUTS[m.finalFormation];
+  if(!layout) return '<div class="muted">Choose a formation to start arranging your XI.</div>';
+  return `<div class="pitch">${layout.rows.map(row=>`<div class="pitch-row cols-${row.length}">${row.map(idx=>{
+    const p=playerForLineup(m,idx);
+    const cls=editable&&selectedLineupSlot===idx?'pitch-slot selected':'pitch-slot';
+    return `<button type="button" class="${cls}" ${editable?`data-slot="${idx}"`: 'disabled'}><span class="slot-label">${layout.slots[idx]}</span><span class="slot-name">${p?esc(p.name):'Empty'}</span></button>`;
+  }).join('')}</div>`).join('')}</div>`;
+}
+
+function teamBuild(){
+  const m=me();
+  const formationOptions=(state.freeformFormations||Object.keys(FF_LAYOUTS)).map(f=>`<option value="${f}" ${m.finalFormation===f?'selected':''}>${f}</option>`).join('');
+  const readyCount=state.managers.filter(x=>x.teamReady).length;
+  shell(`<div class="mode-strip">Freeform team builder · ${esc(packName())}</div>
+    <div class="card"><div class="budget"><div><h1>Build your XI</h1><p class="muted no-margin">Positions are completely unrestricted.</p></div><b>${readyCount}/${state.managers.length} set</b></div></div>
+    <div class="card"><label>Formation</label><select id="finalFormation"><option value="">Choose formation</option>${formationOptions}</select></div>
+    <div class="card"><div class="builder-hint">${m.finalFormation?'Tap a position on the pitch, then tap the player you want there. Players swap places automatically.':'Choose a formation first.'}</div>${pitchHtml(m,true)}</div>
+    <div class="card"><h2>Your players</h2><div class="player-picker">${m.squad.map(p=>{
+      const idx=m.lineup?.indexOf(p.id);
+      const slotLabel=m.finalFormation&&idx>=0?FF_LAYOUTS[m.finalFormation]?.slots[idx]:'';
+      return `<button type="button" class="picker-player" data-player="${p.id}" ${selectedLineupSlot===null?'disabled':''}><span><b>${esc(p.name)}</b><small>${esc(p.positions.join(' / '))}</small></span><span class="picker-position">${slotLabel||'—'}</span></button>`;
+    }).join('')}</div></div>
+    <div class="card"><h2>Managers</h2>${state.managers.map(x=>`<div class="manager"><b>${esc(x.name)}</b><div class="${x.teamReady?'ready':'notready'}">${x.teamReady?'TEAM SET':'ARRANGING'}</div></div>`).join('')}</div>
+    <button class="${m.teamReady?'secondary':'primary'} big" id="teamReady" ${!m.finalFormation?'disabled':''}>${m.teamReady?'Unset team':'Set team'}</button>`);
+
+  document.querySelector('#finalFormation').onchange=e=>{
+    selectedLineupSlot=null;
+    socket.emit('setFinalFormation',{formation:e.target.value});
+  };
+  document.querySelectorAll('[data-slot]').forEach(b=>b.onclick=()=>{
+    selectedLineupSlot=Number(b.dataset.slot);
+    teamBuild();
+  });
+  document.querySelectorAll('[data-player]').forEach(b=>b.onclick=()=>{
+    if(selectedLineupSlot===null)return;
+    socket.emit('setLineupSlot',{slotIndex:selectedLineupSlot,playerId:Number(b.dataset.player)});
+    selectedLineupSlot=null;
+  });
+  document.querySelector('#teamReady').onclick=()=>socket.emit('setTeamReady',{ready:!m.teamReady},r=>{if(r&&!r.ok)showToast(r.error)});
+}
+
+function finished(){
+  const host=state.hostId===meId;
+  if(state.mode==='freeform'){
+    shell(`<div class="card"><h1>Teams revealed</h1><p class="muted">${esc(packName())} · Freeform Mode</p></div>${state.managers.map(m=>`<div class="card"><div class="budget"><h2>${esc(m.name)}</h2><b>${esc(m.finalFormation||'XI')} · £${m.budget}m left</b></div>${pitchHtml(m,false)}</div>`).join('')}${host?'<button class="primary big" id="again">Play again</button>':'<div class="card muted">Waiting for the host to start another game.</div>'}`);
+  } else {
+    shell(`<div class="card"><h1>Draft complete</h1><p class="muted">${esc(packName())} · Hard Mode</p></div>${state.managers.map(m=>`<div class="card"><div class="budget"><h2>${esc(m.name)}</h2><b>${m.formation} · £${m.budget}m left</b></div><div class="squad">${hardSquadHtml(m)}</div></div>`).join('')}${host?'<button class="primary big" id="again">Play again</button>':'<div class="card muted">Waiting for the host to start another game.</div>'}`);
+  }
+  if(host)document.querySelector('#again').onclick=()=>socket.emit('playAgain',{});
+}
+
+function render(){
+  if(!state)return home();
+  if(state.phase==='lobby')lobby();
+  else if(state.phase==='draft')draft();
+  else if(state.phase==='team_build')teamBuild();
+  else finished();
+}
+
+socket.on('state',s=>{
+  const phaseChanged=state?.phase!==s.phase;
+  state=s;
+  if(!meId)meId=socket.id;
+  if(phaseChanged) selectedLineupSlot=null;
+  render();
+});
+socket.on('tick',({timeLeft})=>{
+  if(state?.current){
+    state.current.timeLeft=timeLeft;
+    const t=document.querySelector('#timer');
+    if(t){t.textContent=timeLeft;t.classList.toggle('warn',timeLeft<=5)}
+  }
+});
+home();
