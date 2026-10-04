@@ -78,6 +78,10 @@ function packCounts(){
   for(const key of Object.keys(PACKS)) counts[key]=packPlayers(key).length;
   return counts;
 }
+function publicPlayer(p){
+  if(!p) return null;
+  return {id:p.id,name:p.name,positions:p.positions,assignedPosition:p.assignedPosition};
+}
 function managerPublic(m){
   return {
     id:m.id,
@@ -85,7 +89,7 @@ function managerPublic(m){
     formation:m.formation,
     ready:m.ready,
     budget:m.budget,
-    squad:m.squad,
+    squad:m.squad.map(publicPlayer),
     finalFormation:m.finalFormation,
     lineup:m.lineup,
     teamReady:m.teamReady
@@ -113,7 +117,7 @@ function freeformScarcityWarnings(room){
   return warnings;
 }
 function roomPublic(room){
-  const ratingsVisible = room.pack==='all_time_prem' && (room.phase==='reveal' || room.phase==='results');
+  const ratingsVisible = (room.phase==='reveal' || room.phase==='results');
   const teamRatings = ratingsVisible && room.teamAssessments
     ? Object.fromEntries([...room.teamAssessments.entries()].map(([id,a])=>[id,publicAssessment(a)]))
     : null;
@@ -127,12 +131,12 @@ function roomPublic(room){
     packLabels: {...PACKS, chaos:'Chaos Mode'},
     packCounts: packCounts(),
     freeformFormations: Object.keys(FREEFORM_FORMATIONS),
-    simulationAvailable: room.pack==='all_time_prem',
+    simulationAvailable: true,
     teamRatings,
     simulation: room.phase==='results' ? room.simulation : null,
     managers: [...room.managers.values()].map(managerPublic),
     current: room.current ? {
-      player: room.current.player,
+      player: publicPlayer(room.current.player),
       bid: room.current.bid,
       bidderId: room.current.bidderId,
       timeLeft: room.current.timeLeft,
@@ -411,7 +415,7 @@ function buildTeamAssessments(room){
   const map=new Map();
   for(const m of room.managers.values()){
     const entries=room.mode==='freeform' ? freeformLineupEntries(m) : hardLineupEntries(m);
-    map.set(m.id,assessLineup(entries));
+    map.set(m.id,assessLineup(entries,room.pack));
   }
   return map;
 }
@@ -431,11 +435,8 @@ function enterPostDraft(room){
       m.teamReady=false;
     }
     io.to(room.code).emit('state',roomPublic(room));
-  } else if(room.pack==='all_time_prem') {
-    enterReveal(room);
   } else {
-    room.phase='finished';
-    io.to(room.code).emit('state',roomPublic(room));
+    enterReveal(room);
   }
 }
 
@@ -639,8 +640,7 @@ io.on('connection', socket=>{
     m.teamReady=!!ready;
     cb?.({ok:true});
     if(allTeamsReady(room)){
-      if(room.pack==='all_time_prem') enterReveal(room);
-      else { room.phase='finished'; io.to(room.code).emit('state',roomPublic(room)); }
+      enterReveal(room);
     } else {
       io.to(room.code).emit('state',roomPublic(room));
     }
@@ -648,7 +648,7 @@ io.on('connection', socket=>{
 
   socket.on('startSimulation', (_,cb)=>{
     const room=rooms.get(socket.data.room);
-    if(!room||room.phase!=='reveal'||room.pack!=='all_time_prem'||socket.id!==room.hostId||!room.teamAssessments) return;
+    if(!room||room.phase!=='reveal'||socket.id!==room.hostId||!room.teamAssessments) return;
     const teams=[...room.managers.values()].map(m=>({id:m.id,name:m.name,assessment:room.teamAssessments.get(m.id)}));
     room.simulation=simulateCompetition(teams);
     room.phase='results';
