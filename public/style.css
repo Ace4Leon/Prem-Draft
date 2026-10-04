@@ -92,3 +92,42 @@ button{border:0;border-radius:13px;padding:13px 16px;font-weight:800;cursor:poin
   .slot-name{font-size:11px}
   .budget{align-items:flex-start}
 }
+.ratings{margin:14px 0 16px;border:1px solid #e5e7eb;border-radius:16px;padding:13px;background:#f8fafc}
+.overall-rating{display:flex;justify-content:space-between;align-items:end;border-bottom:1px solid #e5e7eb;padding-bottom:10px;margin-bottom:10px}
+.overall-rating span{font-size:11px;font-weight:900;letter-spacing:.08em;color:#6b7280}
+.overall-rating strong{font-size:42px;line-height:1;font-weight:1000}
+.rating-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.rating-grid div{background:#fff;border:1px solid #e5e7eb;border-radius:11px;padding:9px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.rating-grid span{font-size:10px;color:#6b7280;font-weight:800;line-height:1.1}
+.rating-grid b{font-size:19px}
+.champion{text-align:center;background:#fffdf4;border-color:#fde68a}
+.champion h1{font-size:34px;margin:6px 0 4px}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.standings{width:100%;border-collapse:collapse;min-width:570px;font-size:13px}
+.standings th,.standings td{padding:9px 7px;border-bottom:1px solid #e5e7eb;text-align:center;white-space:nowrap}
+.standings th:nth-child(2),.standings td:nth-child(2){text-align:left}
+.standings thead th{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em}
+.matches{display:grid;gap:10px}
+.match-card{border:1px solid #e5e7eb;border-radius:14px;padding:12px;background:#f8fafc}
+.match-label{font-size:10px;color:#6b7280;font-weight:900;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+.scoreline{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:10px}
+.scoreline>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.scoreline .right-team{text-align:right;align-items:flex-end}
+.scoreline b{overflow-wrap:anywhere}
+.scoreline span{font-size:9px;color:#9ca3af;font-weight:900;letter-spacing:.05em}
+.scoreline>strong{font-size:25px;white-space:nowrap}
+.pens{font-size:11px;color:#6b7280;font-weight:800}
+.scorers{border-top:1px solid #e5e7eb;margin-top:9px;padding-top:8px;font-size:12px;color:#4b5563;display:grid;gap:4px;line-height:1.35}
+.rating-summary{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #eee;gap:12px}
+.rating-summary:last-child{border-bottom:0}
+.rating-summary div{display:flex;flex-direction:column;min-width:0}
+.rating-summary span{font-size:11px;color:#6b7280;margin-top:2px}
+.rating-summary strong{font-size:25px}
+@media(max-width:560px){
+  .rating-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .overall-rating strong{font-size:38px}
+  .champion h1{font-size:29px}
+  .scoreline{gap:7px}
+  .scoreline>strong{font-size:22px}
+  .match-card{padding:10px}
+}
