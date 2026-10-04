@@ -1,6 +1,7 @@
-// Hidden All-Time Premier League simulation profiles.
+// Hidden multi-pack simulation profiles. The legacy filename is retained so upgrading from v5A only requires replacing the file.
 // These values never leave the server. Individual player ratings/traits are deliberately not sent to clients.
-// Quality philosophy: best 2-3 season Premier League peak, plus a small positive sustained-excellence bonus.
+// All-Time Prem: best 2-3 season Premier League peak + small sustained-excellence bonus.
+// Current packs: 2026/27 current ability. All-Time World: career peak + small sustained-excellence lift. Chaos: strongest available pack version.
 
 const clamp=(n,min,max)=>Math.max(min,Math.min(max,n));
 const round1=n=>Math.round(n*10)/10;
@@ -79,11 +80,324 @@ const QUALITY = {
   'Marcus Rashford':[89.5,0.5], 'Ivan Toney':[89,0.25], 'Alexander Isak':[92,0.5]
 };
 
-const TIER_DEFAULT = {
-  1:[91.5,0.5],
-  2:[87.0,0.5],
-  3:[82.0,0.25],
-  4:[77.0,0.25]
+
+// Pack-specific hidden quality versions. Current packs represent 2026/27 level only.
+// All-Time World represents career peak plus a small sustained-excellence lift, following the same philosophy as All-Time Prem.
+const CURRENT_PREM_QUALITY = {
+  "Alisson": 92,
+  "Emiliano Martinez": 91,
+  "Jordan Pickford": 89,
+  "David Raya": 90,
+  "Bart Verbruggen": 87,
+  "Andrew Robertson": 84,
+  "Reece James": 88,
+  "Virgil van Dijk": 91,
+  "Ruben Dias": 92,
+  "Gabriel Magalhaes": 92,
+  "William Saliba": 94,
+  "Lisandro Martinez": 86,
+  "Jurrien Timber": 89,
+  "Ben White": 87,
+  "Riccardo Calafiori": 87,
+  "Piero Hincapie": 87,
+  "Ezri Konsa": 88,
+  "Ian Maatsen": 87,
+  "Antonee Robinson": 88,
+  "Jarrad Branthwaite": 87,
+  "Declan Rice": 94,
+  "Bruno Fernandes": 92,
+  "Martin Odegaard": 91,
+  "Moises Caicedo": 92,
+  "Enzo Fernandez": 91,
+  "Martin Zubimendi": 91,
+  "Bruno Guimaraes": 92,
+  "Mikel Merino": 87,
+  "Eberechi Eze": 91,
+  "Morgan Rogers": 91,
+  "Adam Wharton": 87,
+  "Quinten Timber": 87,
+  "Gustavo Hamer": 86,
+  "Hugo Larsson": 86,
+  "Emile Smith Rowe": 85,
+  "Alex Iwobi": 84,
+  "Bukayo Saka": 95,
+  "Cole Palmer": 95,
+  "Estevao": 93,
+  "Noni Madueke": 87,
+  "Pedro Neto": 88,
+  "Jamie Bynoe-Gittens": 87,
+  "Kaoru Mitoma": 87,
+  "Alejandro Garnacho": 86,
+  "Brennan Johnson": 86,
+  "Jack Grealish": 85,
+  "Christos Tzolis": 86,
+  "Erling Haaland": 97,
+  "Alexander Isak": 93,
+  "Viktor Gyokeres": 92,
+  "Joao Pedro": 91,
+  "Kai Havertz": 87,
+  "Jean-Philippe Mateta": 87,
+  "Jorgen Strand Larsen": 86,
+  "Evanilson": 86,
+  "Nicolas Jackson": 85,
+  "Tammy Abraham": 85,
+  "Pascal Gross": 85,
+  "Georginio Rutter": 86,
+  "Evan Ferguson": 82,
+  "Malo Gusto": 86,
+  "Wesley Fofana": 85,
+  "Levi Colwill": 86,
+  "Jorrel Hato": 87,
+  "Romeo Lavia": 86
+};
+const CURRENT_WORLD_QUALITY = {
+  "Gianluigi Donnarumma": 94,
+  "Thibaut Courtois": 94,
+  "Alisson": 92,
+  "Ederson": 90,
+  "Mike Maignan": 91,
+  "Jan Oblak": 90,
+  "Manuel Neuer": 90,
+  "Emiliano Martinez": 91,
+  "Virgil van Dijk": 91,
+  "William Saliba": 94,
+  "Ruben Dias": 92,
+  "Gabriel Magalhaes": 92,
+  "Alessandro Bastoni": 93,
+  "Antonio Rudiger": 91,
+  "Pau Cubarsi": 91,
+  "Ronald Araujo": 90,
+  "Eder Militao": 91,
+  "Cristian Romero": 91,
+  "Jules Kounde": 92,
+  "Achraf Hakimi": 95,
+  "Nuno Mendes": 94,
+  "Theo Hernandez": 91,
+  "Alphonso Davies": 92,
+  "Trent Alexander-Arnold": 91,
+  "Alejandro Grimaldo": 90,
+  "Rodri": 97,
+  "Jude Bellingham": 96,
+  "Pedri": 95,
+  "Vitinha": 95,
+  "Declan Rice": 94,
+  "Federico Valverde": 94,
+  "Joshua Kimmich": 93,
+  "Frenkie de Jong": 93,
+  "Joao Neves": 93,
+  "Nicolò Barella": 93,
+  "Aurelien Tchouameni": 92,
+  "Eduardo Camavinga": 91,
+  "Martin Zubimendi": 91,
+  "Bruno Guimaraes": 92,
+  "Moises Caicedo": 92,
+  "Kevin De Bruyne": 90,
+  "Bruno Fernandes": 92,
+  "Martin Odegaard": 91,
+  "Hakan Calhanoglu": 91,
+  "Bernardo Silva": 91,
+  "Warren Zaire-Emery": 91,
+  "Kylian Mbappe": 98,
+  "Lamine Yamal": 97,
+  "Erling Haaland": 97,
+  "Harry Kane": 96,
+  "Ousmane Dembele": 96,
+  "Vinicius Junior": 95,
+  "Jamal Musiala": 95,
+  "Raphinha": 94,
+  "Cole Palmer": 95,
+  "Bukayo Saka": 95,
+  "Michael Olise": 93,
+  "Khvicha Kvaratskhelia": 93,
+  "Desire Doue": 93,
+  "Rafael Leao": 92,
+  "Nico Williams": 92,
+  "Lautaro Martinez": 94,
+  "Julian Alvarez": 94,
+  "Victor Osimhen": 93,
+  "Alexander Isak": 93,
+  "Viktor Gyokeres": 92,
+  "Karim Benzema": 89,
+  "Antoine Griezmann": 89,
+  "Lionel Messi": 94,
+  "Cristiano Ronaldo": 84,
+  "Mohamed Salah": 90,
+  "Sadio Mane": 86,
+  "Son Heung-min": 86,
+  "Riyad Mahrez": 85,
+  "Luis Suarez": 82,
+  "Neymar": 82,
+  "Robert Lewandowski": 88,
+  "Estevao": 93,
+  "Morgan Rogers": 91,
+  "Eberechi Eze": 91,
+  "Kenan Yildiz": 92,
+  "Arda Guler": 92,
+  "Joao Pedro": 91,
+  "Florian Wirtz": 94
+};
+const ALL_TIME_WORLD_QUALITY = {
+  "Lionel Messi": 99,
+  "Cristiano Ronaldo": 99,
+  "Pele": 99,
+  "Diego Maradona": 99,
+  "Johan Cruyff": 98.5,
+  "Ronaldo Nazario": 98.5,
+  "Alfredo Di Stefano": 98,
+  "Franz Beckenbauer": 98,
+  "Zinedine Zidane": 98,
+  "Ferenc Puskas": 98,
+  "Eusebio": 97.5,
+  "Gerd Muller": 97.5,
+  "Michel Platini": 97,
+  "Ronaldinho": 97.5,
+  "Marco van Basten": 97,
+  "George Best": 97,
+  "Garrincha": 97,
+  "Zico": 96.5,
+  "Bobby Charlton": 96.5,
+  "Ruud Gullit": 96.5,
+  "Romario": 96.5,
+  "Lev Yashin": 98,
+  "Gianluigi Buffon": 97,
+  "Iker Casillas": 96,
+  "Manuel Neuer": 97,
+  "Dino Zoff": 96,
+  "Peter Schmeichel": 96.5,
+  "Petr Cech": 96,
+  "Oliver Kahn": 96,
+  "Gordon Banks": 96,
+  "Edwin van der Sar": 95,
+  "Paolo Maldini": 98,
+  "Franco Baresi": 97.5,
+  "Bobby Moore": 97,
+  "Alessandro Nesta": 96.5,
+  "Fabio Cannavaro": 96.5,
+  "Sergio Ramos": 97,
+  "Cafu": 96.5,
+  "Dani Alves": 96.5,
+  "Philipp Lahm": 96.5,
+  "Roberto Carlos": 96.5,
+  "Carlos Alberto": 96,
+  "Javier Zanetti": 95.5,
+  "Lilian Thuram": 95.5,
+  "Carles Puyol": 95.5,
+  "Gaetano Scirea": 96,
+  "Ronald Koeman": 95.5,
+  "Marcel Desailly": 95,
+  "Ashley Cole": 95.5,
+  "Virgil van Dijk": 96.5,
+  "John Terry": 96,
+  "Rio Ferdinand": 96,
+  "Nemanja Vidic": 95.5,
+  "Lothar Matthaus": 97,
+  "Xavi": 97.5,
+  "Andres Iniesta": 97.5,
+  "Andrea Pirlo": 96,
+  "Toni Kroos": 96,
+  "Frank Rijkaard": 96,
+  "Clarence Seedorf": 95,
+  "Pavel Nedved": 95,
+  "Kaka": 96,
+  "Luis Figo": 96,
+  "Rivaldo": 96,
+  "Michael Laudrup": 96,
+  "Socrates": 95,
+  "Didi": 95,
+  "Rivelino": 95,
+  "Gerson": 94.5,
+  "Falcao (Brazil)": 95,
+  "Fernando Redondo": 94.5,
+  "Juan Roman Riquelme": 94.5,
+  "Bastian Schweinsteiger": 95,
+  "Michael Ballack": 94.5,
+  "Johan Neeskens": 95,
+  "Patrick Vieira": 96,
+  "Steven Gerrard": 97,
+  "Frank Lampard": 96.5,
+  "Paul Scholes": 96,
+  "Kevin De Bruyne": 96.5,
+  "Rodri": 96.5,
+  "Luka Modric": 97,
+  "Thierry Henry": 98,
+  "Luis Suarez": 97.5,
+  "Wayne Rooney": 97,
+  "Mohamed Salah": 98,
+  "Sergio Aguero": 96.5,
+  "Harry Kane": 96.5,
+  "Alan Shearer": 96,
+  "Didier Drogba": 95,
+  "Eric Cantona": 95,
+  "Dennis Bergkamp": 95.5,
+  "Gareth Bale": 96.5,
+  "Eden Hazard": 96.5,
+  "Ryan Giggs": 95,
+  "Sadio Mane": 95,
+  "Neymar": 97,
+  "Kylian Mbappe": 98,
+  "Robert Lewandowski": 97,
+  "Karim Benzema": 97,
+  "Zlatan Ibrahimovic": 96,
+  "Samuel Eto'o": 96,
+  "Andriy Shevchenko": 96,
+  "Gabriel Batistuta": 95.5,
+  "Raul": 95.5,
+  "David Villa": 95,
+  "Francesco Totti": 96,
+  "Alessandro Del Piero": 95.5,
+  "Roberto Baggio": 97,
+  "George Weah": 96,
+  "Hugo Sanchez": 95,
+  "Diego Forlan": 94,
+  "Edinson Cavani": 94,
+  "Angel Di Maria": 94.5,
+  "Thomas Muller": 95,
+  "Miroslav Klose": 94,
+  "Karl-Heinz Rummenigge": 96,
+  "Giuseppe Meazza": 97,
+  "Kenny Dalglish": 96,
+  "Denis Law": 95.5,
+  "Jimmy Greaves": 95.5,
+  "Ian Rush": 95,
+  "Oleg Blokhin": 95,
+  "Hristo Stoichkov": 95.5,
+  "Henrik Larsson": 93.5,
+  "Lamine Yamal": 96,
+  "Jude Bellingham": 95.5,
+  "Pedri": 95,
+  "Vinicius Junior": 95,
+  "Erling Haaland": 96,
+  "Ousmane Dembele": 94.5,
+  "Luka Modric": 97,
+  "Casemiro": 95.5,
+  "Raphael Varane": 95,
+  "Thibaut Courtois": 95,
+  "Arjen Robben": 96,
+  "Javier Mascherano": 94.5,
+  "Xabi Alonso": 95,
+  "Thiago Alcantara": 94.5,
+  "Mesut Ozil": 94.5,
+  "Gerard Pique": 95.5,
+  "Pepe": 94.5,
+  "Angel Di Maria": 94.5,
+  "Cesc Fabregas": 94.5,
+  "Alexis Sanchez": 94,
+  "Joao Cancelo": 92.5,
+  "Ederson": 94,
+  "Alisson": 95.5,
+  "N'Golo Kante": 95,
+  "Yaya Toure": 95.5,
+  "David Silva": 94.5,
+  "Bernardo Silva": 94,
+  "Ilkay Gundogan": 93.5,
+  "Michael Essien": 93.5
+};
+
+const PACK_TIER_DEFAULTS = {
+  all_time_prem: {1:[91.5,0.5],2:[87.0,0.5],3:[82.0,0.25],4:[77.0,0.25]},
+  current_prem: {1:[90.5,0],2:[84.5,0],3:[77.5,0],4:[70.5,0]},
+  current_world: {1:[91.5,0],2:[85.0,0],3:[78.5,0],4:[72.0,0]},
+  all_time_world: {1:[93.0,0.75],2:[87.0,0.5],3:[81.0,0.25],4:[76.0,0.25]}
 };
 
 const ARCHETYPES = {
@@ -149,6 +463,104 @@ const ARCHETYPE_OVERRIDE = {
   'Robbie Fowler':'poacher','Diego Costa':'target_forward','Pierre-Emerick Aubameyang':'poacher','Peter Crouch':'target_forward'
 };
 
+
+const GLOBAL_ARCHETYPE_EXTRA = {
+  "Lionel Messi": "wide_creator",
+  "Kylian Mbappe": "inside_forward",
+  "Lamine Yamal": "wide_creator",
+  "Ousmane Dembele": "wide_creator",
+  "Vinicius Junior": "inside_forward",
+  "Neymar": "wide_creator",
+  "Ronaldinho": "wide_creator",
+  "Luis Figo": "wide_creator",
+  "Rivaldo": "inside_forward",
+  "George Best": "inside_forward",
+  "Garrincha": "touchline_winger",
+  "Pele": "complete_forward",
+  "Ronaldo Nazario": "complete_forward",
+  "Ferenc Puskas": "inside_forward",
+  "Alfredo Di Stefano": "second_striker",
+  "Gerd Muller": "poacher",
+  "Eusebio": "complete_forward",
+  "Marco van Basten": "complete_forward",
+  "Romario": "poacher",
+  "Robert Lewandowski": "complete_forward",
+  "Karim Benzema": "complete_forward",
+  "Zlatan Ibrahimovic": "complete_forward",
+  "Samuel Eto'o": "complete_forward",
+  "Andriy Shevchenko": "complete_forward",
+  "Gabriel Batistuta": "complete_forward",
+  "Raul": "second_striker",
+  "Francesco Totti": "creator_10",
+  "Roberto Baggio": "creator_10",
+  "George Weah": "complete_forward",
+  "Johan Cruyff": "creator_10",
+  "Diego Maradona": "creator_10",
+  "Zinedine Zidane": "creator_10",
+  "Michel Platini": "scorer_10",
+  "Zico": "scorer_10",
+  "Kaka": "scorer_10",
+  "Michael Laudrup": "creator_10",
+  "Juan Roman Riquelme": "creator_10",
+  "Bobby Charlton": "attacking_8",
+  "Lothar Matthaus": "box_to_box",
+  "Xavi": "controller_cm",
+  "Andres Iniesta": "controller_cm",
+  "Andrea Pirlo": "deep_playmaker",
+  "Toni Kroos": "controller_cm",
+  "Clarence Seedorf": "box_to_box",
+  "Frank Rijkaard": "anchor_dm",
+  "Ruud Gullit": "box_to_box",
+  "Bastian Schweinsteiger": "box_to_box",
+  "Michael Ballack": "attacking_8",
+  "Sergio Busquets": "anchor_dm",
+  "Pedri": "controller_cm",
+  "Jude Bellingham": "box_to_box",
+  "Federico Valverde": "box_to_box",
+  "Frenkie de Jong": "controller_cm",
+  "Vitinha": "controller_cm",
+  "Joshua Kimmich": "deep_playmaker",
+  "Aurelien Tchouameni": "anchor_dm",
+  "Joao Neves": "box_to_box",
+  "Paolo Maldini": "covering_cb",
+  "Franco Baresi": "ball_playing_cb",
+  "Bobby Moore": "ball_playing_cb",
+  "Alessandro Nesta": "covering_cb",
+  "Fabio Cannavaro": "covering_cb",
+  "Carles Puyol": "stopper_cb",
+  "Gaetano Scirea": "ball_playing_cb",
+  "Franz Beckenbauer": "ball_playing_cb",
+  "Sergio Ramos": "stopper_cb",
+  "Gerard Pique": "ball_playing_cb",
+  "Alessandro Bastoni": "ball_playing_cb",
+  "Antonio Rudiger": "covering_cb",
+  "Achraf Hakimi": "attacking_fb",
+  "Nuno Mendes": "attacking_fb",
+  "Theo Hernandez": "attacking_fb",
+  "Alphonso Davies": "attacking_fb",
+  "Philipp Lahm": "balanced_fb",
+  "Cafu": "attacking_fb",
+  "Dani Alves": "creative_fullback",
+  "Roberto Carlos": "attacking_fb",
+  "Javier Zanetti": "balanced_fb"
+};
+const PACK_ARCHETYPE_OVERRIDE = {
+  "current_world": {
+    "Cristiano Ronaldo": "poacher",
+    "Lionel Messi": "creator_10",
+    "Sadio Mane": "inside_forward",
+    "Son Heung-min": "inside_forward",
+    "Mohamed Salah": "inside_forward",
+    "Karim Benzema": "complete_forward",
+    "Neymar": "creator_10"
+  },
+  "all_time_world": {
+    "Cristiano Ronaldo": "inside_forward",
+    "Lionel Messi": "wide_creator"
+  },
+  "chaos": {}
+};
+
 const GK_STYLE = {
   traditional:{shot:4,command:4,distribution:-10},
   shot_stopper:{shot:6,command:-1,distribution:-9},
@@ -163,10 +575,36 @@ const GK_OVERRIDE = {
   'Nigel Martyn':'traditional','Ederson':'distributor','Thibaut Courtois':'shot_stopper','Jordan Pickford':'distributor','Nick Pope':'traditional'
 };
 
-function qualityFor(player){
-  const [peak,bonus]=QUALITY[player.name] || TIER_DEFAULT[player.tier] || [82,0.25];
-  return {peak,bonus,quality:round1(clamp(peak+bonus,60,99))};
+function qualityFor(player,pack='all_time_prem'){
+  if(pack==='chaos'){
+    const candidates=(player.packs||[]).map(p=>({pack:p,...qualityFor(player,p)}));
+    if(!candidates.length) candidates.push({pack:'all_time_world',...qualityFor(player,'all_time_world')});
+    return candidates.sort((a,b)=>b.quality-a.quality)[0];
+  }
+  let pair;
+  if(pack==='all_time_prem') pair=QUALITY[player.name];
+  else if(pack==='current_prem' && CURRENT_PREM_QUALITY[player.name]!=null) pair=[CURRENT_PREM_QUALITY[player.name],0];
+  else if(pack==='current_world' && CURRENT_WORLD_QUALITY[player.name]!=null) pair=[CURRENT_WORLD_QUALITY[player.name],0];
+  else if(pack==='current_world' && CURRENT_PREM_QUALITY[player.name]!=null) pair=[CURRENT_PREM_QUALITY[player.name],0];
+  else if(pack==='all_time_world' && ALL_TIME_WORLD_QUALITY[player.name]!=null) pair=[ALL_TIME_WORLD_QUALITY[player.name],0];
+  else if(pack==='all_time_world' && player.packs?.includes('all_time_prem')) pair=QUALITY[player.name] || PACK_TIER_DEFAULTS.all_time_prem[player.tier];
+  pair = pair || PACK_TIER_DEFAULTS[pack]?.[player.tier] || PACK_TIER_DEFAULTS.all_time_world[player.tier] || [81,0.25];
+  const [peak,bonus]=pair;
+  return {pack,peak,bonus,quality:round1(clamp(peak+bonus,60,99))};
 }
+
+const GLOBAL_GK_OVERRIDE_EXTRA = {
+  "Gianluigi Buffon": "traditional",
+  "Iker Casillas": "shot_stopper",
+  "Manuel Neuer": "sweeper",
+  "Lev Yashin": "traditional",
+  "Dino Zoff": "traditional",
+  "Oliver Kahn": "traditional",
+  "Gordon Banks": "traditional",
+  "Gianluigi Donnarumma": "shot_stopper",
+  "Mike Maignan": "sweeper",
+  "Jan Oblak": "shot_stopper"
+};
 
 function defaultArchetype(player){
   const p=player.positions[0];
@@ -181,14 +619,14 @@ function defaultArchetype(player){
   return 'controller_cm';
 }
 
-function goalkeeperSkills(player,quality){
+function goalkeeperSkills(player,quality,pack){
   if(player.positions[0]!=='GK'){
     // Outfielders in goal are intentionally disastrous. Better ball players may distribute a little better,
     // but shot-stopping and command remain extremely poor.
-    const profile=outfieldProfile(player,quality);
+    const profile=outfieldProfile(player,quality,pack);
     return {shotStopping:18,command:16,distribution:clamp(18+profile.traits.progression*0.25,18,42)};
   }
-  const style=GK_OVERRIDE[player.name]||'balanced';
+  const style=GK_OVERRIDE[player.name]||GLOBAL_GK_OVERRIDE_EXTRA[player.name]||'balanced';
   const mod=GK_STYLE[style];
   return {
     shotStopping:round1(clamp(quality+mod.shot,55,99)),
@@ -197,25 +635,26 @@ function goalkeeperSkills(player,quality){
   };
 }
 
-function outfieldProfile(player,quality){
+function outfieldProfile(player,quality,pack){
   if(player.positions[0]==='GK'){
     const t=ARCHETYPES.goalkeeper_outfield;
     const traits=Object.fromEntries(TRAIT_NAMES.map((n,i)=>[n,t.traits[i]]));
     return {archetype:'goalkeeper_outfield',role:{defence:t.role[0],midfield:t.role[1],attack:t.role[2]},traits};
   }
-  const archetype=ARCHETYPE_OVERRIDE[player.name] || defaultArchetype(player);
+  const archetype=PACK_ARCHETYPE_OVERRIDE[pack]?.[player.name] || ARCHETYPE_OVERRIDE[player.name] || GLOBAL_ARCHETYPE_EXTRA[player.name] || defaultArchetype(player);
   const tpl=ARCHETYPES[archetype]||ARCHETYPES.controller_cm;
   const traits={}; TRAIT_NAMES.forEach((n,i)=>traits[n]=tpl.traits[i]);
   return {archetype,role:{defence:tpl.role[0],midfield:tpl.role[1],attack:tpl.role[2]},traits};
 }
 
-function getProfile(player){
-  const q=qualityFor(player);
-  const out=outfieldProfile(player,q.quality);
+function getProfile(player,pack='all_time_prem'){
+  const q=qualityFor(player,pack);
+  const effectivePack=pack==='chaos' ? q.pack : pack;
+  const out=outfieldProfile(player,q.quality,effectivePack);
   return {
-    peak:q.peak, sustainedBonus:q.bonus, quality:q.quality,
+    sourcePack:effectivePack, peak:q.peak, sustainedBonus:q.bonus, quality:q.quality,
     archetype:out.archetype, role:out.role, traits:out.traits,
-    goalkeeper:goalkeeperSkills(player,q.quality)
+    goalkeeper:goalkeeperSkills(player,q.quality,effectivePack)
   };
 }
 
@@ -322,10 +761,10 @@ function rangeScore(value,min,max){
   return clamp(100-dist*18,25,100);
 }
 
-function assessLineup(entries){
+function assessLineup(entries,pack='all_time_prem'){
   if(!Array.isArray(entries)||entries.length!==11) throw new Error('Simulation needs exactly 11 lineup entries.');
   const details=entries.map(({player,slot})=>{
-    const profile=getProfile(player);
+    const profile=getProfile(player,pack);
     const fit=positionalFit(player,slot);
     const value=playerUnitValue(player,slot,profile,fit);
     return {player,slot,profile,fit,value,unit:slotUnitWeights(slot)};
@@ -562,4 +1001,4 @@ function simulateCompetition(teamInputs){
   return {matches,table,playoffs,championId};
 }
 
-module.exports={getProfile,positionalFit,assessLineup,publicAssessment,simulateCompetition};
+module.exports={qualityFor,getProfile,positionalFit,assessLineup,publicAssessment,simulateCompetition};
