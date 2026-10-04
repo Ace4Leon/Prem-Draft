@@ -1,4 +1,94 @@
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111827;background:#f4f6f8}*{box-sizing:border-box}body{margin:0}button,input,select{font:inherit}.wrap{max-width:780px;margin:auto;padding:18px}.brand{font-size:28px;font-weight:900;letter-spacing:-1px;margin:10px 0 18px}.card{background:#fff;border:1px solid #e5e7eb;border-radius:18px;padding:18px;margin-bottom:14px;box-shadow:0 8px 22px rgba(0,0,0,.04)}h1,h2,h3,p{margin-top:0}.muted{color:#6b7280}.row{display:flex;gap:10px;align-items:center}.row>*{min-width:0}.grow{flex:1}input,select{width:100%;padding:13px 14px;border:1px solid #d1d5db;border-radius:12px;background:#fff}button{border:0;border-radius:13px;padding:13px 16px;font-weight:800;cursor:pointer}.primary{background:#111827;color:#fff}.secondary{background:#eef2f7}.danger{background:#fee2e2;color:#991b1b}.big{width:100%;font-size:22px;padding:17px}.tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}.tab{background:#e5e7eb}.tab.active{background:#111827;color:#fff}.code{font-size:28px;font-weight:900;letter-spacing:4px}.manager{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid #eee}.manager:last-child{border-bottom:0}.ready{color:#15803d;font-weight:800}.notready{color:#9ca3af}.auction{text-align:center}.timer{font-size:42px;font-weight:1000;line-height:1}.timer.warn{color:#b91c1c}.player{font-size:32px;font-weight:1000;margin:12px 0 4px;letter-spacing:-.6px}.positions{color:#6b7280;font-weight:800}.bidvalue{font-size:46px;font-weight:1000;margin:16px 0 2px}.leader{color:#6b7280;min-height:24px}.budget{display:flex;justify-content:space-between;align-items:center}.budget strong{font-size:24px}.squad{display:grid;grid-template-columns:1fr auto;gap:8px 12px}.slot{padding:8px 0;border-bottom:1px solid #eee}.slot b{font-size:12px;color:#6b7280}.pill{display:inline-block;padding:5px 9px;border-radius:999px;background:#eef2ff;font-size:12px;font-weight:800;margin:3px}.required{background:#fff7ed;border:1px solid #fdba74;color:#9a3412;border-radius:12px;padding:10px;font-weight:800;margin:12px 0}.winner{background:#ecfdf5;border:1px solid #86efac;border-radius:12px;padding:12px;margin:10px 0}#toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#111827;color:white;padding:11px 15px;border-radius:999px;opacity:0;pointer-events:none;transition:.2s;max-width:90%;text-align:center}#toast.show{opacity:1}@media(max-width:560px){.wrap{padding:12px}.card{border-radius:15px;padding:15px}.player{font-size:28px}.bidvalue{font-size:40px}.brand{font-size:24px}.row.mobile-stack{flex-direction:column;align-items:stretch}}
-.pack-display{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
-.pack-strip{text-align:center;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+:root{
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  color:#111827;
+  background:#f4f6f8;
+}
+*{box-sizing:border-box}
+body{margin:0}
+button,input,select{font:inherit}
+button:disabled{opacity:.55;cursor:not-allowed}
+.wrap{max-width:780px;margin:auto;padding:18px}
+.brand{font-size:28px;font-weight:900;letter-spacing:-1px;margin:10px 0 18px}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:18px;padding:18px;margin-bottom:14px;box-shadow:0 8px 22px rgba(0,0,0,.04)}
+h1,h2,h3,p{margin-top:0}
+.no-margin{margin-bottom:0}
+.muted{color:#6b7280}
 .small{font-size:12px;margin:8px 0 0}
+.right{text-align:right}
+.row{display:flex;gap:10px;align-items:center}
+.row>*{min-width:0}
+.grow{flex:1}
+.spacer9{height:9px}.spacer10{height:10px}.spacer14{height:14px}
+input,select{width:100%;padding:13px 14px;border:1px solid #d1d5db;border-radius:12px;background:#fff;min-height:48px}
+button{border:0;border-radius:13px;padding:13px 16px;font-weight:800;cursor:pointer;min-height:46px}
+.primary{background:#111827;color:#fff}
+.secondary{background:#eef2f7;color:#111827}
+.danger{background:#fee2e2;color:#991b1b}
+.big{width:100%;font-size:22px;padding:17px}
+.tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+.tab{background:#e5e7eb}.tab.active{background:#111827;color:#fff}
+.code{font-size:28px;font-weight:900;letter-spacing:4px}
+.manager{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid #eee;align-items:center}
+.manager:last-child{border-bottom:0}
+.ready{color:#15803d;font-weight:800}.notready{color:#9ca3af;font-weight:800}
+.auction{text-align:center}
+.timer{font-size:42px;font-weight:1000;line-height:1}
+.timer.warn{color:#b91c1c}
+.player{font-size:32px;font-weight:1000;margin:12px 0 4px;letter-spacing:-.6px}
+.positions{color:#6b7280;font-weight:800}
+.bidvalue{font-size:46px;font-weight:1000;margin:16px 0 2px}
+.leader{color:#6b7280;min-height:24px}
+.budget{display:flex;justify-content:space-between;align-items:center;gap:14px}
+.budget strong{font-size:24px}
+.squad{display:grid;grid-template-columns:1fr auto;gap:8px 12px}
+.slot{padding:8px 0;border-bottom:1px solid #eee}
+.slot b{font-size:12px;color:#6b7280}
+.slot-price{text-align:right}
+.pill{display:inline-block;padding:5px 9px;border-radius:999px;background:#eef2ff;font-size:12px;font-weight:800;margin:3px}
+.required{background:#fff7ed;border:1px solid #fdba74;color:#9a3412;border-radius:12px;padding:10px;font-weight:800;margin:12px 0;text-align:left}
+.scarcity{background:#eff6ff;border:1px solid #93c5fd;color:#1e3a8a;border-radius:12px;padding:10px;margin:10px 0;text-align:left;font-size:14px}
+.scarcity b{display:block;margin-bottom:3px}
+.winner{background:#ecfdf5;border:1px solid #86efac;border-radius:12px;padding:12px;margin:10px 0}
+.pack-display{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
+.mode-strip{text-align:center;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;margin:0 0 8px}
+.simple-player{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid #eee}
+.simple-player:last-child{border-bottom:0}
+.builder-hint{font-size:14px;color:#4b5563;margin-bottom:14px;text-align:center}
+.pitch{border-radius:18px;padding:18px 10px;background:linear-gradient(180deg,#e7f5e9,#dff0e2);border:1px solid #cfe4d2;display:flex;flex-direction:column;gap:14px}
+.pitch-row{display:grid;gap:6px;align-items:stretch}
+.pitch-row.cols-1{grid-template-columns:1fr;padding:0 31%}
+.pitch-row.cols-2{grid-template-columns:repeat(2,minmax(0,1fr));padding:0 17%}
+.pitch-row.cols-3{grid-template-columns:repeat(3,minmax(0,1fr));padding:0 5%}
+.pitch-row.cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.pitch-row.cols-5{grid-template-columns:repeat(5,minmax(0,1fr))}
+.pitch-slot{background:rgba(255,255,255,.9);border:2px solid transparent;color:#111827;padding:8px 5px;border-radius:12px;min-width:0;min-height:66px;display:flex;flex-direction:column;justify-content:center;align-items:center}
+.pitch-slot:disabled{opacity:1;cursor:default}
+.pitch-slot.selected{border-color:#111827;box-shadow:0 0 0 2px rgba(17,24,39,.08)}
+.slot-label{font-size:10px;color:#6b7280;font-weight:900;letter-spacing:.04em}
+.slot-name{font-size:12px;font-weight:900;line-height:1.15;margin-top:4px;overflow-wrap:anywhere}
+.player-picker{display:grid;grid-template-columns:1fr;gap:7px}
+.picker-player{background:#f8fafc;border:1px solid #e5e7eb;display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left;padding:11px 12px}
+.picker-player:disabled{opacity:.72}
+.picker-player span:first-child{min-width:0}
+.picker-player b{display:block;overflow-wrap:anywhere}
+.picker-player small{display:block;color:#6b7280;margin-top:2px}
+.picker-position{font-size:12px;font-weight:900;background:#e5e7eb;padding:5px 8px;border-radius:999px;flex:0 0 auto}
+#toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#111827;color:white;padding:11px 15px;border-radius:999px;opacity:0;pointer-events:none;transition:.2s;max-width:90%;text-align:center;z-index:99}
+#toast.show{opacity:1}
+@media(max-width:560px){
+  .wrap{padding:12px}
+  .card{border-radius:15px;padding:15px}
+  .player{font-size:28px}
+  .bidvalue{font-size:40px}
+  .brand{font-size:24px}
+  .row.mobile-stack{flex-direction:column;align-items:stretch}
+  .code{font-size:24px;letter-spacing:3px}
+  .pitch{padding:14px 6px;gap:11px}
+  .pitch-row{gap:4px}
+  .pitch-row.cols-1{padding:0 28%}
+  .pitch-row.cols-2{padding:0 12%}
+  .pitch-row.cols-3{padding:0 2%}
+  .pitch-slot{padding:6px 3px;min-height:64px}
+  .slot-name{font-size:11px}
+  .budget{align-items:flex-start}
+}
