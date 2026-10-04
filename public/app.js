@@ -133,7 +133,22 @@ function draft(){
 
   if(tab==='draft'){
     const complete=m.squad.length>=11;
-    panel.innerHTML=`<div class="card budget"><div><div class="muted">YOUR BUDGET</div><strong>£${m.budget}m</strong></div><div class="right"><div class="muted">SQUAD</div><strong>${m.squad.length}/11</strong></div></div>${c ? `<div class="card auction"><div id="timer" class="timer ${c.timeLeft<=5?'warn':''}">${c.timeLeft}</div><div class="player">${esc(c.player.name)}</div><div class="positions">${c.player.positions.join(' / ')}</div>${state.mode==='freeform'?scarcityHtml(c):''}${mandatory?`<div class="required">${state.mode==='freeform'?'The draft has reached its compulsory endgame. If nobody bids, this player will be randomly assigned for £1m to a manager who still has space.':'This player cannot safely be skipped. If nobody bids, they will be randomly assigned for £1m to one eligible manager.'}</div>`:''}<div class="bidvalue">£${currentBid}m</div><div class="leader">${c.bidderId?esc(managerName(c.bidderId))+' leads':'No bids yet'}</div><div class="spacer14"></div>${complete?'<button class="secondary big" disabled>Your squad is complete</button>':`<button class="primary big" id="bid">BID £${next}m</button><div class="spacer9"></div><div class="row"><button class="secondary grow jump" data-jump="2">+£2m</button><button class="secondary grow jump" data-jump="5">+£5m</button><button class="secondary grow" id="custom">Custom</button></div>`}</div>`:'<div class="card">Loading next player…</div>'}`;
+    const isOut=!!c?.outIds?.includes(meId);
+    const leading=c?.bidderId===meId;
+    const eligible=!!c?.eligibleIds?.includes(meId);
+    let controls='';
+    if(complete){
+      controls='<button class="secondary big" disabled>Squad complete · automatically out</button>';
+    }else if(c){
+      const bidControls=(eligible||leading)?`<button class="primary big" id="bid">BID £${next}m</button><div class="spacer9"></div><div class="row"><button class="secondary grow jump" data-jump="2">+£2m</button><button class="secondary grow jump" data-jump="5">+£5m</button><button class="secondary grow" id="custom">Custom</button></div>`:'<button class="secondary big" disabled>Automatically out for this player</button>';
+      const outControl=leading
+        ? '<button class="secondary out-button" disabled>You are currently leading</button>'
+        : eligible
+          ? `<button class="${isOut?'out-button active':'out-button'}" id="auctionOut">${isOut?'I’m Out ✓ · tap to re-enter':'I’m Out'}</button>`
+          : '';
+      controls=`${bidControls}${outControl?`<div class="spacer9"></div>${outControl}`:''}`;
+    }
+    panel.innerHTML=`<div class="card budget"><div><div class="muted">YOUR BUDGET</div><strong>£${m.budget}m</strong></div><div class="right"><div class="muted">SQUAD</div><strong>${m.squad.length}/11</strong></div></div>${c ? `<div class="card auction"><div class="player-counter">PLAYER ${state.shownCount||1} OF ${state.poolSize||'—'}</div><div id="timer" class="timer ${c.timeLeft<=5?'warn':''}">${c.timeLeft}</div><div class="player">${esc(c.player.name)}</div><div class="positions">${c.player.positions.join(' / ')}</div>${state.mode==='freeform'?scarcityHtml(c):''}${mandatory?`<div class="required">${state.mode==='freeform'?'The draft has reached its compulsory endgame. If nobody bids, this player will be randomly assigned for £1m to a manager who still has space.':'This player cannot safely be skipped. If nobody bids, they will be randomly assigned for £1m to one eligible manager.'}</div>`:''}<div class="bidvalue">£${currentBid}m</div><div class="leader">${c.bidderId?esc(managerName(c.bidderId))+' leads':'No bids yet'}</div>${isOut?'<div class="out-status">You are out of the bidding for this player. Place a bid or tap again to re-enter.</div>':''}<div class="spacer14"></div>${controls}</div>`:'<div class="card">Loading next player…</div>'}`;
   }
   if(tab==='team'){
     panel.innerHTML=state.mode==='freeform'
@@ -145,13 +160,18 @@ function draft(){
   }
 
   if(tab==='draft'&&c&&m.squad.length<11){
-    const send=amt=>socket.emit('bid',{amount:amt},r=>{if(r&&!r.ok)showToast(r.error)});
-    document.querySelector('#bid').onclick=()=>send(next);
-    document.querySelectorAll('.jump').forEach(b=>b.onclick=()=>send(currentBid+Number(b.dataset.jump)));
-    document.querySelector('#custom').onclick=()=>{
-      const v=prompt('Bid amount in £m',String(next));
-      if(v)send(Number(v));
-    };
+    const eligible=!!c.eligibleIds?.includes(meId) || c.bidderId===meId;
+    if(eligible){
+      const send=amt=>socket.emit('bid',{amount:amt},r=>{if(r&&!r.ok)showToast(r.error)});
+      const bidBtn=document.querySelector('#bid'); if(bidBtn)bidBtn.onclick=()=>send(next);
+      document.querySelectorAll('.jump').forEach(b=>b.onclick=()=>send(currentBid+Number(b.dataset.jump)));
+      const custom=document.querySelector('#custom'); if(custom)custom.onclick=()=>{
+        const v=prompt('Bid amount in £m',String(next));
+        if(v)send(Number(v));
+      };
+    }
+    const outBtn=document.querySelector('#auctionOut');
+    if(outBtn)outBtn.onclick=()=>socket.emit('setAuctionOut',{out:!c.outIds?.includes(meId)},r=>{if(r&&!r.ok)showToast(r.error)});
   }
 }
 
@@ -176,7 +196,7 @@ function teamBuild(){
   shell(`<div class="mode-strip">Freeform team builder · ${esc(packName())}</div>
     <div class="card"><div class="budget"><div><h1>Build your XI</h1><p class="muted no-margin">Positions are completely unrestricted.</p></div><b>${readyCount}/${state.managers.length} set</b></div></div>
     <div class="card"><label>Formation</label><select id="finalFormation"><option value="">Choose formation</option>${formationOptions}</select></div>
-    <div class="card"><div class="builder-hint">${m.finalFormation?'Tap a position on the pitch, then tap the player you want there. Players swap places automatically.':'Choose a formation first.'}</div>${pitchHtml(m,true)}</div>
+    <div class="card"><div class="builder-hint">${m.finalFormation?'The game has suggested the best positional fit for this formation. Tap a position, then a player, to change it. Players swap automatically.':'Choose a formation first.'}</div>${pitchHtml(m,true)}</div>
     <div class="card"><h2>Your players</h2><div class="player-picker">${m.squad.map(p=>{
       const idx=m.lineup?.indexOf(p.id);
       const slotLabel=m.finalFormation&&idx>=0?FF_LAYOUTS[m.finalFormation]?.slots[idx]:'';
