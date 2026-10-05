@@ -5,6 +5,8 @@ let state=null;
 let meId=null;
 let tab='draft';
 let selectedLineupSlot=null;
+let resultsTab='season';
+let statsMetric='goals';
 
 const HARD_FORMATIONS=['4-4-2','4-3-3','4-2-3-1','3-5-2','3-4-3','5-3-2'];
 const HARD_SLOTS={
@@ -148,7 +150,7 @@ function draft(){
           : '';
       controls=`${bidControls}${outControl?`<div class="spacer9"></div>${outControl}`:''}`;
     }
-    panel.innerHTML=`<div class="card budget"><div><div class="muted">YOUR BUDGET</div><strong>£${m.budget}m</strong></div><div class="right"><div class="muted">SQUAD</div><strong>${m.squad.length}/11</strong></div></div>${c ? `<div class="card auction"><div class="player-counter">PLAYER ${state.shownCount||1} OF ${state.poolSize||'—'}</div><div id="timer" class="timer ${c.timeLeft<=5?'warn':''}">${c.timeLeft}</div><div class="player">${esc(c.player.name)}</div><div class="positions">${c.player.positions.join(' / ')}</div>${state.mode==='freeform'?scarcityHtml(c):''}${mandatory?`<div class="required">${state.mode==='freeform'?'The draft has reached its compulsory endgame. If nobody bids, this player will be randomly assigned for £1m to a manager who still has space.':'This player cannot safely be skipped. If nobody bids, they will be randomly assigned for £1m to one eligible manager.'}</div>`:''}<div class="bidvalue">£${currentBid}m</div><div class="leader">${c.bidderId?esc(managerName(c.bidderId))+' leads':'No bids yet'}</div>${isOut?'<div class="out-status">You are out of the bidding for this player. Place a bid or tap again to re-enter.</div>':''}<div class="spacer14"></div>${controls}</div>`:'<div class="card">Loading next player…</div>'}`;
+    panel.innerHTML=`<div class="card budget"><div><div class="muted">YOUR BUDGET</div><strong>£${m.budget}m</strong></div><div class="right"><div class="muted">SQUAD</div><strong>${m.squad.length}/11</strong></div></div>${c ? `<div class="card auction"><div class="player-counter">PLAYER ${state.shownCount||1} OF ${state.poolSize||'—'}</div><div id="timer" class="timer ${c.timeLeft<=5?'warn':''}">${c.timeLeft}</div><div class="player">${esc(c.player.name)}</div><div class="positions">${c.player.positions.join(' / ')}</div>${state.mode==='freeform'?scarcityHtml(c):''}${mandatory?`<div class="required">${state.mode==='freeform'?'The draft has reached its compulsory endgame. If nobody bids, this player will go for £1m to an eligible manager with the most open squad slots; exact ties are completely random.':'This player cannot safely be skipped. If nobody bids, they will be randomly assigned for £1m to one eligible manager.'}</div>`:''}<div class="bidvalue">£${currentBid}m</div><div class="leader">${c.bidderId?esc(managerName(c.bidderId))+' leads':'No bids yet'}</div>${isOut?'<div class="out-status">You are out of the bidding for this player. Place a bid or tap again to re-enter.</div>':''}<div class="spacer14"></div>${controls}</div>`:'<div class="card">Loading next player…</div>'}`;
   }
   if(tab==='team'){
     panel.innerHTML=state.mode==='freeform'
@@ -235,28 +237,80 @@ function revealedTeamHtml(m){
 }
 function reveal(){
   const host=state.hostId===meId;
-  shell(`<div class="card"><h1>Teams revealed</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p><p class="muted small">Individual player ratings remain hidden. These team scores judge the XI as deployed.</p></div>${state.managers.map(revealedTeamHtml).join('')}<div class="card"><h2>Season simulation</h2><p class="muted">Every team will play home and away. With two managers, you will play four matches total (two home, two away). Close teams can upset each other; major quality gaps should usually tell.</p></div>${host?'<button class="primary big" id="simulate">Simulate season</button>':'<div class="card muted">Waiting for the host to start the simulation.</div>'}`);
+  shell(`<div class="card"><h1>Teams revealed</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p><p class="muted small">Individual player ratings remain hidden. These team scores judge the XI as deployed.</p></div>${state.managers.map(revealedTeamHtml).join('')}<div class="card"><h2>Season simulation</h2><p class="muted">Every team gets a balanced home/away schedule. Two managers play 10 matches; three managers play 12; with four or more, every pair plays home and away once. Results are revealed one match at a time.</p></div>${host?'<button class="primary big" id="simulate">Simulate season</button>':'<div class="card muted">Waiting for the host to start the simulation.</div>'}`);
   if(host)document.querySelector('#simulate').onclick=()=>socket.emit('startSimulation',{},r=>{if(r&&!r.ok)showToast(r.error)});
 }
 function scorerList(goals){
-  return (goals||[]).length ? goals.map(g=>`${esc(g.player)} ${g.minute}'`).join(' · ') : '—';
+  return (goals||[]).length ? goals.map(g=>`${esc(g.player)} ${g.minute}'${g.assist?` <span class="assist">(assist: ${esc(g.assist)})</span>`:''}`).join(' · ') : '—';
 }
 function matchHtml(m,label='League match'){
   const pen=m.penalties?` <span class="pens">(${m.penalties.home}–${m.penalties.away} pens)</span>`:'';
   const et=m.wentExtraTime?' · AET':'';
-  return `<div class="match-card"><div class="match-label">${esc(label)}${et}</div><div class="scoreline"><div><b>${esc(m.homeName)}</b><span>HOME</span></div><strong>${m.homeGoals}–${m.awayGoals}${pen}</strong><div class="right-team"><b>${esc(m.awayName)}</b><span>AWAY</span></div></div><div class="scorers"><div><b>${esc(m.homeName)}:</b> ${scorerList(m.homeScorers)}</div><div><b>${esc(m.awayName)}:</b> ${scorerList(m.awayScorers)}</div></div></div>`;
+  const pom=m.playerOfMatch?`<div class="potm">⭐ Player of the Match: <b>${esc(m.playerOfMatch.player)}</b> · ${Number(m.playerOfMatch.rating).toFixed(1)}</div>`:'';
+  const shotLine=(Number.isFinite(m.homeShotsOnTarget)&&Number.isFinite(m.awayShotsOnTarget))?`<div class="match-meta"><span>Shots on target ${m.homeShotsOnTarget}–${m.awayShotsOnTarget}</span><span>GK saves ${m.homeSaves??0}–${m.awaySaves??0}</span></div>`:'';
+  return `<div class="match-card"><div class="match-label">${esc(label)}${et}</div><div class="scoreline"><div><b>${esc(m.homeName)}</b><span>HOME</span></div><strong>${m.homeGoals}–${m.awayGoals}${pen}</strong><div class="right-team"><b>${esc(m.awayName)}</b><span>AWAY</span></div></div><div class="scorers"><div><b>${esc(m.homeName)}:</b> ${scorerList(m.homeScorers)}</div><div><b>${esc(m.awayName)}:</b> ${scorerList(m.awayScorers)}</div></div>${shotLine}${pom}</div>`;
 }
 function standingsHtml(rows){
   return `<div class="table-wrap"><table class="standings"><thead><tr><th>#</th><th>Manager</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(rows||[]).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.name)}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td><b>${r.pts}</b></td></tr>`).join('')}</tbody></table></div>`;
+}
+function resultNav(){
+  const tabs=[['season','Season'],['players','Player stats'],['tots','Team of Season'],['session','Session']];
+  return `<div class="result-tabs">${tabs.map(([key,label])=>`<button class="result-tab ${resultsTab===key?'active':''}" data-result-tab="${key}">${label}</button>`).join('')}</div>`;
+}
+function wireResultTabs(){
+  document.querySelectorAll('[data-result-tab]').forEach(b=>b.onclick=()=>{resultsTab=b.dataset.resultTab;results()});
+}
+function leaderboardHtml(metric){
+  const rows=state.simulation?.leaderboards?.[metric]||[];
+  const labels={goals:'Goals',assists:'Assists',saves:'Saves',rating:'Avg rating'};
+  const value=p=>metric==='rating'?Number(p.avgRating||0).toFixed(2):(p[metric]??0);
+  return `<div class="stat-switch">${Object.entries(labels).map(([key,label])=>`<button class="stat-chip ${statsMetric===key?'active':''}" data-stat="${key}">${label}</button>`).join('')}</div><div class="table-wrap"><table class="player-stats-table"><thead><tr><th>#</th><th>Player</th><th>Manager</th><th>Pos</th><th>${labels[metric]}</th></tr></thead><tbody>${rows.map((p,i)=>`<tr><td>${i+1}</td><td><b>${esc(p.player)}</b></td><td>${esc(p.managerName)}</td><td>${esc(p.deployedSlot)}</td><td><b>${value(p)}</b></td></tr>`).join('')}</tbody></table></div>`;
+}
+function wireStatSwitch(){
+  document.querySelectorAll('[data-stat]').forEach(b=>b.onclick=()=>{statsMetric=b.dataset.stat;results()});
+}
+function totsPitchHtml(tots){
+  const layout=FF_LAYOUTS[tots?.formation];
+  if(!layout||!tots?.players?.length)return '<div class="muted">No valid Team of the Season could be built.</div>';
+  return `<div class="pitch tots-pitch">${layout.rows.map(row=>`<div class="pitch-row cols-${row.length}">${row.map(idx=>{
+    const p=tots.players[idx];
+    return `<div class="pitch-slot tots-slot"><span class="slot-label">${esc(layout.slots[idx])}</span><span class="slot-name">${p?esc(p.player):'—'}</span>${p?`<span class="tots-manager">${esc(p.managerName)} · ${Number(p.avgRating).toFixed(2)}</span>`:''}</div>`;
+  }).join('')}</div>`).join('')}</div>`;
+}
+function sessionHtml(){
+  const ss=state.sessionStats||{drafts:0,table:[],headToHead:[]};
+  const table=`<div class="table-wrap"><table class="session-table"><thead><tr><th>#</th><th>Manager</th><th>Titles</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(ss.table||[]).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.name)}</b></td><td><b>${r.titles}</b></td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td>${r.pts}</td></tr>`).join('')}</tbody></table></div>`;
+  const h2h=(ss.headToHead||[]).filter(x=>x.aWins+x.bWins+x.draws>0).map(x=>`<div class="h2h-card"><div><b>${esc(x.managerAName)}</b><strong>${x.aWins}</strong></div><span>${x.draws} draws<br><small>${x.aGoals}–${x.bGoals} goals</small></span><div class="right"><b>${esc(x.managerBName)}</b><strong>${x.bWins}</strong></div></div>`).join('');
+  return `<div class="card"><h2>Session rivalry</h2><p class="muted">${ss.drafts||0} completed draft${ss.drafts===1?'':'s'} in this room. League matches accumulate until the room ends.</p>${table}</div>${h2h?`<div class="card"><h2>Head-to-head</h2><div class="h2h-list">${h2h}</div></div>`:''}`;
+}
+function fullResults(){
+  const host=state.hostId===meId,sim=state.simulation;
+  const champion=state.managers.find(m=>m.id===sim.championId);
+  const playoffs=(sim.playoffs||[]).length?`<div class="card"><h2>Title tiebreak</h2><p class="muted small">The league tiebreakers could not separate the leaders, so the title was decided on the pitch.</p>${sim.playoffs.map(m=>matchHtml(m,'Tiebreak playoff')).join('')}</div>`:'';
+  let body='';
+  if(resultsTab==='season') body=`<div class="card"><h2>Final table</h2>${standingsHtml(sim.table)}</div>${playoffs}<div class="card"><h2>Match results</h2><div class="matches">${(sim.matches||[]).map((m,i)=>matchHtml(m,`Match ${i+1} of ${sim.matches.length}`)).join('')}</div></div><div class="card"><h2>Team ratings</h2><p class="muted small">The team ratings that drove the simulation. Individual hidden player ratings remain secret.</p>${state.managers.map(m=>`<div class="rating-summary"><div><b>${esc(m.name)}</b><span>${state.mode==='freeform'?esc(m.finalFormation||'XI'):esc(m.formation||'XI')}</span></div><strong>${state.teamRatings?.[m.id]?.overall??'—'}</strong></div>`).join('')}</div>`;
+  else if(resultsTab==='players') body=`<div class="card"><h2>League player stats</h2><p class="muted">Top 10 performers across every manager's XI.</p>${leaderboardHtml(statsMetric)}</div>`;
+  else if(resultsTab==='tots') body=`<div class="card"><div class="budget"><div><h2>Team of the Season</h2><p class="muted no-margin">Best-performing valid XI by average match rating, using the positions players were actually deployed in with sensible neighbouring roles.</p></div><b>${esc(sim.teamOfSeason?.formation||'XI')}</b></div><div class="spacer14"></div>${totsPitchHtml(sim.teamOfSeason)}</div>`;
+  else body=sessionHtml();
+  shell(`<div class="card champion"><div class="muted">SEASON CHAMPION</div><h1>🏆 ${esc(champion?.name||'Winner')}</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p></div>${resultNav()}${body}${host?'<button class="primary big" id="again">Play again</button>':'<div class="card muted">Waiting for the host to start another game.</div>'}`);
+  wireResultTabs();wireStatSwitch();
+  if(host)document.querySelector('#again').onclick=()=>socket.emit('playAgain',{});
 }
 function results(){
   const host=state.hostId===meId;
   const sim=state.simulation;
   if(!sim)return reveal();
-  const champion=state.managers.find(m=>m.id===sim.championId);
-  const playoffs=(sim.playoffs||[]).length?`<div class="card"><h2>Title tiebreak</h2><p class="muted small">The league tiebreakers could not separate the leaders, so the title was decided on the pitch.</p>${sim.playoffs.map(m=>matchHtml(m,'Tiebreak playoff')).join('')}</div>`:'';
-  shell(`<div class="card champion"><div class="muted">SIMULATION WINNER</div><h1>🏆 ${esc(champion?.name||'Winner')}</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p></div><div class="card"><h2>Final table</h2>${standingsHtml(sim.table)}</div>${playoffs}<div class="card"><h2>Match results</h2><div class="matches">${(sim.matches||[]).map(m=>matchHtml(m)).join('')}</div></div><div class="card"><h2>Team ratings</h2><p class="muted small">The ratings used to drive the simulation. Individual player ratings stay hidden.</p>${state.managers.map(m=>`<div class="rating-summary"><div><b>${esc(m.name)}</b><span>${state.mode==='freeform'?esc(m.finalFormation||'XI'):esc(m.formation||'XI')}</span></div><strong>${state.teamRatings?.[m.id]?.overall??'—'}</strong></div>`).join('')}</div>${host?'<button class="primary big" id="again">Play again</button>':'<div class="card muted">Waiting for the host to start another game.</div>'}`);
-  if(host)document.querySelector('#again').onclick=()=>socket.emit('playAgain',{});
+  const total=sim.matches?.length||0;
+  const shown=Math.min(state.simulationRevealCount||0,total);
+  if(shown>=total)return fullResults();
+  const latest=shown>0?sim.matches[shown-1]:null;
+  const liveTable=shown>0?sim.progressTables?.[shown-1]:null;
+  const controls=host?`<div class="reveal-controls"><button class="primary big" id="revealNext">${shown===0?'Reveal first match':`Reveal match ${shown+1}`}</button><button class="secondary" id="revealAll">Reveal all results</button></div>`:'<div class="card muted">Waiting for the host to reveal the next match.</div>';
+  shell(`<div class="card reveal-header"><div class="muted">MATCHDAY REVEAL</div><h1>${shown} / ${total}</h1><p class="muted">Results and the league table are being revealed live to everyone in the room.</p></div>${latest?`<div class="card"><h2>Latest result</h2>${matchHtml(latest,`Match ${shown} of ${total}`)}</div>`:'<div class="card"><h2>Season ready</h2><p class="muted">No results have been shown yet.</p></div>'}${liveTable?`<div class="card"><h2>Live table</h2>${standingsHtml(liveTable)}</div>`:''}${controls}`);
+  if(host){
+    document.querySelector('#revealNext').onclick=()=>socket.emit('revealNextMatch',{});
+    document.querySelector('#revealAll').onclick=()=>socket.emit('revealAllMatches',{});
+  }
 }
 
 function finished(){
@@ -283,7 +337,10 @@ socket.on('state',s=>{
   const phaseChanged=state?.phase!==s.phase;
   state=s;
   if(!meId)meId=socket.id;
-  if(phaseChanged) selectedLineupSlot=null;
+  if(phaseChanged){
+    selectedLineupSlot=null;
+    if(s.phase==='results'){resultsTab='season';statsMetric='goals';}
+  }
   render();
 });
 socket.on('tick',({timeLeft})=>{
