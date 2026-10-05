@@ -855,13 +855,18 @@ function publicAssessment(a){
 
 function poisson(lambda){
   const L=Math.exp(-lambda); let k=0,p=1;
-  do{k++;p*=Math.random();}while(p>L&&k<15);
+  do{k++;p*=Math.random();}while(p>L&&k<18);
   return k-1;
 }
 function scorerSlotMultiplier(slot){
   if(slot==='ST')return 1.45;if(slot==='LW'||slot==='RW')return 1.28;if(slot==='AM')return 1.10;
   if(slot==='LM'||slot==='RM')return 0.72;if(slot==='CM')return 0.60;if(slot==='DM')return 0.34;
   if(slot==='LB'||slot==='RB')return 0.26;if(slot==='CB')return 0.22;return 0.01;
+}
+function assisterSlotMultiplier(slot){
+  if(slot==='AM')return 1.35;if(slot==='LW'||slot==='RW')return 1.25;if(slot==='LM'||slot==='RM')return 1.18;
+  if(slot==='CM')return 1.12;if(slot==='ST')return 0.92;if(slot==='DM')return 0.78;
+  if(slot==='LB'||slot==='RB')return 0.86;if(slot==='CB')return 0.42;return 0.01;
 }
 function chooseWeighted(items,weightFn){
   const weighted=items.map(x=>({x,w:Math.max(0.001,weightFn(x))}));
@@ -874,6 +879,15 @@ function chooseScorer(assessment){
     return Math.pow(threat,1.7)*Math.pow(d.profile.quality/90,1.5)*d.fit*scorerSlotMultiplier(d.slot);
   });
 }
+function chooseAssister(assessment,scorer){
+  const candidates=assessment.details.filter(d=>d.player.id!==scorer.player.id && d.slot!=='GK');
+  if(!candidates.length) return null;
+  return chooseWeighted(candidates,d=>{
+    const t=d.profile.traits;
+    const creation=(0.48*t.creativity+0.32*t.progression+0.20*t.width)/100;
+    return Math.pow(Math.max(0.08,creation),1.45)*Math.pow(d.profile.quality/90,0.7)*d.fit*assisterSlotMultiplier(d.slot);
+  });
+}
 function goalMinute(extra=false){
   if(extra) return 91+Math.floor(Math.pow(Math.random(),0.88)*30);
   return 1+Math.floor(Math.pow(Math.random(),0.82)*90);
@@ -881,17 +895,81 @@ function goalMinute(extra=false){
 function makeGoals(count,assessment,extra=false){
   const goals=[];
   for(let i=0;i<count;i++){
-    const d=chooseScorer(assessment);
-    goals.push({player:d.player.name,minute:goalMinute(extra)});
+    const scorer=chooseScorer(assessment);
+    const assisted=Math.random()<0.78;
+    const assister=assisted?chooseAssister(assessment,scorer):null;
+    goals.push({
+      player:scorer.player.name,playerId:scorer.player.id,minute:goalMinute(extra),
+      assist:assister?.player?.name||null,assistId:assister?.player?.id??null
+    });
   }
   return goals.sort((a,b)=>a.minute-b.minute);
+}
+function hasNaturalKeeper(assessment){
+  const keeper=assessment.details.find(d=>d.slot==='GK');
+  return !!keeper && keeper.player.positions?.[0]==='GK';
 }
 function expectedGoals(a,b,homeAdvantage){
   const attackEdge=a.attack-b.defence;
   const midfieldEdge=a.midfield-b.midfield;
   const overallEdge=a.overall-b.overall;
-  const log=Math.log(1.32)+0.026*attackEdge+0.009*midfieldEdge+0.012*overallEdge+(homeAdvantage?0.09:0);
-  return clamp(Math.exp(log),0.12,5.2);
+  // v5D calibration: matchups are more balanced, meaningful rating gaps matter more,
+  // and equal teams receive a modern-football-sized home advantage (~44/24/31 H/D/A).
+  let log=Math.log(1.32)+0.021*attackEdge+0.016*midfieldEdge+0.023*overallEdge+(homeAdvantage?0.20:0);
+  // A non-goalkeeper in goal is already punished in the ratings, but remains an exceptional match-day weakness.
+  if(!hasNaturalKeeper(b)) log+=Math.log(1.18);
+  return clamp(Math.exp(log),0.10,5.5);
+}
+function simulateShotsOnTarget(goals,xg){
+  const extra=poisson(clamp(0.9+xg*1.45,0.8,7.0));
+  return goals+extra;
+}
+function ratingNoise(){
+  return ((Math.random()+Math.random()+Math.random())-1.5)*0.36;
+}
+function performanceRatings(team,opponent,{goalsFor,goalsAgainst,goalEvents,saves,xgFor}){
+  const scorerCounts=new Map(),assistCounts=new Map();
+  for(const g of goalEvents){
+    scorerCounts.set(g.playerId,(scorerCounts.get(g.playerId)||0)+1);
+    if(g.assistId!==null&&g.assistId!==undefined) assistCounts.set(g.assistId,(assistCounts.get(g.assistId)||0)+1);
+  }
+  const won=goalsFor>goalsAgainst,draw=goalsFor===goalsAgainst;
+  const resultBase=won?0.36:(draw?0.06:-0.28);
+  const margin=clamp((goalsFor-goalsAgainst)*0.07,-0.25,0.25);
+  const avgValue=avg(team.assessment.details.map(d=>d.value));
+  const keeper=team.assessment.details.find(d=>d.slot==='GK');
+  return team.assessment.details.map(d=>{
+    const goals=scorerCounts.get(d.player.id)||0;
+    const assists=assistCounts.get(d.player.id)||0;
+    let unitEdge=0;
+    if(['ST','LW','RW','AM'].includes(d.slot)) unitEdge=team.assessment.attack-opponent.assessment.defence;
+    else if(['DM','CM','LM','RM'].includes(d.slot)) unitEdge=team.assessment.midfield-opponent.assessment.midfield;
+    else unitEdge=team.assessment.defence-opponent.assessment.attack;
+    unitEdge=clamp(unitEdge*0.012,-0.22,0.22);
+    const underlying=clamp((d.value-avgValue)/32,-0.16,0.16);
+    let rating=6.32+resultBase+margin+unitEdge+underlying+ratingNoise();
+    rating+=goals*0.88+assists*0.48;
+    if(d.slot==='GK'){
+      rating+=Math.min(0.90,saves*0.12);
+      if(goalsAgainst===0) rating+=0.58;
+      rating-=Math.min(0.82,goalsAgainst*0.16);
+      if(d.player.positions?.[0]!=='GK') rating-=0.22;
+    } else if(['CB','LB','RB','DM'].includes(d.slot)){
+      if(goalsAgainst===0) rating+=d.slot==='DM'?0.20:0.40;
+      rating-=Math.min(0.42,goalsAgainst*(d.slot==='DM'?0.05:0.075));
+    } else if(['CM','LM','RM'].includes(d.slot) && goalsAgainst===0){
+      rating+=0.08;
+    }
+    if(['ST','LW','RW','AM','LM','RM'].includes(d.slot)) rating+=Math.min(0.20,goalsFor*0.045);
+    // Slightly reward producing more than the team's xG expectation, without dominating event stats.
+    rating+=clamp((goalsFor-xgFor)*0.045,-0.12,0.12);
+    return {playerId:d.player.id,player:d.player.name,slot:d.slot,rating:round1(clamp(rating,4.0,9.9)),goals,assists,saves:d.player.id===keeper?.player?.id?saves:0};
+  });
+}
+function playerOfMatch(homeRatings,awayRatings){
+  const all=[...homeRatings,...awayRatings];
+  all.sort((a,b)=>b.rating-a.rating||b.goals-a.goals||b.assists-a.assists||b.saves-a.saves||a.player.localeCompare(b.player));
+  return all[0]?{playerId:all[0].playerId,player:all[0].player,rating:all[0].rating}:null;
 }
 
 function simulateMatch(home,away,{neutral=false,knockout=false}={}){
@@ -915,9 +993,16 @@ function simulateMatch(home,away,{neutral=false,knockout=false}={}){
       penalties={home:hp,away:ap};
     }
   }
+  const homeSot=simulateShotsOnTarget(hg,homeXg),awaySot=simulateShotsOnTarget(ag,awayXg);
+  const homeSaves=Math.max(0,awaySot-ag),awaySaves=Math.max(0,homeSot-hg);
+  const homeRatings=performanceRatings(home,away,{goalsFor:hg,goalsAgainst:ag,goalEvents:homeGoals,saves:homeSaves,xgFor:homeXg});
+  const awayRatings=performanceRatings(away,home,{goalsFor:ag,goalsAgainst:hg,goalEvents:awayGoals,saves:awaySaves,xgFor:awayXg});
+  const pom=playerOfMatch(homeRatings,awayRatings);
   return {
     homeId:home.id,awayId:away.id,homeName:home.name,awayName:away.name,
     homeGoals:hg,awayGoals:ag,homeScorers:homeGoals,awayScorers:awayGoals,
+    homeShotsOnTarget:homeSot,awayShotsOnTarget:awaySot,homeSaves,awaySaves,
+    homePlayerRatings:homeRatings,awayPlayerRatings:awayRatings,playerOfMatch:pom,
     wentExtraTime,penalties,
     winnerId: penalties ? (penalties.home>penalties.away?home.id:away.id) : (hg===ag?null:(hg>ag?home.id:away.id))
   };
@@ -988,10 +1073,116 @@ function tiedAtTopAfterAllCriteria(table,matches){
   return mini.filter(r=>r.pts===mtop.pts&&r.gd===mtop.gd&&r.gf===mtop.gf).map(r=>r.id);
 }
 
+function aggregatePlayerStats(teams,matches){
+  const stats=new Map();
+  for(const t of teams){
+    for(const d of t.assessment.details){
+      const key=`${t.id}:${d.player.id}`;
+      stats.set(key,{playerId:d.player.id,player:d.player.name,managerId:t.id,managerName:t.name,deployedSlot:d.slot,apps:0,goals:0,assists:0,saves:0,cleanSheets:0,totalRating:0});
+    }
+  }
+  for(const m of matches){
+    const process=(teamId,ratings,events,saves,conceded)=>{
+      for(const r of ratings||[]){
+        const st=stats.get(`${teamId}:${r.playerId}`); if(!st)continue;
+        st.apps++;st.totalRating+=r.rating;st.saves+=r.saves||0;
+        if(conceded===0 && ['GK','CB','LB','RB','DM'].includes(st.deployedSlot)) st.cleanSheets++;
+      }
+      for(const g of events||[]){
+        const scorer=stats.get(`${teamId}:${g.playerId}`);if(scorer)scorer.goals++;
+        if(g.assistId!==null&&g.assistId!==undefined){const assister=stats.get(`${teamId}:${g.assistId}`);if(assister)assister.assists++;}
+      }
+    };
+    process(m.homeId,m.homePlayerRatings,m.homeScorers,m.homeSaves,m.awayGoals);
+    process(m.awayId,m.awayPlayerRatings,m.awayScorers,m.awaySaves,m.homeGoals);
+  }
+  return [...stats.values()].map(s=>({
+    playerId:s.playerId,player:s.player,managerId:s.managerId,managerName:s.managerName,deployedSlot:s.deployedSlot,
+    apps:s.apps,goals:s.goals,assists:s.assists,saves:s.saves,cleanSheets:s.cleanSheets,
+    avgRating:s.apps?Math.round((s.totalRating/s.apps)*100)/100:0
+  }));
+}
+
+const TOTS_FORMATIONS={
+  '4-3-3':['GK','LB','CB','CB','RB','CM','CM','CM','LW','ST','RW'],
+  '4-4-2':['GK','LB','CB','CB','RB','LM','CM','CM','RM','ST','ST'],
+  '4-2-3-1':['GK','LB','CB','CB','RB','DM','DM','LW','AM','RW','ST'],
+  '4-1-4-1':['GK','LB','CB','CB','RB','DM','LM','CM','CM','RM','ST'],
+  '3-5-2':['GK','CB','CB','CB','LM','CM','CM','AM','RM','ST','ST'],
+  '3-4-3':['GK','CB','CB','CB','LM','CM','CM','RM','LW','ST','RW'],
+  '5-3-2':['GK','LB','CB','CB','CB','RB','CM','CM','CM','ST','ST']
+};
+function totsEligible(deployed,target){
+  if(target==='GK') return deployed==='GK';
+  if(target==='CB') return deployed==='CB';
+  if(target==='LB') return ['LB','LWB'].includes(deployed);
+  if(target==='RB') return ['RB','RWB'].includes(deployed);
+  if(target==='DM') return ['DM','CM'].includes(deployed);
+  if(target==='CM') return ['DM','CM','AM'].includes(deployed);
+  if(target==='AM') return ['AM','CM'].includes(deployed);
+  if(target==='LM') return ['LM','LW','LWB'].includes(deployed);
+  if(target==='RM') return ['RM','RW','RWB'].includes(deployed);
+  if(target==='LW') return ['LW','LM'].includes(deployed);
+  if(target==='RW') return ['RW','RM'].includes(deployed);
+  if(target==='ST') return ['ST','CF'].includes(deployed);
+  return deployed===target;
+}
+// Hungarian assignment: 11 formation slots to unique players, maximizing average match rating.
+function bestTotsForFormation(playerStats,formation,slots){
+  const players=playerStats;
+  const n=slots.length,m=players.length;
+  if(m<n)return null;
+  const cost=Array.from({length:n},(_,i)=>players.map(p=>{
+    if(!totsEligible(p.deployedSlot,slots[i])) return 1e6;
+    const tie=(p.goals*3+p.assists*2+p.cleanSheets*0.35+p.saves*0.08)/1000;
+    return -(p.avgRating+tie);
+  }));
+  const u=new Array(n+1).fill(0),v=new Array(m+1).fill(0),p=new Array(m+1).fill(0),way=new Array(m+1).fill(0);
+  for(let i=1;i<=n;i++){
+    p[0]=i;let j0=0;const minv=new Array(m+1).fill(Infinity),used=new Array(m+1).fill(false);
+    do{
+      used[j0]=true;const i0=p[j0];let delta=Infinity,j1=0;
+      for(let j=1;j<=m;j++)if(!used[j]){
+        const cur=cost[i0-1][j-1]-u[i0]-v[j];
+        if(cur<minv[j]){minv[j]=cur;way[j]=j0;}
+        if(minv[j]<delta){delta=minv[j];j1=j;}
+      }
+      for(let j=0;j<=m;j++)if(used[j]){u[p[j]]+=delta;v[j]-=delta;}else minv[j]-=delta;
+      j0=j1;
+    }while(p[j0]!==0);
+    do{const j1=way[j0];p[j0]=p[j1];j0=j1;}while(j0!==0);
+  }
+  const assignment=new Array(n).fill(-1);
+  for(let j=1;j<=m;j++)if(p[j]>0&&p[j]<=n)assignment[p[j]-1]=j-1;
+  if(assignment.some((pi,si)=>pi<0||cost[si][pi]>=1e5))return null;
+  const selected=assignment.map((pi,i)=>({...players[pi],slot:slots[i]}));
+  const score=selected.reduce((sum,x)=>sum+x.avgRating,0);
+  return {formation,score,players:selected};
+}
+function teamOfSeason(playerStats){
+  let best=null;
+  for(const [formation,slots] of Object.entries(TOTS_FORMATIONS)){
+    const candidate=bestTotsForFormation(playerStats,formation,slots);
+    if(candidate&&(!best||candidate.score>best.score+1e-9))best=candidate;
+  }
+  if(!best)return {formation:'XI',players:[]};
+  return {formation:best.formation,players:best.players.map(({slot,playerId,player,managerId,managerName,deployedSlot,avgRating,goals,assists,saves})=>({slot,playerId,player,managerId,managerName,deployedSlot,avgRating,goals,assists,saves}))};
+}
+function leaderboards(playerStats){
+  const take=fn=>[...playerStats].sort(fn).slice(0,10);
+  return {
+    goals:take((a,b)=>b.goals-a.goals||b.assists-a.assists||b.avgRating-a.avgRating||a.player.localeCompare(b.player)),
+    assists:take((a,b)=>b.assists-a.assists||b.goals-a.goals||b.avgRating-a.avgRating||a.player.localeCompare(b.player)),
+    saves:[...playerStats].filter(p=>p.deployedSlot==='GK').sort((a,b)=>b.saves-a.saves||b.avgRating-a.avgRating||a.player.localeCompare(b.player)).slice(0,10),
+    rating:take((a,b)=>b.avgRating-a.avgRating||b.goals+b.assists-(a.goals+a.assists)||a.player.localeCompare(b.player))
+  };
+}
+
 function simulateCompetition(teamInputs){
   const teams=teamInputs.map(t=>({...t,assessment:t.assessment}));
   const fixtures=scheduleFor(teams);
-  const matches=fixtures.map(([h,a])=>simulateMatch(h,a));
+  const matches=fixtures.map(([h,a],i)=>({...simulateMatch(h,a),matchNumber:i+1}));
+  const progressTables=matches.map((_,i)=>tableFromResults(teams,matches.slice(0,i+1)));
   const table=tableFromResults(teams,matches);
   let tied=tiedAtTopAfterAllCriteria(table,matches);
   const playoffs=[];
@@ -1011,7 +1202,8 @@ function simulateCompetition(teamInputs){
     }
     championId=pool[0]?.id||championId;
   }
-  return {matches,table,playoffs,championId};
+  const playerStats=aggregatePlayerStats(teams,matches);
+  return {matches,progressTables,table,playoffs,championId,playerStats,leaderboards:leaderboards(playerStats),teamOfSeason:teamOfSeason(playerStats)};
 }
 
 module.exports={qualityFor,getProfile,positionalFit,assessLineup,publicAssessment,simulateCompetition};
