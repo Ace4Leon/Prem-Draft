@@ -7,6 +7,8 @@ let tab='draft';
 let selectedLineupSlot=null;
 let resultsTab='season';
 let statsMetric='goals';
+let nominationSearch='';
+let nominationPosition='ALL';
 
 const VISUAL_THEME_KEY='premDraftVisualTheme';
 let visualTheme='classic';
@@ -74,10 +76,30 @@ function me(){return state?.managers.find(m=>m.id===meId)}
 function managerName(id){return state?.managers.find(m=>m.id===id)?.name||'—'}
 function packName(){return state?.packLabels?.[state.pack]||'Player Pack'}
 function modeName(){return state?.modeLabels?.[state.mode]||'Game Mode'}
+function isFreeformLike(){return ['freeform','nomination','blind'].includes(state?.mode)}
+function commissionerMarkup(){
+  const host=state?.hostId===meId;
+  const show=host&&['draft','team_build'].includes(state?.phase);
+  if(!show)return '';
+  const canAuction=state.phase==='draft'&&!!state.current;
+  return `<div class="commission-modal" id="commissionModal" hidden><div class="commission-sheet"><div class="budget"><div><h2>Commissioner controls</h2><p class="muted no-margin">Failsafe controls for the host.</p></div><button class="icon-button" id="closeCommission">×</button></div>${state.phase==='draft'?`<button class="secondary big" id="pauseDraft">${state.paused?'Resume draft':'Pause draft'}</button><div class="spacer9"></div><button class="secondary big" id="restartAuction" ${canAuction?'':'disabled'}>Restart current auction</button><div class="spacer9"></div><button class="secondary big danger-soft" id="skipCurrent" ${canAuction?'':'disabled'}>Skip current player</button><div class="spacer14"></div>`:''}<button class="danger big" id="abandonDraft">Abandon draft & return to lobby</button></div></div>`;
+}
+function wireCommissioner(){
+  const open=document.querySelector('#commissionerBtn'),modal=document.querySelector('#commissionModal');
+  if(!open||!modal)return;
+  open.onclick=()=>{modal.hidden=false};
+  const close=document.querySelector('#closeCommission');if(close)close.onclick=()=>{modal.hidden=true};
+  modal.onclick=e=>{if(e.target===modal)modal.hidden=true};
+  const pause=document.querySelector('#pauseDraft');if(pause)pause.onclick=()=>socket.emit('commissionPause',{paused:!state.paused},r=>{if(r&&!r.ok)showToast(r.error)});
+  const restart=document.querySelector('#restartAuction');if(restart)restart.onclick=()=>{if(confirm('Restart this auction from the beginning?'))socket.emit('commissionRestartAuction',{},r=>{if(r&&!r.ok)showToast(r.error)});};
+  const skip=document.querySelector('#skipCurrent');if(skip)skip.onclick=()=>{if(confirm('Skip this player? This cannot be undone.'))socket.emit('commissionSkipCurrent',{},r=>{if(r&&!r.ok)showToast(r.error)});};
+  const abandon=document.querySelector('#abandonDraft');if(abandon)abandon.onclick=()=>{if(confirm('Abandon this draft and return everyone to the lobby?'))socket.emit('commissionAbandonDraft',{},r=>{if(r&&!r.ok)showToast(r.error)});};
+}
 function shell(content){
   applyVisualTheme();
-  app.innerHTML=`<div class="wrap"><div class="topbar"><div class="brand">⚽ Prem Draft</div><button class="theme-toggle" id="themeToggle" aria-label="Visual theme: ${visualTheme}. Tap to switch.">${themeButtonLabel()}</button></div>${content}</div>`;
-  wireThemeToggle();
+  const commissioner=(state?.hostId===meId&&['draft','team_build'].includes(state?.phase))?'<button class="theme-toggle commissioner-button" id="commissionerBtn" aria-label="Commissioner controls">⚙</button>':'';
+  app.innerHTML=`<div class="wrap"><div class="topbar"><div class="brand">⚽ Prem Draft</div><div class="top-actions">${commissioner}<button class="theme-toggle" id="themeToggle" aria-label="Visual theme: ${visualTheme}. Tap to switch.">${themeButtonLabel()}</button></div></div>${content}${commissionerMarkup()}</div>`;
+  wireThemeToggle();wireCommissioner();
 }
 
 function assignedSlots(m){
@@ -121,29 +143,26 @@ function lobby(){
   const m=me(),host=state.hostId===meId;
   const packOptions=Object.entries(state.packLabels||{}).map(([key,label])=>`<option value="${key}" ${state.pack===key?'selected':''}>${esc(label)} (${state.packCounts?.[key]||0} players)</option>`).join('');
   const modeOptions=Object.entries(state.modeLabels||{}).map(([key,label])=>`<option value="${key}" ${state.mode===key?'selected':''}>${esc(label)}</option>`).join('');
-  const modeDescription=state.mode==='freeform'
-    ? 'Draft any 11 players. Positions are advice only. Choose and arrange your formation after the auction.'
-    : 'Choose your formation now. Every signing must fit an open position and players stay in the slot they are assigned.';
-
-  const formationCard=state.mode==='hard' ? `<div class="card"><h2>Your formation</h2><select id="formation"><option value="">Choose formation</option>${HARD_FORMATIONS.map(f=>`<option ${m.formation===f?'selected':''}>${f}</option>`).join('')}</select><div class="spacer10"></div><button class="${m.ready?'secondary':'primary'} big" id="ready" ${!m.formation?'disabled':''}>${m.ready?'Not ready':'Ready'}</button></div>` : `<div class="card"><h2>Your draft</h2><p class="muted">No formation yet. Draft any 11 players; you will build your XI after the auction.</p><button class="${m.ready?'secondary':'primary'} big" id="ready">${m.ready?'Not ready':'Ready'}</button></div>`;
-
+  const descriptions={
+    freeform:'Draft any 11 players in the normal open auction. Choose and arrange your formation after the draft.',
+    nomination:'Managers take turns choosing who enters the auction. The pool is larger (18 per manager), and every nomination starts with a real £1m+ opening bid.',
+    blind:'Every player is a sealed bid. Opponent budgets, squads, bids and winners stay secret until all teams are set.',
+    hard:'Choose your formation now. Every signing must fit an open position and players stay in the slot they are assigned.'
+  };
+  const formationCard=state.mode==='hard'
+    ? `<div class="card"><h2>Your formation</h2><select id="formation"><option value="">Choose formation</option>${HARD_FORMATIONS.map(f=>`<option ${m.formation===f?'selected':''}>${f}</option>`).join('')}</select><div class="spacer10"></div><button class="${m.ready?'secondary':'primary'} big" id="ready" ${!m.formation?'disabled':''}>${m.ready?'Not ready':'Ready'}</button></div>`
+    : `<div class="card"><h2>Your draft</h2><p class="muted">No formation yet. Draft any 11 players; you will build your XI afterwards.</p><button class="${m.ready?'secondary':'primary'} big" id="ready">${m.ready?'Not ready':'Ready'}</button></div>`;
   shell(`<div class="card"><div class="muted">ROOM CODE</div><div class="row"><div class="code grow">${state.code}</div><button class="secondary" id="copy">Copy link</button></div></div>
-  <div class="card"><h2>Game mode</h2>${host?`<select id="mode">${modeOptions}</select>`:`<div class="pack-display"><b>${esc(modeName())}</b></div>`}<p class="muted small">${esc(modeDescription)}</p></div>
+  <div class="card"><h2>Game mode</h2>${host?`<select id="mode">${modeOptions}</select>`:`<div class="pack-display"><b>${esc(modeName())}</b></div>`}<p class="muted small">${esc(descriptions[state.mode]||'')}</p></div>
   <div class="card"><h2>Player pack</h2>${host?`<select id="pack">${packOptions}</select><p class="muted small">Changing the pack makes everyone ready up again.</p>`:`<div class="pack-display"><b>${esc(packName())}</b><span class="muted">${state.packCounts?.[state.pack]||0} players</span></div>`}</div>
   ${formationCard}
   <div class="card"><h2>Managers</h2>${state.managers.map(x=>`<div class="manager"><div><b>${esc(x.name)}</b><div class="muted">${state.mode==='hard'?(x.formation||'No formation'):'Formation after draft'}</div></div><div class="${x.ready?'ready':'notready'}">${x.ready?'READY':'WAITING'}</div></div>`).join('')}</div>
   ${host?`<button class="primary big" id="start">Start draft</button>`:''}`);
-
-  document.querySelector('#copy').onclick=async()=>{
-    try{await navigator.clipboard.writeText(location.href);showToast('Invite link copied')}catch{showToast('Copy the page address from your browser')}
-  };
-  if(host){
-    document.querySelector('#mode').onchange=e=>socket.emit('setMode',{mode:e.target.value});
-    document.querySelector('#pack').onchange=e=>socket.emit('setPack',{pack:e.target.value});
-  }
-  if(state.mode==='hard') document.querySelector('#formation').onchange=e=>socket.emit('setFormation',{formation:e.target.value});
+  document.querySelector('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(location.href);showToast('Invite link copied')}catch{showToast('Copy the page address from your browser')}};
+  if(host){document.querySelector('#mode').onchange=e=>socket.emit('setMode',{mode:e.target.value});document.querySelector('#pack').onchange=e=>socket.emit('setPack',{pack:e.target.value});}
+  if(state.mode==='hard')document.querySelector('#formation').onchange=e=>socket.emit('setFormation',{formation:e.target.value});
   document.querySelector('#ready').onclick=()=>socket.emit('setReady',{ready:!m.ready});
-  if(host) document.querySelector('#start').onclick=()=>socket.emit('startDraft',{},r=>{if(r&&!r.ok)showToast(r.error)});
+  if(host)document.querySelector('#start').onclick=()=>socket.emit('startDraft',{},r=>{if(r&&!r.ok)showToast(r.error)});
 }
 
 function scarcityHtml(c){
@@ -156,54 +175,121 @@ function scarcityHtml(c){
   }).join('');
 }
 
+const NOMINATION_POSITION_ORDER=['GK','LB','CB','RB','DM','CM','AM','LM','RM','LW','RW','ST'];
+function nominationPlayersHtml(selectMode=null){
+  const players=state.nomination?.availablePlayers||[];
+  const term=nominationSearch.trim().toLowerCase();
+  const filtered=players.filter(p=>(nominationPosition==='ALL'||p.positions?.[0]===nominationPosition)&&(!term||p.name.toLowerCase().includes(term)));
+  if(!filtered.length)return '<div class="muted">No available players match that search.</div>';
+  return NOMINATION_POSITION_ORDER.map(pos=>{
+    const group=filtered.filter(p=>p.positions?.[0]===pos);if(!group.length)return '';
+    return `<div class="nomination-group"><div class="nomination-heading">${pos}</div>${group.map(p=>`<div class="nomination-player"><div><b>${esc(p.name)}</b><div class="muted small">${esc(p.positions.join(' / '))}</div></div>${selectMode?`<button class="${selectMode==='final'?'primary':'secondary'} nominate-player" data-player="${p.id}" data-action="${selectMode}">${selectMode==='final'?'Pick £1m':'Nominate'}</button>`:''}</div>`).join('')}</div>`;
+  }).join('');
+}
+function nominationPoolCard(selectMode=null){
+  return `<div class="card"><div class="budget"><div><h2>${selectMode==='final'?'Final picks':'Nomination pool'}</h2><p class="muted no-margin">Sorted only by primary position, then alphabetically. No quality or rating order is used.</p></div><b>${state.nomination?.availablePlayers?.length||0} available</b></div><div class="nomination-filters"><input id="nomSearch" value="${esc(nominationSearch)}" placeholder="Search players"><select id="nomPos"><option value="ALL">All positions</option>${NOMINATION_POSITION_ORDER.map(pos=>`<option value="${pos}" ${nominationPosition===pos?'selected':''}>${pos}</option>`).join('')}</select></div><div id="nominationList">${nominationPlayersHtml(selectMode)}</div></div>`;
+}
+function wireNominationPool(selectMode=null){
+  const search=document.querySelector('#nomSearch'),pos=document.querySelector('#nomPos'),list=document.querySelector('#nominationList');
+  const redraw=()=>{if(list){list.innerHTML=nominationPlayersHtml(selectMode);wireNominationButtons(selectMode)}};
+  if(search)search.oninput=e=>{nominationSearch=e.target.value;redraw()};
+  if(pos)pos.onchange=e=>{nominationPosition=e.target.value;redraw()};
+  wireNominationButtons(selectMode);
+}
+function wireNominationButtons(selectMode){
+  if(!selectMode)return;
+  document.querySelectorAll('.nominate-player').forEach(b=>b.onclick=()=>{
+    const playerId=Number(b.dataset.player);
+    if(selectMode==='final')socket.emit('nominationFinalPick',{playerId},r=>{if(r&&!r.ok)showToast(r.error)});
+    else{
+      const v=prompt('Opening bid in £m (minimum £1m)','1');if(v===null)return;
+      socket.emit('nominatePlayer',{playerId,openingBid:Number(v)},r=>{if(r&&!r.ok)showToast(r.error)});
+    }
+  });
+}
+function managerTabHtml(){
+  if(state.mode==='blind')return state.managers.map(x=>x.id===meId
+    ? `<div class="card"><div class="budget"><h3>${esc(x.name)} (you)</h3><b>£${x.budget}m · ${x.squad.length}/11</b></div></div>`
+    : `<div class="card blind-hidden"><h3>${esc(x.name)}</h3><p class="muted">Squad and budget hidden until the team reveal.</p></div>`).join('');
+  return state.managers.map(x=>`<div class="card"><div class="budget"><h3>${esc(x.name)}</h3><b>£${x.budget}m · ${x.squad.length}/11</b></div><div>${x.squad.map(p=>`<span class="pill">${esc(p.name)} · ${state.mode==='hard'?esc(p.assignedPosition||'—'):esc(p.positions.join('/'))} · £${p.price}m</span>`).join('')||'<span class="muted">No players yet</span>'}</div></div>`).join('');
+}
+function blindDraftPanel(m,c){
+  if(!c)return '<div class="card">Loading next player…</div>';
+  const complete=m.squad.length>=11;
+  const tieStage=c.blindStage===2;
+  const eligible=!tieStage||c.blindTiebreakEligible;
+  const locked=!!c.myBlindLocked;
+  const min=Number(c.blindMinBid||0);
+  const max=Math.max(0,m.budget-Math.max(0,11-m.squad.length-1));
+  const bid=Number(c.myBlindBid||0);
+  let controls='';
+  if(complete)controls='<button class="secondary big" disabled>Squad complete · no decision needed</button>';
+  else if(tieStage&&!eligible)controls='<div class="blind-wait"><b>Tiebreak in progress</b><div class="muted small">You are no longer involved in this auction.</div></div>';
+  else{
+    controls=`<div class="blind-controls"><label>${tieStage?'Tiebreak bid':'Your sealed bid'}</label><div class="blind-bid-row"><span>£</span><input id="blindBidInput" type="number" min="${min}" max="${max}" step="1" value="${bid}" ${locked||state.paused?'disabled':''}><span>m</span></div><div class="row"><button class="secondary grow blind-add" data-add="1" ${locked||state.paused?'disabled':''}>+£1m</button><button class="secondary grow blind-add" data-add="2" ${locked||state.paused?'disabled':''}>+£2m</button><button class="secondary grow blind-add" data-add="5" ${locked||state.paused?'disabled':''}>+£5m</button></div>${!tieStage?`<div class="spacer9"></div><button class="secondary big" id="blindNoBid" ${locked||state.paused?'disabled':''}>No bid (£0)</button>`:''}<div class="blind-decision">${bid>0?`Current decision: <b>£${bid}m bid</b>`:'Current decision: <b>No bid</b>'}${locked?' · LOCKED':''}</div><button class="${locked?'secondary':'primary'} big" id="blindLock" ${state.paused?'disabled':''}>${locked?'Unlock Decision':'Lock Decision'}</button></div>`;
+  }
+  const counter=tieStage?'TIEBREAK · 10 SECOND ROUND':`PLAYER ${state.shownCount||1} OF ${state.poolSize||'—'}`;
+  return `<div class="card budget"><div><div class="muted">YOUR BUDGET</div><strong>£${m.budget}m</strong></div><div class="right"><div class="muted">YOUR SQUAD</div><strong>${m.squad.length}/11</strong></div></div><div class="card auction blind-auction"><div class="player-counter">${counter}</div><div id="timer" class="timer ${c.timeLeft<=5?'warn':''}">${c.timeLeft}</div><div class="player">${esc(c.player.name)}</div><div class="positions">${esc(c.player.positions.join(' / '))}</div>${tieStage?'<div class="required">Only managers tied for the highest first-round bid can bid in this round. The original tied bid is your minimum.</div>':'<div class="blind-note">Nobody can see your bid, lock status, squad or remaining budget.</div>'}${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}<div class="spacer14"></div>${controls}</div>`;
+}
+function wireBlindControls(){
+  const c=state.current;if(!c||state.mode!=='blind')return;
+  const input=document.querySelector('#blindBidInput');
+  const submit=value=>{let v=Math.floor(Number(value));if(!Number.isFinite(v))v=0;socket.emit('setBlindBid',{amount:v},r=>{if(r&&!r.ok)showToast(r.error);else if(state.current)state.current.myBlindBid=v})};
+  if(input)input.oninput=e=>submit(e.target.value);
+  document.querySelectorAll('.blind-add').forEach(b=>b.onclick=()=>{const base=Number(document.querySelector('#blindBidInput')?.value||0);const next=base+Number(b.dataset.add);if(input)input.value=next;submit(next)});
+  const zero=document.querySelector('#blindNoBid');if(zero)zero.onclick=()=>{if(input)input.value=0;submit(0)};
+  const lock=document.querySelector('#blindLock');if(lock)lock.onclick=()=>socket.emit('setBlindLock',{locked:!c.myBlindLocked},r=>{if(r&&!r.ok)showToast(r.error)});
+}
+function openAuctionPanel(m,c){
+  const currentBid=c?.bid||0,next=currentBid+1,mandatory=c?.mandatoryIds?.includes(meId),complete=m.squad.length>=11;
+  const isOut=!!c?.outIds?.includes(meId),leading=c?.bidderId===meId,eligible=!!c?.eligibleIds?.includes(meId);
+  let controls='';
+  if(complete)controls='<button class="secondary big" disabled>Squad complete · automatically out</button>';
+  else if(c){
+    const bidControls=(eligible||leading)?`<button class="primary big" id="bid">BID £${next}m</button><div class="spacer9"></div><div class="row"><button class="secondary grow jump" data-jump="2">+£2m</button><button class="secondary grow jump" data-jump="5">+£5m</button><button class="secondary grow" id="custom">Custom</button></div>`:'<button class="secondary big" disabled>Automatically out for this player</button>';
+    const outControl=leading?'<button class="secondary out-button" disabled>You are currently leading</button>':eligible?`<button class="${isOut?'out-button active':'out-button'}" id="auctionOut">${isOut?'I’m Out ✓ · tap to re-enter':'I’m Out'}</button>`:'';
+    controls=`${bidControls}${outControl?`<div class="spacer9"></div>${outControl}`:''}`;
+  }
+  const counter=state.mode==='nomination'?`AUCTION ${state.shownCount||1} · ${state.nomination?.availablePlayers?.length||0} STILL AVAILABLE`:`PLAYER ${state.shownCount||1} OF ${state.poolSize||'—'}`;
+  const compulsory=mandatory?`<div class="required">${state.mode==='freeform'?'The draft has reached its compulsory endgame. If nobody bids, this player will go for £1m to an eligible manager with the most open squad slots; exact ties are completely random.':'This player cannot safely be skipped. If nobody bids, they will be randomly assigned for £1m to one eligible manager.'}</div>`:'';
+  return `<div class="card budget"><div><div class="muted">YOUR BUDGET</div><strong>£${m.budget}m</strong></div><div class="right"><div class="muted">SQUAD</div><strong>${m.squad.length}/11</strong></div></div>${c?`<div class="card auction"><div class="player-counter">${counter}</div><div id="timer" class="timer ${c.timeLeft<=5?'warn':''}">${c.timeLeft}</div><div class="player">${esc(c.player.name)}</div><div class="positions">${c.player.positions.join(' / ')}</div>${state.mode==='freeform'?scarcityHtml(c):''}${compulsory}<div class="bidvalue">£${currentBid}m</div><div class="leader">${c.bidderId?esc(managerName(c.bidderId))+' leads':'No bids yet'}</div>${isOut?'<div class="out-status">You are out of the bidding for this player. Place a bid or tap again to re-enter.</div>':''}${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}<div class="spacer14"></div>${controls}</div>`:'<div class="card">Loading next player…</div>'}`;
+}
+function wireOpenAuction(c){
+  const m=me();if(!c||m.squad.length>=11)return;
+  const currentBid=c.bid||0,next=currentBid+1,eligible=!!c.eligibleIds?.includes(meId)||c.bidderId===meId;
+  if(eligible){
+    const send=amt=>socket.emit('bid',{amount:amt},r=>{if(r&&!r.ok)showToast(r.error)});
+    const bidBtn=document.querySelector('#bid');if(bidBtn)bidBtn.onclick=()=>send(next);
+    document.querySelectorAll('.jump').forEach(b=>b.onclick=()=>send(currentBid+Number(b.dataset.jump)));
+    const custom=document.querySelector('#custom');if(custom)custom.onclick=()=>{const v=prompt('Bid amount in £m',String(next));if(v)send(Number(v))};
+  }
+  const outBtn=document.querySelector('#auctionOut');if(outBtn)outBtn.onclick=()=>socket.emit('setAuctionOut',{out:!c.outIds?.includes(meId)},r=>{if(r&&!r.ok)showToast(r.error)});
+}
+function nominationTurnPanel(){
+  const nom=state.nomination||{},mine=nom.nominatorId===meId,finalMine=nom.finalPickManagerId===meId;
+  if(nom.finalPickManagerId){
+    const who=managerName(nom.finalPickManagerId);
+    return `${finalMine?`<div class="card nomination-turn"><div class="muted">FINAL PICKS</div><h1>Your remaining players</h1><p class="muted">Everyone else is complete. Choose your remaining players from the pool for £1m each.</p></div>${nominationPoolCard('final')}`:`<div class="card nomination-turn"><div class="muted">FINAL PICKS</div><h2>${esc(who)} is completing their squad</h2><p class="muted">Remaining selections cost £1m each.</p></div>${nominationPoolCard(null)}`}`;
+  }
+  const who=managerName(nom.nominatorId);
+  return `<div class="card nomination-turn"><div class="player-counter">NOMINATION TURN</div><div id="nominationTimer" class="timer ${Number(nom.timeLeft)<=5?'warn':''}">${nom.timeLeft??20}</div><h2>${mine?'Your turn to nominate':`${esc(who)} is choosing a player`}</h2><p class="muted">${mine?'Choose anyone from the available pool and set a real opening bid of at least £1m.':'You can browse the pool while you wait.'}</p>${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}</div>${nominationPoolCard(mine?'nominate':null)}`;
+}
 function draft(){
-  const m=me(); const c=state.current; const currentBid=c?.bid||0; const next=currentBid+1; const mandatory=c?.mandatoryIds?.includes(meId);
-  shell(`<div class="mode-strip">${esc(modeName())} · ${esc(packName())}</div><div class="tabs"><button class="tab ${tab==='draft'?'active':''}" data-tab="draft">Draft</button><button class="tab ${tab==='team'?'active':''}" data-tab="team">My Team</button><button class="tab ${tab==='managers'?'active':''}" data-tab="managers">Managers</button></div><div id="panel"></div>`);
+  const m=me(),c=state.current;
+  const tabs=[['draft','Draft'],...(state.mode==='nomination'?[['pool','Pool']]:[]),['team','My Team'],['managers','Managers']];
+  shell(`<div class="mode-strip">${esc(modeName())} · ${esc(packName())}</div><div class="tabs">${tabs.map(([key,label])=>`<button class="tab ${tab===key?'active':''}" data-tab="${key}">${label}</button>`).join('')}</div><div id="panel"></div>`);
   document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;draft()});
   const panel=document.querySelector('#panel');
-
   if(tab==='draft'){
-    const complete=m.squad.length>=11;
-    const isOut=!!c?.outIds?.includes(meId);
-    const leading=c?.bidderId===meId;
-    const eligible=!!c?.eligibleIds?.includes(meId);
-    let controls='';
-    if(complete){
-      controls='<button class="secondary big" disabled>Squad complete · automatically out</button>';
-    }else if(c){
-      const bidControls=(eligible||leading)?`<button class="primary big" id="bid">BID £${next}m</button><div class="spacer9"></div><div class="row"><button class="secondary grow jump" data-jump="2">+£2m</button><button class="secondary grow jump" data-jump="5">+£5m</button><button class="secondary grow" id="custom">Custom</button></div>`:'<button class="secondary big" disabled>Automatically out for this player</button>';
-      const outControl=leading
-        ? '<button class="secondary out-button" disabled>You are currently leading</button>'
-        : eligible
-          ? `<button class="${isOut?'out-button active':'out-button'}" id="auctionOut">${isOut?'I’m Out ✓ · tap to re-enter':'I’m Out'}</button>`
-          : '';
-      controls=`${bidControls}${outControl?`<div class="spacer9"></div>${outControl}`:''}`;
-    }
-    panel.innerHTML=`<div class="card budget"><div><div class="muted">YOUR BUDGET</div><strong>£${m.budget}m</strong></div><div class="right"><div class="muted">SQUAD</div><strong>${m.squad.length}/11</strong></div></div>${c ? `<div class="card auction"><div class="player-counter">PLAYER ${state.shownCount||1} OF ${state.poolSize||'—'}</div><div id="timer" class="timer ${c.timeLeft<=5?'warn':''}">${c.timeLeft}</div><div class="player">${esc(c.player.name)}</div><div class="positions">${c.player.positions.join(' / ')}</div>${state.mode==='freeform'?scarcityHtml(c):''}${mandatory?`<div class="required">${state.mode==='freeform'?'The draft has reached its compulsory endgame. If nobody bids, this player will go for £1m to an eligible manager with the most open squad slots; exact ties are completely random.':'This player cannot safely be skipped. If nobody bids, they will be randomly assigned for £1m to one eligible manager.'}</div>`:''}<div class="bidvalue">£${currentBid}m</div><div class="leader">${c.bidderId?esc(managerName(c.bidderId))+' leads':'No bids yet'}</div>${isOut?'<div class="out-status">You are out of the bidding for this player. Place a bid or tap again to re-enter.</div>':''}<div class="spacer14"></div>${controls}</div>`:'<div class="card">Loading next player…</div>'}`;
-  }
-  if(tab==='team'){
-    panel.innerHTML=state.mode==='freeform'
-      ? `<div class="card"><div class="budget"><h2>Your 11</h2><b>£${m.budget}m left</b></div>${freeformDraftSquadHtml(m)}</div>`
-      : `<div class="card"><h2>${m.formation} · £${m.budget}m left</h2><div class="squad">${hardSquadHtml(m)}</div></div>`;
-  }
-  if(tab==='managers'){
-    panel.innerHTML=state.managers.map(x=>`<div class="card"><div class="budget"><h3>${esc(x.name)}</h3><b>£${x.budget}m · ${x.squad.length}/11</b></div><div>${x.squad.map(p=>`<span class="pill">${esc(p.name)} · ${state.mode==='hard'?esc(p.assignedPosition||'—'):esc(p.positions.join('/'))} · £${p.price}m</span>`).join('')||'<span class="muted">No players yet</span>'}</div></div>`).join('');
-  }
-
-  if(tab==='draft'&&c&&m.squad.length<11){
-    const eligible=!!c.eligibleIds?.includes(meId) || c.bidderId===meId;
-    if(eligible){
-      const send=amt=>socket.emit('bid',{amount:amt},r=>{if(r&&!r.ok)showToast(r.error)});
-      const bidBtn=document.querySelector('#bid'); if(bidBtn)bidBtn.onclick=()=>send(next);
-      document.querySelectorAll('.jump').forEach(b=>b.onclick=()=>send(currentBid+Number(b.dataset.jump)));
-      const custom=document.querySelector('#custom'); if(custom)custom.onclick=()=>{
-        const v=prompt('Bid amount in £m',String(next));
-        if(v)send(Number(v));
-      };
-    }
-    const outBtn=document.querySelector('#auctionOut');
-    if(outBtn)outBtn.onclick=()=>socket.emit('setAuctionOut',{out:!c.outIds?.includes(meId)},r=>{if(r&&!r.ok)showToast(r.error)});
-  }
+    if(state.mode==='blind')panel.innerHTML=blindDraftPanel(m,c);
+    else if(state.mode==='nomination'&&!c)panel.innerHTML=nominationTurnPanel();
+    else panel.innerHTML=openAuctionPanel(m,c);
+  }else if(tab==='pool'&&state.mode==='nomination')panel.innerHTML=nominationPoolCard(null);
+  else if(tab==='team')panel.innerHTML=state.mode==='hard'?`<div class="card"><h2>${m.formation} · £${m.budget}m left</h2><div class="squad">${hardSquadHtml(m)}</div></div>`:`<div class="card"><div class="budget"><h2>Your 11</h2><b>£${m.budget}m left</b></div>${freeformDraftSquadHtml(m)}</div>`;
+  else if(tab==='managers')panel.innerHTML=managerTabHtml();
+  if(state.mode==='blind'&&tab==='draft')wireBlindControls();
+  if(state.mode!=='blind'&&tab==='draft'&&c)wireOpenAuction(c);
+  if(state.mode==='nomination'&&((tab==='draft'&&!c)||tab==='pool'))wireNominationPool(tab==='draft'&&!c?(state.nomination?.finalPickManagerId===meId?'final':state.nomination?.nominatorId===meId?'nominate':null):null);
 }
 
 function playerForLineup(m,slotIndex){
@@ -224,7 +310,7 @@ function teamBuild(){
   const m=me();
   const formationOptions=(state.freeformFormations||Object.keys(FF_LAYOUTS)).map(f=>`<option value="${f}" ${m.finalFormation===f?'selected':''}>${f}</option>`).join('');
   const readyCount=state.managers.filter(x=>x.teamReady).length;
-  shell(`<div class="mode-strip">Freeform team builder · ${esc(packName())}</div>
+  shell(`<div class="mode-strip">${esc(modeName())} team builder · ${esc(packName())}</div>
     <div class="card"><div class="budget"><div><h1>Build your XI</h1><p class="muted no-margin">Positions are completely unrestricted.</p></div><b>${readyCount}/${state.managers.length} set</b></div></div>
     <div class="card"><label>Formation</label><select id="finalFormation"><option value="">Choose formation</option>${formationOptions}</select></div>
     <div class="card"><div class="builder-hint">${m.finalFormation?'The game has suggested the best positional fit for this formation. Tap a position, then a player, to change it. Players swap automatically.':'Choose a formation first.'}</div>${pitchHtml(m,true)}</div>
@@ -259,14 +345,19 @@ function ratingsHtml(m){
   return `<div class="ratings"><div class="overall-rating"><span>OVERALL</span><strong>${r.overall}</strong></div><div class="rating-grid"><div><span>Attack</span><b>${r.attack}</b></div><div><span>Midfield</span><b>${r.midfield}</b></div><div><span>Defence</span><b>${r.defence}</b></div><div><span>Positional Fit</span><b>${r.positionalFit}</b></div><div><span>Team Balance</span><b>${r.teamBalance}</b></div><div><span>Formation Fit</span><b>${r.formationSuitability}</b></div></div></div>`;
 }
 function revealedTeamHtml(m){
-  if(state.mode==='freeform'){
+  if(isFreeformLike()){
     return `<div class="card team-reveal"><div class="budget"><div><h2>${esc(m.name)}</h2><div class="muted">${esc(m.finalFormation||'XI')}</div></div><b>£${m.budget}m left</b></div>${ratingsHtml(m)}${pitchHtml(m,false)}</div>`;
   }
   return `<div class="card team-reveal"><div class="budget"><div><h2>${esc(m.name)}</h2><div class="muted">${esc(m.formation||'XI')}</div></div><b>£${m.budget}m left</b></div>${ratingsHtml(m)}<div class="squad">${hardSquadHtml(m)}</div></div>`;
 }
+
+function draftHistoryHtml(){
+  if(state.mode!=='blind'||!state.draftHistory?.length)return '';
+  return `<div class="card"><h2>Blind auction reveal</h2><p class="muted">Now that every team is locked, the hidden winners and prices are revealed.</p><div class="table-wrap"><table class="draft-history-table"><thead><tr><th>#</th><th>Player</th><th>Manager</th><th>Price</th></tr></thead><tbody>${state.draftHistory.map((h,i)=>`<tr><td>${i+1}</td><td><b>${esc(h.player?.name||'—')}</b></td><td>${h.noSale?'No sale':esc(h.winnerName||'—')}${h.forced?' <span class="forced-tag">forced</span>':''}</td><td>${h.noSale?'—':`£${h.price}m`}</td></tr>`).join('')}</tbody></table></div></div>`;
+}
 function reveal(){
   const host=state.hostId===meId;
-  shell(`<div class="card"><h1>Teams revealed</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p><p class="muted small">Individual player ratings remain hidden. These team scores judge the XI as deployed.</p></div>${state.managers.map(revealedTeamHtml).join('')}<div class="card"><h2>Season simulation</h2><p class="muted">Every team gets a balanced home/away schedule. Two managers play 10 matches; three managers play 12; with four or more, every pair plays home and away once. Results are revealed one match at a time.</p></div>${host?'<button class="primary big" id="simulate">Simulate season</button>':'<div class="card muted">Waiting for the host to start the simulation.</div>'}`);
+  shell(`<div class="card"><h1>Teams revealed</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p><p class="muted small">Individual player ratings remain hidden. These team scores judge the XI as deployed.</p></div>${state.managers.map(revealedTeamHtml).join('')}${draftHistoryHtml()}<div class="card"><h2>Season simulation</h2><p class="muted">Every team gets a balanced home/away schedule. Two managers play 10 matches; three managers play 12; with four or more, every pair plays home and away once. Results are revealed one match at a time.</p></div>${host?'<button class="primary big" id="simulate">Simulate season</button>':'<div class="card muted">Waiting for the host to start the simulation.</div>'}`);
   if(host)document.querySelector('#simulate').onclick=()=>socket.emit('startSimulation',{},r=>{if(r&&!r.ok)showToast(r.error)});
 }
 function scorerList(goals){
@@ -315,37 +406,37 @@ function sessionHtml(){
 function fullResults(){
   const host=state.hostId===meId,sim=state.simulation;
   const champion=state.managers.find(m=>m.id===sim.championId);
+  const exhibition=state.simulationKind==='exhibition';
   const playoffs=(sim.playoffs||[]).length?`<div class="card"><h2>Title tiebreak</h2><p class="muted small">The league tiebreakers could not separate the leaders, so the title was decided on the pitch.</p>${sim.playoffs.map(m=>matchHtml(m,'Tiebreak playoff')).join('')}</div>`:'';
   let body='';
-  if(resultsTab==='season') body=`<div class="card"><h2>Final table</h2>${standingsHtml(sim.table)}</div>${playoffs}<div class="card"><h2>Match results</h2><div class="matches">${(sim.matches||[]).map((m,i)=>matchHtml(m,`Match ${i+1} of ${sim.matches.length}`)).join('')}</div></div><div class="card"><h2>Team ratings</h2><p class="muted small">The team ratings that drove the simulation. Individual hidden player ratings remain secret.</p>${state.managers.map(m=>`<div class="rating-summary"><div><b>${esc(m.name)}</b><span>${state.mode==='freeform'?esc(m.finalFormation||'XI'):esc(m.formation||'XI')}</span></div><strong>${state.teamRatings?.[m.id]?.overall??'—'}</strong></div>`).join('')}</div>`;
+  if(resultsTab==='season') body=`<div class="card"><h2>Final table</h2>${standingsHtml(sim.table)}</div>${playoffs}<div class="card"><h2>Match results</h2><div class="matches">${(sim.matches||[]).map((m,i)=>matchHtml(m,`Match ${i+1} of ${sim.matches.length}`)).join('')}</div></div><div class="card"><h2>Team ratings</h2><p class="muted small">The team ratings that drove the simulation. Individual hidden player ratings remain secret.</p>${state.managers.map(m=>`<div class="rating-summary"><div><b>${esc(m.name)}</b><span>${isFreeformLike()?esc(m.finalFormation||'XI'):esc(m.formation||'XI')}</span></div><strong>${state.teamRatings?.[m.id]?.overall??'—'}</strong></div>`).join('')}</div>${state.mode==='blind'?draftHistoryHtml():''}`;
   else if(resultsTab==='players') body=`<div class="card"><h2>League player stats</h2><p class="muted">Top 10 performers across every manager's XI.</p>${leaderboardHtml(statsMetric)}</div>`;
   else if(resultsTab==='tots') body=`<div class="card"><div class="budget"><div><h2>Team of the Season</h2><p class="muted no-margin">Best-performing valid XI by average match rating, using the positions players were actually deployed in with sensible neighbouring roles.</p></div><b>${esc(sim.teamOfSeason?.formation||'XI')}</b></div><div class="spacer14"></div>${totsPitchHtml(sim.teamOfSeason)}</div>`;
   else body=sessionHtml();
-  shell(`<div class="card champion"><div class="muted">SEASON CHAMPION</div><h1>🏆 ${esc(champion?.name||'Winner')}</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p></div>${resultNav()}${body}${host?'<button class="primary big" id="again">Play again</button>':'<div class="card muted">Waiting for the host to start another game.</div>'}`);
+  const simNote=exhibition?`<div class="card exhibition-banner"><b>Exhibition re-simulation #${state.exhibitionNumber||1}</b><div>This result is just for fun and does not change titles, head-to-heads or session history.</div></div>`:'';
+  const controls=host?`<div class="post-sim-controls"><button class="secondary big" id="resimulate">${exhibition?'Re-simulate again':'Re-simulate season'}</button>${exhibition?'<button class="secondary big" id="officialResult">View official result</button>':''}<button class="primary big" id="again">Play again</button></div>`:'<div class="card muted">Waiting for the host to choose what happens next.</div>';
+  shell(`${simNote}<div class="card champion"><div class="muted">${exhibition?'EXHIBITION WINNER':'SEASON CHAMPION'}</div><h1>🏆 ${esc(champion?.name||'Winner')}</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p></div>${resultNav()}${body}${controls}`);
   wireResultTabs();wireStatSwitch();
-  if(host)document.querySelector('#again').onclick=()=>socket.emit('playAgain',{});
+  if(host){
+    document.querySelector('#again').onclick=()=>socket.emit('playAgain',{});
+    document.querySelector('#resimulate').onclick=()=>socket.emit('resimulateSeason',{},r=>{if(r&&!r.ok)showToast(r.error)});
+    const official=document.querySelector('#officialResult');if(official)official.onclick=()=>socket.emit('viewOfficialSimulation',{},r=>{if(r&&!r.ok)showToast(r.error)});
+  }
 }
 function results(){
-  const host=state.hostId===meId;
-  const sim=state.simulation;
-  if(!sim)return reveal();
-  const total=sim.matches?.length||0;
-  const shown=Math.min(state.simulationRevealCount||0,total);
+  const host=state.hostId===meId,sim=state.simulation;if(!sim)return reveal();
+  const total=sim.matches?.length||0,shown=Math.min(state.simulationRevealCount||0,total),exhibition=state.simulationKind==='exhibition';
   if(shown>=total)return fullResults();
-  const latest=shown>0?sim.matches[shown-1]:null;
-  const liveTable=shown>0?sim.progressTables?.[shown-1]:null;
+  const latest=shown>0?sim.matches[shown-1]:null,liveTable=shown>0?sim.progressTables?.[shown-1]:null;
   const controls=host?`<div class="reveal-controls"><button class="primary big" id="revealNext">${shown===0?'Reveal first match':`Reveal match ${shown+1}`}</button><button class="secondary" id="revealAll">Reveal all results</button></div>`:'<div class="card muted">Waiting for the host to reveal the next match.</div>';
-  shell(`<div class="card reveal-header"><div class="muted">MATCHDAY REVEAL</div><h1>${shown} / ${total}</h1><p class="muted">Results and the league table are being revealed live to everyone in the room.</p></div>${latest?`<div class="card"><h2>Latest result</h2>${matchHtml(latest,`Match ${shown} of ${total}`)}</div>`:'<div class="card"><h2>Season ready</h2><p class="muted">No results have been shown yet.</p></div>'}${liveTable?`<div class="card"><h2>Live table</h2>${standingsHtml(liveTable)}</div>`:''}${controls}`);
-  if(host){
-    document.querySelector('#revealNext').onclick=()=>socket.emit('revealNextMatch',{});
-    document.querySelector('#revealAll').onclick=()=>socket.emit('revealAllMatches',{});
-  }
+  shell(`${exhibition?`<div class="card exhibition-banner"><b>Exhibition re-simulation #${state.exhibitionNumber||1}</b><div>Does not affect official session history.</div></div>`:''}<div class="card reveal-header"><div class="muted">${exhibition?'EXHIBITION MATCHDAY REVEAL':'MATCHDAY REVEAL'}</div><h1>${shown} / ${total}</h1><p class="muted">Results and the league table are being revealed live to everyone in the room.</p></div>${latest?`<div class="card"><h2>Latest result</h2>${matchHtml(latest,`Match ${shown} of ${total}`)}</div>`:'<div class="card"><h2>Season ready</h2><p class="muted">No results have been shown yet.</p></div>'}${liveTable?`<div class="card"><h2>Live table</h2>${standingsHtml(liveTable)}</div>`:''}${controls}`);
+  if(host){document.querySelector('#revealNext').onclick=()=>socket.emit('revealNextMatch',{});document.querySelector('#revealAll').onclick=()=>socket.emit('revealAllMatches',{});}
 }
 
 function finished(){
   const host=state.hostId===meId;
-  if(state.mode==='freeform'){
-    shell(`<div class="card"><h1>Teams revealed</h1><p class="muted">${esc(packName())} · Freeform Mode</p></div>${state.managers.map(m=>`<div class="card"><div class="budget"><h2>${esc(m.name)}</h2><b>${esc(m.finalFormation||'XI')} · £${m.budget}m left</b></div>${pitchHtml(m,false)}</div>`).join('')}${host?'<button class="primary big" id="again">Play again</button>':'<div class="card muted">Waiting for the host to start another game.</div>'}`);
+  if(isFreeformLike()){
+    shell(`<div class="card"><h1>Teams revealed</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p></div>${state.managers.map(m=>`<div class="card"><div class="budget"><h2>${esc(m.name)}</h2><b>${esc(m.finalFormation||'XI')} · £${m.budget}m left</b></div>${pitchHtml(m,false)}</div>`).join('')}${host?'<button class="primary big" id="again">Play again</button>':'<div class="card muted">Waiting for the host to start another game.</div>'}`);
   } else {
     shell(`<div class="card"><h1>Draft complete</h1><p class="muted">${esc(packName())} · Hard Mode</p></div>${state.managers.map(m=>`<div class="card"><div class="budget"><h2>${esc(m.name)}</h2><b>${m.formation} · £${m.budget}m left</b></div><div class="squad">${hardSquadHtml(m)}</div></div>`).join('')}${host?'<button class="primary big" id="again">Play again</button>':'<div class="card muted">Waiting for the host to start another game.</div>'}`);
   }
@@ -368,6 +459,7 @@ socket.on('state',s=>{
   if(!meId)meId=socket.id;
   if(phaseChanged){
     selectedLineupSlot=null;
+    if(s.phase==='draft'){tab='draft';nominationSearch='';nominationPosition='ALL';}
     if(s.phase==='results'){resultsTab='season';statsMetric='goals';}
   }
   render();
@@ -379,5 +471,9 @@ socket.on('tick',({timeLeft})=>{
     if(t){t.textContent=timeLeft;t.classList.toggle('warn',timeLeft<=5)}
   }
 });
+socket.on('nominationTick',({timeLeft})=>{
+  if(state?.nomination){state.nomination.timeLeft=timeLeft;const t=document.querySelector('#nominationTimer');if(t){t.textContent=timeLeft;t.classList.toggle('warn',timeLeft<=5)}}
+});
+socket.on('auctionNotice',({message})=>{if(message)showToast(message)});
 applyVisualTheme();
 home();
