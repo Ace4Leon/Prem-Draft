@@ -16,7 +16,7 @@ const START_TIMER = 15;
 const RESET_TIMER = 10;
 const MIN_BID = 1;
 const DEFAULT_PACK = 'all_time_prem';
-const DEFAULT_MODE = 'hard';
+const DEFAULT_MODE = 'freeform';
 
 const MODE_LABELS = {
   hard: 'Hard Mode',
@@ -116,6 +116,37 @@ function freeformScarcityWarnings(room){
   }
   return warnings;
 }
+function sessionPublic(room){
+  const history=room.sessionHistory||{drafts:0,matches:[],titles:{}};
+  const managers=[...room.managers.values()];
+  const rows=new Map(managers.map(m=>[m.id,{id:m.id,name:m.name,drafts:history.drafts,titles:history.titles?.[m.id]||0,p:0,w:0,d:0,l:0,gf:0,ga:0,gd:0,pts:0}]));
+  for(const match of history.matches||[]){
+    const h=rows.get(match.homeId),a=rows.get(match.awayId);if(!h||!a)continue;
+    h.p++;a.p++;h.gf+=match.homeGoals;h.ga+=match.awayGoals;a.gf+=match.awayGoals;a.ga+=match.homeGoals;
+    if(match.homeGoals>match.awayGoals){h.w++;a.l++;h.pts+=3;}else if(match.homeGoals<match.awayGoals){a.w++;h.l++;a.pts+=3;}else{h.d++;a.d++;h.pts++;a.pts++;}
+  }
+  for(const r of rows.values())r.gd=r.gf-r.ga;
+  const table=[...rows.values()].sort((a,b)=>b.titles-a.titles||b.pts-a.pts||b.gd-a.gd||b.gf-a.gf||a.name.localeCompare(b.name));
+  const headToHead=[];
+  for(let i=0;i<managers.length;i++)for(let j=i+1;j<managers.length;j++){
+    const a=managers[i],b=managers[j];let aWins=0,bWins=0,draws=0,aGoals=0,bGoals=0;
+    for(const m of history.matches||[]){
+      if(m.homeId===a.id&&m.awayId===b.id){aGoals+=m.homeGoals;bGoals+=m.awayGoals;if(m.homeGoals>m.awayGoals)aWins++;else if(m.homeGoals<m.awayGoals)bWins++;else draws++;}
+      else if(m.homeId===b.id&&m.awayId===a.id){aGoals+=m.awayGoals;bGoals+=m.homeGoals;if(m.awayGoals>m.homeGoals)aWins++;else if(m.awayGoals<m.homeGoals)bWins++;else draws++;}
+    }
+    headToHead.push({managerAId:a.id,managerAName:a.name,managerBId:b.id,managerBName:b.name,aWins,bWins,draws,aGoals,bGoals});
+  }
+  return {drafts:history.drafts||0,table,headToHead};
+}
+function recordSessionCompetition(room,simulation){
+  if(!room.sessionHistory)room.sessionHistory={drafts:0,matches:[],titles:{}};
+  room.sessionHistory.drafts++;
+  for(const m of simulation.matches||[]){
+    room.sessionHistory.matches.push({homeId:m.homeId,awayId:m.awayId,homeGoals:m.homeGoals,awayGoals:m.awayGoals});
+  }
+  if(simulation.championId)room.sessionHistory.titles[simulation.championId]=(room.sessionHistory.titles[simulation.championId]||0)+1;
+}
+
 function roomPublic(room){
   const ratingsVisible = (room.phase==='reveal' || room.phase==='results');
   const teamRatings = ratingsVisible && room.teamAssessments
@@ -134,6 +165,8 @@ function roomPublic(room){
     simulationAvailable: true,
     teamRatings,
     simulation: room.phase==='results' ? room.simulation : null,
+    simulationRevealCount: room.phase==='results' ? (room.simulationRevealCount||0) : 0,
+    sessionStats: sessionPublic(room),
     managers: [...room.managers.values()].map(managerPublic),
     current: room.current ? {
       player: publicPlayer(room.current.player),
@@ -242,6 +275,14 @@ function skippingCurrentIsSafeFreeform(room){
 }
 function forcedManagerOptionsFreeform(room){
   return [...room.managers.values()].filter(m=>m.squad.length<11 && maxBidFreeform(m)>=MIN_BID);
+}
+function chooseForcedManagerFreeform(room){
+  const options=forcedManagerOptionsFreeform(room);
+  if(!options.length)return null;
+  const mostOpen=Math.max(...options.map(m=>11-m.squad.length));
+  const tied=options.filter(m=>11-m.squad.length===mostOpen);
+  // When managers are level this is deliberately pure, equal randomness: no host/order/history weighting.
+  return randomChoice(tied);
 }
 function computeMandatoryFreeform(room){
   if(skippingCurrentIsSafeFreeform(room)) return [];
@@ -559,9 +600,8 @@ function finishAuction(room){
       m.squad.push({...c.player,assignedPosition:c.bidPosition,price:c.bid});
     }
   } else if(room.mode==='freeform' && !skippingCurrentIsSafeFreeform(room)){
-    const options=forcedManagerOptionsFreeform(room);
-    if(options.length){
-      const pick=randomChoice(options);
+    const pick=chooseForcedManagerFreeform(room);
+    if(pick){
       pick.budget-=MIN_BID;
       pick.squad.push({...c.player,price:MIN_BID,forced:true});
     }
@@ -598,7 +638,7 @@ io.on('connection', socket=>{
   socket.on('createRoom', ({name},cb)=>{
     const code=roomCode();
     const m={id:socket.id,name:cleanName(name),formation:null,ready:false,budget:STARTING_BUDGET,squad:[],finalFormation:null,lineup:[],teamReady:false};
-    const room={code,hostId:socket.id,phase:'lobby',mode:DEFAULT_MODE,pack:DEFAULT_PACK,managers:new Map([[socket.id,m]]),pool:[],auctionIndex:0,shownCount:0,current:null,timer:null,teamAssessments:null,simulation:null};
+    const room={code,hostId:socket.id,phase:'lobby',mode:DEFAULT_MODE,pack:DEFAULT_PACK,managers:new Map([[socket.id,m]]),pool:[],auctionIndex:0,shownCount:0,current:null,timer:null,teamAssessments:null,simulation:null,simulationRevealCount:0,sessionHistory:{drafts:0,matches:[],titles:{}}};
     rooms.set(code,room); socket.join(code); socket.data.room=code; cb?.({ok:true,code,state:roomPublic(room)});
     io.to(code).emit('state',roomPublic(room));
   });
@@ -653,7 +693,7 @@ io.on('connection', socket=>{
     if([...room.managers.values()].some(m=>!m.ready)) return cb?.({ok:false,error:'Everyone must be ready.'});
     if(room.mode==='hard' && [...room.managers.values()].some(m=>!m.formation)) return cb?.({ok:false,error:'Everyone must choose a formation and be ready.'});
     for(const m of room.managers.values()) resetManagerForDraft(m);
-    room.teamAssessments=null; room.simulation=null;
+    room.teamAssessments=null; room.simulation=null; room.simulationRevealCount=0;
     try { room.pool=buildPool(room); } catch(e) { return cb?.({ok:false,error:e.message}); }
     room.auctionIndex=0; room.shownCount=0; room.phase='draft'; cb?.({ok:true}); startNext(room);
   });
@@ -736,14 +776,31 @@ io.on('connection', socket=>{
     if(!room||room.phase!=='reveal'||socket.id!==room.hostId||!room.teamAssessments) return;
     const teams=[...room.managers.values()].map(m=>({id:m.id,name:m.name,assessment:room.teamAssessments.get(m.id)}));
     room.simulation=simulateCompetition(teams);
+    room.simulationRevealCount=0;
+    recordSessionCompetition(room,room.simulation);
     room.phase='results';
     cb?.({ok:true});
     io.to(room.code).emit('state',roomPublic(room));
   });
 
+  socket.on('revealNextMatch', (_,cb)=>{
+    const room=rooms.get(socket.data.room);
+    if(!room||room.phase!=='results'||socket.id!==room.hostId||!room.simulation) return;
+    const total=room.simulation.matches?.length||0;
+    room.simulationRevealCount=Math.min(total,(room.simulationRevealCount||0)+1);
+    cb?.({ok:true});io.to(room.code).emit('state',roomPublic(room));
+  });
+
+  socket.on('revealAllMatches', (_,cb)=>{
+    const room=rooms.get(socket.data.room);
+    if(!room||room.phase!=='results'||socket.id!==room.hostId||!room.simulation) return;
+    room.simulationRevealCount=room.simulation.matches?.length||0;
+    cb?.({ok:true});io.to(room.code).emit('state',roomPublic(room));
+  });
+
   socket.on('playAgain', (_,cb)=>{
     const room=rooms.get(socket.data.room); if(!room||!['finished','reveal','results'].includes(room.phase)||socket.id!==room.hostId) return;
-    room.phase='lobby'; room.pool=[]; room.auctionIndex=0; room.shownCount=0; room.current=null; room.teamAssessments=null; room.simulation=null;
+    room.phase='lobby'; room.pool=[]; room.auctionIndex=0; room.shownCount=0; room.current=null; room.teamAssessments=null; room.simulation=null; room.simulationRevealCount=0;
     for(const m of room.managers.values()){
       resetManagerForDraft(m);
       m.ready=false;
