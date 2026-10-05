@@ -8,6 +8,31 @@ let selectedLineupSlot=null;
 let resultsTab='season';
 let statsMetric='goals';
 
+const VISUAL_THEME_KEY='premDraftVisualTheme';
+let visualTheme='classic';
+try{
+  visualTheme=localStorage.getItem(VISUAL_THEME_KEY)==='immersive'?'immersive':'classic';
+}catch{}
+function applyVisualTheme(){
+  document.body.dataset.theme=visualTheme;
+  document.body.dataset.pack=state?.pack||'home';
+}
+function themeButtonLabel(){return visualTheme==='immersive'?'✨ Immersive':'◻ Classic'}
+function setVisualTheme(next){
+  visualTheme=next==='immersive'?'immersive':'classic';
+  try{localStorage.setItem(VISUAL_THEME_KEY,visualTheme)}catch{}
+  applyVisualTheme();
+  const button=document.querySelector('#themeToggle');
+  if(button){
+    button.textContent=themeButtonLabel();
+    button.setAttribute('aria-label',`Visual theme: ${visualTheme}. Tap to switch.`);
+  }
+}
+function wireThemeToggle(){
+  const button=document.querySelector('#themeToggle');
+  if(button)button.onclick=()=>setVisualTheme(visualTheme==='classic'?'immersive':'classic');
+}
+
 const HARD_FORMATIONS=['4-4-2','4-3-3','4-2-3-1','3-5-2','3-4-3','5-3-2'];
 const HARD_SLOTS={
   '4-4-2':['GK','LB','CB','CB','RB','LM','CM','CM','RM','ST','ST'],
@@ -49,7 +74,11 @@ function me(){return state?.managers.find(m=>m.id===meId)}
 function managerName(id){return state?.managers.find(m=>m.id===id)?.name||'—'}
 function packName(){return state?.packLabels?.[state.pack]||'Player Pack'}
 function modeName(){return state?.modeLabels?.[state.mode]||'Game Mode'}
-function shell(content){app.innerHTML=`<div class="wrap"><div class="brand">⚽ Prem Draft</div>${content}</div>`}
+function shell(content){
+  applyVisualTheme();
+  app.innerHTML=`<div class="wrap"><div class="topbar"><div class="brand">⚽ Prem Draft</div><button class="theme-toggle" id="themeToggle" aria-label="Visual theme: ${visualTheme}. Tap to switch.">${themeButtonLabel()}</button></div>${content}</div>`;
+  wireThemeToggle();
+}
 
 function assignedSlots(m){
   const slots=(HARD_SLOTS[m.formation]||[]).map((pos,i)=>({pos,i,player:null}));
@@ -350,4 +379,5 @@ socket.on('tick',({timeLeft})=>{
     if(t){t.textContent=timeLeft;t.classList.toggle('warn',timeLeft<=5)}
   }
 });
+applyVisualTheme();
 home();
