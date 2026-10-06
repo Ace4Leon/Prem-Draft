@@ -7,6 +7,8 @@ let tab='draft';
 let selectedLineupSlot=null;
 let resultsTab='season';
 let statsMetric='goals';
+let postSimView='results';
+let reviewManagerId=null;
 let nominationSearch='';
 let nominationPosition='ALL';
 let blindEndgameAnnounced=false;
@@ -22,6 +24,13 @@ let recordsAdminConfigured=false;
 let recordsAdminUnlocked=false;
 let recordsAdminMode=false;
 let recordsAdminData=null;
+let recordsAdminProfilesData=null;
+let recordsAdminSection='games';
+let historicalCompetition=null;
+let historicalView='results';
+let historicalResultTab='season';
+let historicalStatsMetric='goals';
+let historicalTeamId=null;
 
 const SESSION_KEY='premDraftReconnectSessionV1';
 
@@ -67,18 +76,31 @@ function saveSession(room,reconnectToken,managerId){
   try{localStorage.setItem(SESSION_KEY,JSON.stringify({room,reconnectToken,managerId}))}catch{}
 }
 function clearSavedSession(){try{localStorage.removeItem(SESSION_KEY)}catch{}}
-function attemptResume(){
+function resumeSavedRoom(manual=false){
   if(!socket.connected||resumeInFlight)return;
   const saved=readSavedSession();if(!saved?.room||!saved?.reconnectToken)return;
-  const requested=q('room');if(requested&&requested.toUpperCase()!==String(saved.room).toUpperCase())return;
+  const requested=q('room');
+  // v8: simply opening the homepage must never drag someone back into an old room.
+  // Auto-resume only when the URL itself is asking for that same room. A homepage
+  // visitor can still choose the explicit Resume button below.
+  if(!manual){
+    if(!requested)return;
+    if(requested.toUpperCase()!==String(saved.room).toUpperCase())return;
+  }
   resumeInFlight=true;
   socket.emit('resumeSession',{code:saved.room,token:saved.reconnectToken},r=>{
     resumeInFlight=false;
-    if(!r?.ok){if(!state){clearSavedSession();home()}return;}
+    if(!r?.ok){
+      clearSavedSession();
+      if(manual)showToast('That previous room is no longer available.');
+      if(!state)home();
+      return;
+    }
     meId=r.managerId||r.state?.viewerId||saved.managerId;state=r.state;
     history.replaceState({},'',`?room=${state.code}`);render();
   });
 }
+function attemptResume(){resumeSavedRoom(false)}
 
 const VISUAL_THEME_KEY='premDraftVisualTheme';
 let visualTheme='classic';
@@ -214,14 +236,17 @@ function home(){
   viewingRecords=false;
   const code=q('room')||'';
   const profile=savedProfile();
+  const savedRoom=readSavedSession();
+  const resumeCard=!code&&savedRoom?.room?`<div class="resume-room-card"><div><b>Previous room ${esc(savedRoom.room)}</b><div class="muted small">Resume it only if you want to return to that still-active room.</div></div><button class="secondary small-button" id="resumePreviousRoom">Resume</button></div><div class="spacer10"></div>`:'';
   const profileCard=profile?.recoveryCode
     ? `<div class="profile-strip"><div><div class="muted small">PERMANENT MANAGER</div><b>${esc(profile.defaultName)}</b><div class="muted small">Recovery code: <strong>${esc(profile.recoveryCode)}</strong></div></div><div class="profile-actions"><button class="secondary small-button" id="editProfile">Edit default</button><button class="secondary small-button" id="recoverProfile">Switch / recover</button></div></div>`
     : `<div class="profile-strip"><div><b>Permanent records</b><div class="muted small">Your first room will create a short recovery code so your all-time stats follow you across rooms and days.</div></div><button class="secondary small-button" id="recoverProfile">I have a code</button></div>`;
-  shell(`<div class="card"><h1>Football Auction Draft</h1><p class="muted">Build your XI with a £100m budget.</p>${profileCard}${recordsConnectionHtml()}<div class="spacer14"></div><label>Name for this room</label><input id="name" maxlength="20" value="${esc(profile?.defaultName||'')}" placeholder="Your name"><p class="muted small">Changing this only changes how you appear in this room; it does not create a new all-time identity.</p><div class="spacer10"></div>${code?`<div class="row mobile-stack"><input id="code" value="${esc(code)}"><button class="primary" id="join">Join room</button></div>`:`<button class="primary big" id="create">Create game</button><div class="spacer10"></div><div class="row mobile-stack"><input id="code" placeholder="Room code"><button class="secondary" id="join">Join</button></div>`}<div class="spacer14"></div><button class="secondary big" id="records">🏆 All-Time Records</button></div>`);
+  shell(`<div class="card"><h1>Football Auction Draft</h1><p class="muted">Build your XI with a £100m budget.</p>${profileCard}${recordsConnectionHtml()}<div class="spacer14"></div><label>Name for this room</label><input id="name" maxlength="20" value="${esc(profile?.defaultName||'')}" placeholder="Your name"><p class="muted small">Changing this only changes how you appear in this room; it does not create a new all-time identity.</p><div class="spacer10"></div>${code?`<div class="row mobile-stack"><input id="code" value="${esc(code)}"><button class="primary" id="join">Join room</button></div>`:`<button class="primary big" id="create">Create game</button><div class="spacer10"></div><div class="row mobile-stack"><input id="code" placeholder="Room code"><button class="secondary" id="join">Join</button></div>`}<div class="spacer14"></div>${resumeCard}<button class="secondary big" id="records">🏆 All-Time Records</button></div>`);
   refreshRecordsStatus();
   const recover=document.querySelector('#recoverProfile');if(recover)recover.onclick=()=>recoverProfileFlow();
   const edit=document.querySelector('#editProfile');if(edit)edit.onclick=editDefaultProfileName;
   document.querySelector('#records').onclick=openRecords;
+  const resumeButton=document.querySelector('#resumePreviousRoom');if(resumeButton)resumeButton.onclick=()=>resumeSavedRoom(true);
   const launch=(kind)=>{
     const name=document.querySelector('#name').value;
     ensurePermanentProfile(name||'Manager',profileNow=>{
@@ -247,7 +272,7 @@ function historyTableHtml(rows){
   return `<div class="table-wrap"><table class="history-table"><thead><tr><th>#</th><th>Manager</th><th>Drafts</th><th>Titles</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(rows||[]).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.name)}</b></td><td>${r.drafts}</td><td><b>${r.titles}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td><b>${r.pts}</b></td></tr>`).join('')}</tbody></table></div>`;
 }
 function openRecords(){
-  viewingRecords=true;recordsSummaryData=null;recordsGroupData=null;recordsAdminMode=false;recordsAdminData=null;
+  viewingRecords=true;recordsSummaryData=null;recordsGroupData=null;recordsAdminMode=false;recordsAdminData=null;recordsAdminProfilesData=null;historicalCompetition=null;
   shell('<div class="card"><h1>All-Time Records</h1><p class="muted">Loading permanent history…</p></div>');
   socket.emit('recordsSummary',{},r=>{
     if(!r?.ok){shell(`<div class="card"><h1>All-Time Records</h1><p class="muted">${esc(r?.error||'Could not load records.')}</p><button class="secondary big" id="recordsBack">Back</button></div>`);document.querySelector('#recordsBack').onclick=closeRecords;return;}
@@ -260,13 +285,16 @@ function openRecords(){
     if(selectedRivalryKey)loadRivalryGroup();else recordsScreen();
   });
 }
-function closeRecords(){viewingRecords=false;recordsSummaryData=null;recordsGroupData=null;recordsAdminMode=false;recordsAdminData=null;if(state)render();else home();}
+function closeRecords(){
+  viewingRecords=false;recordsSummaryData=null;recordsGroupData=null;recordsAdminMode=false;recordsAdminData=null;recordsAdminProfilesData=null;historicalCompetition=null;
+  if(state)render();else home();
+}
 function loadRivalryGroup(){
   if(!selectedRivalryKey){recordsGroupData=null;return recordsScreen();}
   recordsGroupData=null;recordsScreen();
   socket.emit('recordsGroup',{key:selectedRivalryKey,modes:[...selectedRecordModes],packs:[...selectedRecordPacks]},r=>{
     if(!r?.ok){showToast(r?.error||'Could not load rivalry group');return;}
-    recordsGroupData=r;if(viewingRecords)recordsScreen();
+    recordsGroupData=r;if(viewingRecords&&!historicalCompetition)recordsScreen();
   });
 }
 function recordsFiltersHtml(){
@@ -276,40 +304,122 @@ function recordsFiltersHtml(){
 function adminDate(v){
   try{return new Date(v).toLocaleString()}catch{return String(v||'')}
 }
-function adminRecordsHtml(){
-  if(!recordsAdminData)return '<div class="card"><h2>Admin records</h2><p class="muted">Loading saved games…</p></div>';
-  const rows=recordsAdminData.competitions||[];
-  return `<div class="card"><div class="budget"><div><h2>Admin records</h2><p class="muted no-margin">Excluded games stay in the database but do not count toward any leaderboard or Rivalry Group.</p></div><button class="secondary" id="adminBack">Back to records</button></div><div class="spacer10"></div>${rows.length?`<div class="admin-record-list">${rows.map(c=>`<div class="admin-record ${c.excluded?'excluded':''}"><div class="admin-record-main"><b>${esc((c.managers||[]).join(' / ')||'Unknown managers')}</b><div class="muted small">${esc(adminDate(c.completedAt))} · ${esc(recordsAdminData.modeLabels?.[c.mode]||c.mode)} · ${esc(recordsAdminData.packLabels?.[c.pack]||c.pack)}</div><div class="muted small">Champion: ${esc(c.champion||'—')} · ${c.excluded?'EXCLUDED':'Counting in records'}</div></div><button class="${c.excluded?'secondary':'danger-soft'} admin-record-toggle" data-comp="${esc(c.competitionId)}" data-excluded="${c.excluded?'1':'0'}">${c.excluded?'Restore':'Exclude'}</button></div>`).join('')}</div>`:'<p class="muted">No saved official games yet.</p>'}</div>`;
+function draftHistoryCardsHtml(drafts){
+  if(!drafts?.length)return '<div class="muted">No drafts match the current filters.</div>';
+  return `<div class="saved-draft-list">${drafts.map(d=>{
+    const places=(d.participants||[]).filter(p=>p.rank).sort((a,b)=>a.rank-b.rank).map(p=>`${p.rank}. ${esc(p.name)}`).join(' · ');
+    return `<div class="saved-draft-card"><div class="saved-draft-main"><b>${esc(adminDate(d.completedAt))}</b><div class="muted small">${esc(recordsSummaryData?.modeLabels?.[d.mode]||d.mode)} · ${esc(recordsSummaryData?.packLabels?.[d.pack]||d.pack)}</div><div class="small"><strong>Champion: ${esc(d.champion||'—')}</strong>${places?`<span class="draft-places">${places}</span>`:''}</div></div><button class="secondary saved-draft-open" data-historical-comp="${esc(d.competitionId)}">View draft ›</button></div>`;
+  }).join('')}</div>`;
 }
-function loadAdminRecords(){
-  recordsAdminMode=true;recordsAdminData=null;recordsScreen();
-  socket.emit('recordsAdminList',{},r=>{
-    if(!r?.ok){recordsAdminMode=false;showToast(r?.error||'Could not load admin records');return recordsScreen();}
-    recordsAdminData=r;if(viewingRecords)recordsScreen();
+function openHistoricalCompetition(competitionId){
+  historicalCompetition={loading:true,competitionId};historicalView='results';historicalResultTab='season';historicalStatsMetric='goals';historicalTeamId=null;recordsScreen();
+  socket.emit('recordsCompetition',{competitionId},r=>{
+    if(!r?.ok){historicalCompetition=null;showToast(r?.error||'Could not load saved draft');return recordsScreen();}
+    historicalCompetition=r.competition;
+    const profile=savedProfile(),participants=r.competition?.data?.participants||[];
+    const preferred=participants.find(p=>profile?.profileId&&p.profileId===profile.profileId)||[...participants].sort((a,b)=>(a.rank||999)-(b.rank||999))[0];
+    historicalTeamId=preferred?.profileId||preferred?.managerId||null;
+    recordsScreen();
   });
 }
+function historicalDraftHistoryHtml(data){
+  const rows=data?.draftHistory||[];if(!rows.length)return '';
+  return `<div class="card"><h2>Draft / auction history</h2><div class="table-wrap"><table class="draft-history-table"><thead><tr><th>#</th><th>Player</th><th>Manager</th><th>Price</th></tr></thead><tbody>${rows.map((h,i)=>`<tr><td>${i+1}</td><td><b>${esc(h.player?.name||'—')}</b></td><td>${h.noSale?'No sale':esc(h.winnerName||'—')}${h.forced?' <span class="forced-tag">forced</span>':''}</td><td>${h.noSale?'—':`£${h.price}m`}</td></tr>`).join('')}</tbody></table></div></div>`;
+}
+function historicalCompetitionScreen(){
+  if(historicalCompetition?.loading){shell('<div class="card"><h1>Saved Draft</h1><p class="muted">Loading the completed season…</p></div>');return;}
+  const c=historicalCompetition,d=c?.data||{},participants=[...(d.participants||[])].sort((a,b)=>(a.rank||999)-(b.rank||999));
+  const champion=participants.find(p=>p.profileId===d.championProfileId)||participants.find(p=>p.rank===1);
+  const mode=recordsSummaryData?.modeLabels?.[c.mode]||c.mode,pack=recordsSummaryData?.packLabels?.[c.pack]||c.pack;
+  const viewToggle=`<div class="post-view-toggle"><button class="result-tab ${historicalView==='results'?'active':''}" data-historical-view="results">Results</button><button class="result-tab ${historicalView==='teams'?'active':''}" data-historical-view="teams">Teams</button></div>`;
+  let body='';
+  if(historicalView==='teams'){
+    body=teamReviewHtml(participants,d.playerStats||[],historicalTeamId,true,d.matches||[]);
+  }else{
+    const nav=`<div class="result-tabs"><button class="result-tab ${historicalResultTab==='season'?'active':''}" data-historical-tab="season">Season</button><button class="result-tab ${historicalResultTab==='players'?'active':''}" data-historical-tab="players">Player stats</button><button class="result-tab ${historicalResultTab==='tots'?'active':''}" data-historical-tab="tots">Team of Season</button></div>`;
+    if(historicalResultTab==='season'){
+      const playoffs=(d.playoffs||[]).length?`<div class="card"><h2>Title tiebreak</h2>${d.playoffs.map(m=>matchHtml(m,'Tiebreak playoff')).join('')}</div>`:'';
+      body=`${nav}<div class="card"><h2>Final table</h2>${standingsHtml(d.finalTable||[])}</div>${playoffs}<div class="card"><h2>Match results</h2><div class="matches">${(d.matches||[]).map((m,i)=>matchHtml(m,`Match ${i+1} of ${d.matches.length}`)).join('')}</div></div>${historicalDraftHistoryHtml(d)}`;
+    }else if(historicalResultTab==='players'){
+      body=`${nav}<div class="card"><h2>League player stats</h2><p class="muted">Top 10 performers from this saved season.</p>${historicalLeaderboardHtml(d.playerStats||[],historicalStatsMetric)}</div>`;
+    }else{
+      body=`${nav}<div class="card"><div class="budget"><div><h2>Team of the Season</h2><p class="muted no-margin">The Team of the Season generated when this draft was played.</p></div><b>${esc(d.teamOfSeason?.formation||'XI')}</b></div><div class="spacer14"></div>${totsPitchHtml(d.teamOfSeason)}</div>`;
+    }
+  }
+  shell(`<div class="card records-header"><div><div class="muted small">SAVED OFFICIAL DRAFT · ${esc(adminDate(c.completedAt))}</div><h1>🏆 ${esc(champion?.displayName||'Completed draft')}</h1><p class="muted no-margin">${esc(pack)} · ${esc(mode)}</p></div><button class="secondary" id="historicalBack">Back to rivalry</button></div>${viewToggle}${body}`);
+  document.querySelector('#historicalBack').onclick=()=>{historicalCompetition=null;recordsScreen();};
+  document.querySelectorAll('[data-historical-view]').forEach(b=>b.onclick=()=>{historicalView=b.dataset.historicalView;recordsScreen();});
+  document.querySelectorAll('[data-historical-tab]').forEach(b=>b.onclick=()=>{historicalResultTab=b.dataset.historicalTab;recordsScreen();});
+  document.querySelectorAll('[data-historical-stat]').forEach(b=>b.onclick=()=>{historicalStatsMetric=b.dataset.historicalStat;recordsScreen();});
+  document.querySelectorAll('[data-team-review]').forEach(b=>b.onclick=()=>{historicalTeamId=b.dataset.teamReview;recordsScreen();});
+}
+function adminGamesHtml(){
+  if(!recordsAdminData)return '<div class="card"><h2>Saved games</h2><p class="muted">Loading saved games…</p></div>';
+  const rows=recordsAdminData.competitions||[];
+  return `<div class="card"><h2>Saved games</h2><p class="muted">Excluded games stay in the database but do not count toward any leaderboard or Rivalry Group.</p>${rows.length?`<div class="admin-record-list">${rows.map(c=>`<div class="admin-record ${c.excluded?'excluded':''}"><div class="admin-record-main"><b>${esc((c.managers||[]).join(' / ')||'Unknown managers')}</b><div class="muted small">${esc(adminDate(c.completedAt))} · ${esc(recordsAdminData.modeLabels?.[c.mode]||c.mode)} · ${esc(recordsAdminData.packLabels?.[c.pack]||c.pack)}</div><div class="muted small">Champion: ${esc(c.champion||'—')} · ${c.excluded?'EXCLUDED':'Counting in records'}</div></div><button class="${c.excluded?'secondary':'danger-soft'} admin-record-toggle" data-comp="${esc(c.competitionId)}" data-excluded="${c.excluded?'1':'0'}">${c.excluded?'Restore':'Exclude'}</button></div>`).join('')}</div>`:'<p class="muted">No saved official games yet.</p>'}</div>`;
+}
+function adminProfilesHtml(){
+  if(!recordsAdminProfilesData)return '<div class="card"><h2>Manage Profiles</h2><p class="muted">Loading permanent manager profiles…</p></div>';
+  const profiles=recordsAdminProfilesData.profiles||[];
+  const options=profiles.map(p=>`<option value="${esc(p.profileId)}">${esc(p.defaultName)} · ${esc(p.recoveryCode)}</option>`).join('');
+  return `<div class="card"><h2>Manage Profiles</h2><p class="muted">Recovery codes are private admin information. Renaming keeps the same identity and all history.</p>${profiles.length?`<div class="admin-profile-list">${profiles.map(p=>`<div class="admin-profile"><div><b>${esc(p.defaultName)}</b><div class="profile-code">${esc(p.recoveryCode)}</div><div class="muted small">${p.drafts} saved draft${p.drafts===1?'':'s'}${p.aliases?.length?` · old code${p.aliases.length===1?'':'s'}: ${esc(p.aliases.join(', '))}`:''}</div></div><button class="secondary small-button admin-profile-rename" data-profile="${esc(p.profileId)}" data-name="${esc(p.defaultName)}">Rename</button></div>`).join('')}</div><div class="profile-merge-box"><h3>Merge duplicate profiles</h3><p class="muted small">Choose the real profile to keep, then the accidental duplicate. The duplicate's old recovery code will continue to recover the surviving profile.</p><label>Keep this profile</label><select id="mergeSurvivor"><option value="">Choose profile</option>${options}</select><label>Merge this duplicate into it</label><select id="mergeDuplicate"><option value="">Choose duplicate</option>${options}</select><button class="danger-soft big" id="mergeProfiles">Merge duplicate profiles</button><p class="muted small">Safety rule: if both profiles appeared in the same completed official draft, Prem Draft will refuse the merge so standings cannot be corrupted.</p></div>`:'<p class="muted">No permanent profiles yet.</p>'}</div>`;
+}
+function adminRecordsHtml(){
+  const nav=`<div class="record-tabs"><button class="result-tab ${recordsAdminSection==='games'?'active':''}" data-admin-section="games">Saved Games</button><button class="result-tab ${recordsAdminSection==='profiles'?'active':''}" data-admin-section="profiles">Manage Profiles</button></div>`;
+  return `<div class="card"><div class="budget"><div><h2>Records Admin</h2><p class="muted no-margin">Private controls for correcting permanent history.</p></div><button class="secondary" id="adminBack">Back to records</button></div></div>${nav}${recordsAdminSection==='profiles'?adminProfilesHtml():adminGamesHtml()}`;
+}
+function loadAdminSection(section='games'){
+  recordsAdminMode=true;recordsAdminSection=section;recordsScreen();
+  if(section==='profiles'){
+    recordsAdminProfilesData=null;recordsScreen();
+    socket.emit('recordsAdminProfiles',{},r=>{if(!r?.ok){if(String(r?.error||'').includes('Admin access'))recordsAdminUnlocked=false;showToast(r?.error||'Could not load profiles');return;}recordsAdminProfilesData=r;if(viewingRecords)recordsScreen();});
+  }else{
+    recordsAdminData=null;recordsScreen();
+    socket.emit('recordsAdminList',{},r=>{if(!r?.ok){if(String(r?.error||'').includes('Admin access'))recordsAdminUnlocked=false;showToast(r?.error||'Could not load admin records');return;}recordsAdminData=r;if(viewingRecords)recordsScreen();});
+  }
+}
 function openAdminRecords(){
-  if(recordsAdminUnlocked)return loadAdminRecords();
+  if(recordsAdminUnlocked)return loadAdminSection(recordsAdminSection||'games');
   const code=prompt('Enter admin code:','');if(code===null)return;
   socket.emit('recordsAdminLogin',{code},r=>{
     if(!r?.ok)return showToast(r?.error||'Admin access denied');
-    recordsAdminUnlocked=true;loadAdminRecords();
+    recordsAdminUnlocked=true;loadAdminSection('games');
   });
 }
-
+function wireAdminControls(){
+  const back=document.querySelector('#adminBack');if(back)back.onclick=()=>openRecords();
+  document.querySelectorAll('[data-admin-section]').forEach(b=>b.onclick=()=>loadAdminSection(b.dataset.adminSection));
+  document.querySelectorAll('.admin-record-toggle').forEach(b=>b.onclick=()=>{
+    const excluded=b.dataset.excluded==='1',competitionId=b.dataset.comp;
+    if(!excluded&&!confirm('Exclude this completed game from all permanent leaderboards? You can restore it later.'))return;
+    socket.emit('recordsAdminSetExcluded',{competitionId,excluded:!excluded},r=>{if(!r?.ok)return showToast(r?.error||'Could not update saved game');showToast(excluded?'Game restored':'Game excluded');loadAdminSection('games');});
+  });
+  document.querySelectorAll('.admin-profile-rename').forEach(b=>b.onclick=()=>{
+    const name=prompt('Permanent manager name:',b.dataset.name||'Manager');if(name===null)return;
+    socket.emit('recordsAdminRenameProfile',{profileId:b.dataset.profile,name},r=>{if(!r?.ok)return showToast(r?.error||'Could not rename profile');showToast('Permanent manager renamed');loadAdminSection('profiles');});
+  });
+  const merge=document.querySelector('#mergeProfiles');if(merge)merge.onclick=()=>{
+    const survivorId=document.querySelector('#mergeSurvivor')?.value,duplicateId=document.querySelector('#mergeDuplicate')?.value;
+    if(!survivorId||!duplicateId)return showToast('Choose both profiles first.');
+    if(survivorId===duplicateId)return showToast('Choose two different profiles.');
+    const profiles=recordsAdminProfilesData?.profiles||[],keep=profiles.find(p=>p.profileId===survivorId),dup=profiles.find(p=>p.profileId===duplicateId);
+    if(!confirm(`Merge ${dup?.defaultName||'duplicate'} (${dup?.recoveryCode||''}) into ${keep?.defaultName||'surviving profile'} (${keep?.recoveryCode||''})?\n\nThis moves the duplicate's historical drafts to the surviving identity. The old recovery code will become an alias.`))return;
+    socket.emit('recordsAdminMergeProfiles',{survivorId,duplicateId},r=>{
+      if(!r?.ok){
+        if(r?.conflict){const dates=(r.conflicts||[]).map(x=>adminDate(x.completedAt)).join('\n');alert(`${r.error}\n\nConflicting saved draft${(r.conflicts||[]).length===1?'':'s'}:\n${dates}`);return;}
+        return showToast(r?.error||'Could not merge profiles');
+      }
+      showToast(`Profiles merged · ${r.affectedDrafts||0} draft${r.affectedDrafts===1?'':'s'} moved`);loadAdminSection('profiles');
+    });
+  };
+}
 function recordsScreen(){
   if(!viewingRecords)return;
+  if(historicalCompetition)return historicalCompetitionScreen();
   if(!recordsSummaryData)return;
   if(recordsAdminMode){
     shell(`<div class="card records-header"><div><div class="muted small">PERMANENT HISTORY</div><h1>🏆 All-Time Records</h1></div><button class="secondary" id="recordsBack">Close</button></div>${adminRecordsHtml()}`);
-    document.querySelector('#recordsBack').onclick=closeRecords;
-    const back=document.querySelector('#adminBack');if(back)back.onclick=()=>openRecords();
-    document.querySelectorAll('.admin-record-toggle').forEach(b=>b.onclick=()=>{
-      const excluded=b.dataset.excluded==='1',competitionId=b.dataset.comp;
-      if(!excluded&&!confirm('Exclude this completed game from all permanent leaderboards? You can restore it later.'))return;
-      socket.emit('recordsAdminSetExcluded',{competitionId,excluded:!excluded},r=>{if(!r?.ok)return showToast(r?.error||'Could not update saved game');showToast(excluded?'Game restored':'Game excluded');loadAdminRecords();});
-    });
-    return;
+    document.querySelector('#recordsBack').onclick=closeRecords;wireAdminControls();return;
   }
   const groups=recordsSummaryData.groups||[];
   const nav=`<div class="record-tabs"><button class="result-tab ${recordsSection==='rivalry'?'active':''}" data-record-section="rivalry">Rivalry Groups</button><button class="result-tab ${recordsSection==='all'?'active':''}" data-record-section="all">All Managers</button></div>`;
@@ -321,12 +431,13 @@ function recordsScreen(){
   }else{
     const options=groups.map(g=>`<option value="${esc(g.key)}" ${g.key===selectedRivalryKey?'selected':''}>${esc(g.names.join(' / '))} · ${g.drafts} draft${g.drafts===1?'':'s'}</option>`).join('');
     const meta=recordsGroupData?`${recordsGroupData.matchingDrafts} matching draft${recordsGroupData.matchingDrafts===1?'':'s'} · ${recordsGroupData.matchingMatches} matches`:'Loading filtered table…';
-    body=`<div class="card"><div class="budget"><div><h2>Rivalry Group</h2><p class="muted no-margin">Only drafts containing exactly this combination of managers count.</p></div></div><div class="spacer10"></div><select id="rivalryGroupSelect">${options}</select><div class="spacer10"></div><button class="secondary" id="recordsFilterButton">Filters ⚙</button>${recordsFiltersHtml()}<p class="muted small records-match-count">${esc(meta)}</p>${recordsGroupData?historyTableHtml(recordsGroupData.table||[]):'<div class="muted">Loading…</div>'}</div>`;
+    body=`<div class="card"><div class="budget"><div><h2>Rivalry Group</h2><p class="muted no-margin">Only drafts containing exactly this combination of managers count.</p></div></div><div class="spacer10"></div><select id="rivalryGroupSelect">${options}</select><div class="spacer10"></div><button class="secondary" id="recordsFilterButton">Filters ⚙</button>${recordsFiltersHtml()}<p class="muted small records-match-count">${esc(meta)}</p>${recordsGroupData?historyTableHtml(recordsGroupData.table||[]):'<div class="muted">Loading…</div>'}</div>${recordsGroupData?`<div class="card"><h2>Draft History</h2><p class="muted">Open any saved official draft and revisit its final results and teams.</p>${draftHistoryCardsHtml(recordsGroupData.drafts||[])}</div>`:''}`;
   }
   shell(`<div class="card records-header"><div><div class="muted small">PERMANENT HISTORY</div><h1>🏆 All-Time Records</h1>${recordsConnectionHtml()}</div><div class="profile-actions">${recordsAdminConfigured?'<button class="secondary small-button" id="recordsAdmin">Admin</button>':''}<button class="secondary" id="recordsBack">Back</button></div></div>${nav}${body}`);
   document.querySelector('#recordsBack').onclick=closeRecords;
   const adminButton=document.querySelector('#recordsAdmin');if(adminButton)adminButton.onclick=openAdminRecords;
   document.querySelectorAll('[data-record-section]').forEach(b=>b.onclick=()=>{recordsSection=b.dataset.recordSection;recordsScreen();});
+  document.querySelectorAll('[data-historical-comp]').forEach(b=>b.onclick=()=>openHistoricalCompetition(b.dataset.historicalComp));
   const sel=document.querySelector('#rivalryGroupSelect');if(sel)sel.onchange=e=>{selectedRivalryKey=e.target.value;loadRivalryGroup();};
   const filterBtn=document.querySelector('#recordsFilterButton'),panel=document.querySelector('#recordsFilterPanel');if(filterBtn&&panel)filterBtn.onclick=()=>{panel.hidden=!panel.hidden};
   const all=document.querySelector('#recordsAllFilters');if(all)all.onclick=()=>{document.querySelectorAll('[data-filter-mode],[data-filter-pack]').forEach(x=>{x.checked=true});};
@@ -546,10 +657,62 @@ function teamBuild(){
 }
 
 
-function ratingsHtml(m){
-  const r=state.teamRatings?.[m.id];
-  if(!r)return '';
+function ratingPanelHtml(r){
+  if(!r)return '<div class="muted small">Pre-simulation team ratings unavailable for this saved team.</div>';
   return `<div class="ratings"><div class="overall-rating"><span>OVERALL</span><strong>${r.overall}</strong></div><div class="rating-grid"><div><span>Attack</span><b>${r.attack}</b></div><div><span>Midfield</span><b>${r.midfield}</b></div><div><span>Defence</span><b>${r.defence}</b></div><div><span>Positional Fit</span><b>${r.positionalFit}</b></div><div><span>Team Balance</span><b>${r.teamBalance}</b></div><div><span>Formation Fit</span><b>${r.formationSuitability}</b></div></div></div>`;
+}
+function ratingsHtml(m){return ratingPanelHtml(state.teamRatings?.[m.id]);}
+function reviewManagerKey(m){return String(m.profileId||m.id||m.managerId||'')}
+function reviewManagerName(m){return m.displayName||m.name||'Manager'}
+function reviewFormation(m){return m.finalFormation||m.formation||'XI'}
+function reviewTeamStats(m,playerStats){
+  return (playerStats||[]).filter(p=>{
+    if(m.profileId&&p.profileId)return p.profileId===m.profileId;
+    const id=m.id||m.managerId;return id&&p.managerId===id;
+  });
+}
+function reviewSlotPlayers(m){
+  const formation=reviewFormation(m),layout=FF_LAYOUTS[formation];if(!layout)return [];
+  if(Array.isArray(m.lineup)&&m.lineup.length===11)return layout.slots.map((slot,i)=>({slot,player:(m.squad||[]).find(p=>p.id===m.lineup[i])||null}));
+  const remaining=[...(m.squad||[])];
+  return layout.slots.map(slot=>{
+    let idx=remaining.findIndex(p=>(p.assignedPosition||p.positions?.[0])===slot);
+    if(idx<0)idx=remaining.findIndex(p=>p.positions?.includes(slot));
+    const player=idx>=0?remaining.splice(idx,1)[0]:null;return {slot,player};
+  });
+}
+function playerPotmCount(playerId,matches){return (matches||[]).filter(m=>m.playerOfMatch?.playerId===playerId).length}
+function performancePitchHtml(m,playerStats){
+  const formation=reviewFormation(m),layout=FF_LAYOUTS[formation];if(!layout)return '<div class="muted">No pitch layout is available for this formation.</div>';
+  const byId=new Map(reviewTeamStats(m,playerStats).map(x=>[x.playerId,x]));
+  const slotPlayers=reviewSlotPlayers(m);
+  return `<div class="pitch performance-pitch">${layout.rows.map(row=>`<div class="pitch-row cols-${row.length}">${row.map(idx=>{
+    const entry=slotPlayers[idx],p=entry?.player,st=p?byId.get(p.id):null;
+    const output=entry?.slot==='GK'?`${st?.saves||0} saves · ${st?.cleanSheets||0} CS`:`${st?.goals||0}G · ${st?.assists||0}A`;
+    return `<div class="pitch-slot performance-slot"><span class="slot-label">${esc(entry?.slot||layout.slots[idx])}</span><span class="slot-name">${p?esc(p.name):'—'}</span>${p&&st?`<span class="performance-output">${output}</span><span class="performance-rating">${Number(st.avgRating||0).toFixed(2)} avg</span>`:''}</div>`;
+  }).join('')}</div>`).join('')}</div>`;
+}
+function teamPerformanceTableHtml(m,playerStats,matches){
+  const rows=reviewTeamStats(m,playerStats);if(!rows.length)return '<p class="muted small">No individual player stats are available.</p>';
+  const ordered=reviewSlotPlayers(m).map(x=>rows.find(r=>r.playerId===x.player?.id)).filter(Boolean);
+  const rest=rows.filter(r=>!ordered.includes(r));
+  return `<div class="table-wrap"><table class="player-stats-table full-team-stats"><thead><tr><th>Player</th><th>Pos</th><th>Apps</th><th>G</th><th>A</th><th>Saves</th><th>CS</th><th>POTM</th><th>Avg</th></tr></thead><tbody>${[...ordered,...rest].map(p=>`<tr><td><b>${esc(p.player)}</b></td><td>${esc(p.deployedSlot||'—')}</td><td>${p.apps??0}</td><td>${p.goals??0}</td><td>${p.assists??0}</td><td>${p.saves??0}</td><td>${p.cleanSheets??0}</td><td>${playerPotmCount(p.playerId,matches)}</td><td><b>${Number(p.avgRating||0).toFixed(2)}</b></td></tr>`).join('')}</tbody></table></div>`;
+}
+function teamReviewHtml(managers,playerStats,selectedId,historical=false,matches=[]){
+  if(!managers?.length)return '<div class="card muted">No saved teams available.</div>';
+  const chosen=managers.find(m=>reviewManagerKey(m)===String(selectedId||''))||managers[0];
+  const rating=historical?chosen.teamRating:state.teamRatings?.[chosen.id];
+  return `<div class="team-review-switch">${managers.map(m=>`<button class="result-tab ${reviewManagerKey(m)===reviewManagerKey(chosen)?'active':''}" data-team-review="${esc(reviewManagerKey(m))}">${esc(reviewManagerName(m))}</button>`).join('')}</div><div class="card team-performance-card"><div class="budget"><div><h2>${esc(reviewManagerName(chosen))}</h2><div class="muted">${esc(reviewFormation(chosen))}</div></div><b>£${chosen.budget??'—'}m left</b></div>${ratingPanelHtml(rating)}<div class="spacer14"></div>${performancePitchHtml(chosen,playerStats)}<div class="spacer14"></div><h3>Full XI performance</h3>${teamPerformanceTableHtml(chosen,playerStats,matches)}</div>`;
+}
+function historicalLeaderboardHtml(stats,metric){
+  const labels={goals:'Goals',assists:'Assists',saves:'Saves',rating:'Avg rating'};
+  let rows=[...(stats||[])];
+  if(metric==='goals')rows.sort((a,b)=>b.goals-a.goals||b.assists-a.assists||b.avgRating-a.avgRating||a.player.localeCompare(b.player));
+  else if(metric==='assists')rows.sort((a,b)=>b.assists-a.assists||b.goals-a.goals||b.avgRating-a.avgRating||a.player.localeCompare(b.player));
+  else if(metric==='saves')rows=rows.filter(p=>p.deployedSlot==='GK').sort((a,b)=>b.saves-a.saves||b.avgRating-a.avgRating||a.player.localeCompare(b.player));
+  else rows.sort((a,b)=>b.avgRating-a.avgRating||(b.goals+b.assists)-(a.goals+a.assists)||a.player.localeCompare(b.player));
+  rows=rows.slice(0,10);const value=p=>metric==='rating'?Number(p.avgRating||0).toFixed(2):(p[metric]??0);
+  return `<div class="stat-switch">${Object.entries(labels).map(([key,label])=>`<button class="stat-chip ${historicalStatsMetric===key?'active':''}" data-historical-stat="${key}">${label}</button>`).join('')}</div><div class="table-wrap"><table class="player-stats-table"><thead><tr><th>#</th><th>Player</th><th>Manager</th><th>Pos</th><th>${labels[metric]}</th></tr></thead><tbody>${rows.map((p,i)=>`<tr><td>${i+1}</td><td><b>${esc(p.player)}</b></td><td>${esc(p.managerName||'—')}</td><td>${esc(p.deployedSlot||'—')}</td><td><b>${value(p)}</b></td></tr>`).join('')}</tbody></table></div>`;
 }
 function revealedTeamHtml(m){
   if(isFreeformLike()){
@@ -620,16 +783,25 @@ function fullResults(){
   const host=state.hostId===meId,sim=state.simulation;
   const champion=state.managers.find(m=>m.id===sim.championId);
   const exhibition=state.simulationKind==='exhibition';
+  if(!reviewManagerId||!state.managers.some(m=>m.id===reviewManagerId))reviewManagerId=state.managers.some(m=>m.id===meId)?meId:state.managers[0]?.id;
+  const viewToggle=`<div class="post-view-toggle"><button class="result-tab ${postSimView==='results'?'active':''}" data-post-view="results">Results</button><button class="result-tab ${postSimView==='teams'?'active':''}" data-post-view="teams">Teams</button></div>`;
   const playoffs=(sim.playoffs||[]).length?`<div class="card"><h2>Title tiebreak</h2><p class="muted small">The league tiebreakers could not separate the leaders, so the title was decided on the pitch.</p>${sim.playoffs.map(m=>matchHtml(m,'Tiebreak playoff')).join('')}</div>`:'';
   let body='';
-  if(resultsTab==='season') body=`<div class="card"><h2>Final table</h2>${standingsHtml(sim.table)}</div>${playoffs}<div class="card"><h2>Match results</h2><div class="matches">${(sim.matches||[]).map((m,i)=>matchHtml(m,`Match ${i+1} of ${sim.matches.length}`)).join('')}</div></div><div class="card"><h2>Team ratings</h2><p class="muted small">The team ratings that drove the simulation. Individual hidden player ratings remain secret.</p>${state.managers.map(m=>`<div class="rating-summary"><div><b>${esc(m.name)}</b><span>${isFreeformLike()?esc(m.finalFormation||'XI'):esc(m.formation||'XI')}</span></div><strong>${state.teamRatings?.[m.id]?.overall??'—'}</strong></div>`).join('')}</div>${state.mode==='blind'?draftHistoryHtml():''}`;
-  else if(resultsTab==='players') body=`<div class="card"><h2>League player stats</h2><p class="muted">Top 10 performers across every manager's XI.</p>${leaderboardHtml(statsMetric)}</div>`;
-  else if(resultsTab==='tots') body=`<div class="card"><div class="budget"><div><h2>Team of the Season</h2><p class="muted no-margin">Best-performing valid XI by average match rating, using the positions players were actually deployed in with sensible neighbouring roles.</p></div><b>${esc(sim.teamOfSeason?.formation||'XI')}</b></div><div class="spacer14"></div>${totsPitchHtml(sim.teamOfSeason)}</div>`;
-  else body=sessionHtml();
+  if(postSimView==='teams'){
+    body=teamReviewHtml(state.managers,sim.playerStats||[],reviewManagerId,false,sim.matches||[]);
+  }else{
+    if(resultsTab==='season') body=`<div class="card"><h2>Final table</h2>${standingsHtml(sim.table)}</div>${playoffs}<div class="card"><h2>Match results</h2><div class="matches">${(sim.matches||[]).map((m,i)=>matchHtml(m,`Match ${i+1} of ${sim.matches.length}`)).join('')}</div></div><div class="card"><h2>Team ratings</h2><p class="muted small">The team ratings that drove the simulation. Individual hidden player ratings remain secret.</p>${state.managers.map(m=>`<div class="rating-summary"><div><b>${esc(m.name)}</b><span>${isFreeformLike()?esc(m.finalFormation||'XI'):esc(m.formation||'XI')}</span></div><strong>${state.teamRatings?.[m.id]?.overall??'—'}</strong></div>`).join('')}</div>${state.mode==='blind'?draftHistoryHtml():''}`;
+    else if(resultsTab==='players') body=`<div class="card"><h2>League player stats</h2><p class="muted">Top 10 performers across every manager's XI.</p>${leaderboardHtml(statsMetric)}</div>`;
+    else if(resultsTab==='tots') body=`<div class="card"><div class="budget"><div><h2>Team of the Season</h2><p class="muted no-margin">Best-performing valid XI by average match rating, using the positions players were actually deployed in with sensible neighbouring roles.</p></div><b>${esc(sim.teamOfSeason?.formation||'XI')}</b></div><div class="spacer14"></div>${totsPitchHtml(sim.teamOfSeason)}</div>`;
+    else body=sessionHtml();
+    body=`${resultNav()}${body}`;
+  }
   const simNote=exhibition?`<div class="card exhibition-banner"><b>Exhibition re-simulation #${state.exhibitionNumber||1}</b><div>This result is just for fun and does not change titles, head-to-heads or session history.</div></div>`:'';
   const controls=host?`<div class="post-sim-controls"><button class="secondary big" id="resimulate">${exhibition?'Re-simulate again':'Re-simulate season'}</button>${exhibition?'<button class="secondary big" id="officialResult">View official result</button>':''}<button class="primary big" id="again">Play again</button></div>`:'<div class="card muted">Waiting for the host to choose what happens next.</div>';
-  shell(`${simNote}<div class="card champion"><div class="muted">${exhibition?'EXHIBITION WINNER':'SEASON CHAMPION'}</div><h1>🏆 ${esc(champion?.name||'Winner')}</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p></div>${!exhibition?permanentHistoryStatusHtml():''}${resultNav()}${body}<button class="secondary big" id="viewRecords">View All-Time Records</button><div class="spacer10"></div>${controls}`);
-  wireResultTabs();wireStatSwitch();
+  shell(`${simNote}<div class="card champion"><div class="muted">${exhibition?'EXHIBITION WINNER':'SEASON CHAMPION'}</div><h1>🏆 ${esc(champion?.name||'Winner')}</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p></div>${!exhibition?permanentHistoryStatusHtml():''}${viewToggle}${body}<button class="secondary big" id="viewRecords">View All-Time Records</button><div class="spacer10"></div>${controls}`);
+  if(postSimView==='results'){wireResultTabs();wireStatSwitch();}
+  document.querySelectorAll('[data-post-view]').forEach(b=>b.onclick=()=>{postSimView=b.dataset.postView;fullResults();});
+  document.querySelectorAll('[data-team-review]').forEach(b=>b.onclick=()=>{reviewManagerId=b.dataset.teamReview;fullResults();});
   const recordsButton=document.querySelector('#viewRecords');if(recordsButton)recordsButton.onclick=openRecords;
   if(host){
     document.querySelector('#again').onclick=()=>socket.emit('playAgain',{});
@@ -637,6 +809,7 @@ function fullResults(){
     const official=document.querySelector('#officialResult');if(official)official.onclick=()=>socket.emit('viewOfficialSimulation',{},r=>{if(r&&!r.ok)showToast(r.error)});
   }
 }
+
 function results(){
   const host=state.hostId===meId,sim=state.simulation;if(!sim)return reveal();
   const total=sim.matches?.length||0,shown=Math.min(state.simulationRevealCount||0,total),exhibition=state.simulationKind==='exhibition';
@@ -677,7 +850,7 @@ socket.on('state',s=>{
   if(phaseChanged){
     selectedLineupSlot=null;
     if(s.phase==='draft'){tab='draft';nominationSearch='';nominationPosition='ALL';}
-    if(s.phase==='results'){resultsTab='season';statsMetric='goals';}
+    if(s.phase==='results'){resultsTab='season';statsMetric='goals';postSimView='results';reviewManagerId=meId||null;}
   }
   render();
   if(endgameJustBegan){blindEndgameAnnounced=true;showToast('Endgame has begun · remaining players are compulsory');}
