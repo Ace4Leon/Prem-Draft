@@ -4,9 +4,12 @@
   "private": true,
   "description": "Real-time Premier League all-time auction draft game",
   "main": "server.js",
-  "scripts": {"start":"node server.js"},
+  "scripts": {
+    "start": "node server.js"
+  },
   "dependencies": {
     "express": "^4.21.2",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "pg": "^8.13.1"
   }
 }
