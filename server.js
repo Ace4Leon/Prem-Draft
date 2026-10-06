@@ -25,6 +25,7 @@ const DEFAULT_PACK = 'all_time_prem';
 const DEFAULT_MODE = 'freeform';
 
 const HISTORY_DB_URL = process.env.DATABASE_URL || '';
+const ADMIN_CODE = String(process.env.ADMIN_CODE || '').trim();
 let historyPool=null;
 let historyDbReady=false;
 let historyDbInitPromise=null;
@@ -57,8 +58,12 @@ async function initHistoryDb(){
         pack TEXT NOT NULL,
         rivalry_key TEXT NOT NULL,
         participant_profile_ids JSONB NOT NULL,
-        data JSONB NOT NULL
+        data JSONB NOT NULL,
+        excluded BOOLEAN NOT NULL DEFAULT FALSE,
+        excluded_at TIMESTAMPTZ
       )`);
+      await historyPool.query('ALTER TABLE prem_draft_competitions ADD COLUMN IF NOT EXISTS excluded BOOLEAN NOT NULL DEFAULT FALSE');
+      await historyPool.query('ALTER TABLE prem_draft_competitions ADD COLUMN IF NOT EXISTS excluded_at TIMESTAMPTZ');
       await historyPool.query('CREATE INDEX IF NOT EXISTS prem_draft_competitions_rivalry_idx ON prem_draft_competitions (rivalry_key)');
       await historyPool.query('CREATE INDEX IF NOT EXISTS prem_draft_competitions_completed_idx ON prem_draft_competitions (completed_at DESC)');
       historyDbReady=true;
@@ -128,7 +133,7 @@ async function loadHistoryDataset(){
   if(!await initHistoryDb())return null;
   const [profilesRes,compsRes]=await Promise.all([
     historyPool.query('SELECT profile_id,default_name FROM prem_draft_profiles'),
-    historyPool.query('SELECT competition_id,completed_at,mode,pack,rivalry_key,participant_profile_ids,data FROM prem_draft_competitions ORDER BY completed_at DESC')
+    historyPool.query('SELECT competition_id,completed_at,mode,pack,rivalry_key,participant_profile_ids,data FROM prem_draft_competitions WHERE excluded=FALSE ORDER BY completed_at DESC')
   ]);
   const nameMap=new Map(profilesRes.rows.map(r=>[r.profile_id,r.default_name]));
   return {nameMap,competitions:compsRes.rows};
@@ -163,6 +168,29 @@ async function rivalryPayload(key,modes,packs){
     matchingMatches:filtered.reduce((n,c)=>n+(c.data?.matches?.length||0),0)
   };
 }
+function adminCodeMatches(input){
+  if(!ADMIN_CODE)return false;
+  const a=Buffer.from(String(input||'')),b=Buffer.from(ADMIN_CODE);
+  return a.length===b.length&&crypto.timingSafeEqual(a,b);
+}
+async function adminCompetitionList(){
+  if(!await initHistoryDb())return null;
+  const {rows}=await historyPool.query('SELECT competition_id,completed_at,mode,pack,excluded,data FROM prem_draft_competitions ORDER BY completed_at DESC LIMIT 500');
+  return rows.map(r=>{
+    const d=r.data||{},participants=Array.isArray(d.participants)?d.participants:[];
+    const champion=participants.find(p=>p.profileId&&p.profileId===d.championProfileId)||participants.find(p=>p.rank===1);
+    return {
+      competitionId:r.competition_id,
+      completedAt:r.completed_at,
+      mode:r.mode,
+      pack:r.pack,
+      excluded:!!r.excluded,
+      managers:participants.map(p=>p.displayName||'Manager'),
+      champion:champion?.displayName||'—'
+    };
+  });
+}
+
 function historyCompetitionPayload(room,simulation){
   const managers=[...room.managers.values()];
   const managerMap=new Map(managers.map(m=>[m.id,m]));
@@ -180,7 +208,7 @@ function historyCompetitionPayload(room,simulation){
     homeShotsOnTarget:m.homeShotsOnTarget,awayShotsOnTarget:m.awayShotsOnTarget,homeSaves:m.homeSaves,awaySaves:m.awaySaves,playerOfMatch:m.playerOfMatch
   }));
   return {
-    version:'v7',participants,championProfileId:toProfile(simulation.championId),matches,
+    version:'v7a',participants,championProfileId:toProfile(simulation.championId),matches,
     finalTable:(simulation.table||[]).map((r,i)=>({...r,profileId:toProfile(r.id),rank:i+1})),
     playerStats:(simulation.playerStats||[]).map(p=>({...p,profileId:toProfile(p.managerId)})),
     teamOfSeason:simulation.teamOfSeason||null,
@@ -188,6 +216,7 @@ function historyCompetitionPayload(room,simulation){
   };
 }
 async function saveOfficialCompetition(room,simulation){
+  if(room.saveToHistory===false)return {status:'practice',message:'Practice game — this official simulation was not saved to All-Time Records.'};
   if(!await initHistoryDb())return {status:'unavailable',message:'Permanent Records are not connected.'};
   const managers=[...room.managers.values()];
   if(managers.some(m=>!m.profileId))return {status:'ineligible',message:'This season was not saved because at least one manager was playing without a permanent profile.'};
@@ -439,6 +468,7 @@ function roomPublic(room,viewerId){
     sessionStats: sessionPublic(room),
     historySaveStatus: room.historySaveStatus||null,
     historySaveMessage: room.historySaveMessage||null,
+    saveToHistory: room.saveToHistory!==false,
     managers: [...room.managers.values()].map(m=>managerPublic(m,room,viewerId)),
     current,
     nomination,
@@ -1043,6 +1073,27 @@ function validLineup(m){
 }
 
 io.on('connection', socket=>{
+  socket.on('recordsStatus', async (_,cb)=>{
+    try{await initHistoryDb();cb?.({ok:true,connected:!!historyDbReady,adminConfigured:!!ADMIN_CODE});}catch{cb?.({ok:true,connected:false,adminConfigured:!!ADMIN_CODE});}
+  });
+  socket.on('recordsAdminLogin', ({code},cb)=>{
+    if(!ADMIN_CODE)return cb?.({ok:false,error:'Admin access is not configured on the server.'});
+    if(!adminCodeMatches(code))return cb?.({ok:false,error:'Incorrect admin code.'});
+    socket.data.recordsAdmin=true;cb?.({ok:true});
+  });
+  socket.on('recordsAdminList', async (_,cb)=>{
+    if(!socket.data.recordsAdmin)return cb?.({ok:false,error:'Admin access required.'});
+    try{const competitions=await adminCompetitionList();if(!competitions)return cb?.({ok:false,error:'Permanent Records are not connected.'});cb?.({ok:true,competitions,modeLabels:MODE_LABELS,packLabels:{...PACKS,chaos:'Chaos Mode'}});}catch(err){console.error('Admin records list error:',err.message);cb?.({ok:false,error:'Could not load saved games.'});}
+  });
+  socket.on('recordsAdminSetExcluded', async ({competitionId,excluded},cb)=>{
+    if(!socket.data.recordsAdmin)return cb?.({ok:false,error:'Admin access required.'});
+    if(!await initHistoryDb())return cb?.({ok:false,error:'Permanent Records are not connected.'});
+    try{
+      const {rowCount}=await historyPool.query('UPDATE prem_draft_competitions SET excluded=$2,excluded_at=CASE WHEN $2 THEN NOW() ELSE NULL END WHERE competition_id=$1',[String(competitionId||''),!!excluded]);
+      if(!rowCount)return cb?.({ok:false,error:'Saved game not found.'});
+      cb?.({ok:true});
+    }catch(err){console.error('Admin records update error:',err.message);cb?.({ok:false,error:'Could not update this saved game.'});}
+  });
   socket.on('profileCreate', async ({name},cb)=>{
     try{const row=await createPermanentProfile(name);if(!row)return cb?.({ok:false,error:'Permanent Records are not configured yet.'});cb?.({ok:true,profile:profilePublic(row)});}catch(err){cb?.({ok:false,error:'Could not create the manager profile.'});}
   });
@@ -1053,7 +1104,7 @@ io.on('connection', socket=>{
     try{const row=await renamePermanentProfile(code,name);if(!row)return cb?.({ok:false,error:'Profile code not found.'});cb?.({ok:true,profile:profilePublic(row)});}catch{cb?.({ok:false,error:'Could not update the manager name.'});}
   });
   socket.on('recordsSummary', async (_,cb)=>{
-    try{const payload=await recordsSummaryPayload();if(!payload)return cb?.({ok:false,error:'Permanent Records are not configured yet.'});cb?.({ok:true,...payload,modeLabels:MODE_LABELS,packLabels:{...PACKS,chaos:'Chaos Mode'}});}catch(err){console.error('Records summary error:',err.message);cb?.({ok:false,error:'Could not load All-Time Records.'});}
+    try{const payload=await recordsSummaryPayload();if(!payload)return cb?.({ok:false,error:'Permanent Records are not configured yet.'});cb?.({ok:true,...payload,modeLabels:MODE_LABELS,packLabels:{...PACKS,chaos:'Chaos Mode'},recordsConnected:!!historyDbReady,adminConfigured:!!ADMIN_CODE});}catch(err){console.error('Records summary error:',err.message);cb?.({ok:false,error:'Could not load All-Time Records.'});}
   });
   socket.on('recordsGroup', async ({key,modes,packs},cb)=>{
     try{const payload=await rivalryPayload(String(key||''),modes,packs);if(!payload)return cb?.({ok:false,error:'Permanent Records are not configured yet.'});cb?.({ok:true,...payload});}catch(err){console.error('Rivalry records error:',err.message);cb?.({ok:false,error:'Could not load this rivalry group.'});}
@@ -1068,7 +1119,7 @@ io.on('connection', socket=>{
       code,hostId:managerId,phase:'lobby',mode:DEFAULT_MODE,pack:DEFAULT_PACK,managers:new Map([[managerId,m]]),
       pool:[],initialPoolSize:0,auctionIndex:0,shownCount:0,current:null,timer:null,paused:false,
       teamAssessments:null,simulation:null,officialSimulation:null,simulationKind:'official',exhibitionNumber:0,simulationRevealCount:0,
-      draftHistory:[],sessionHistory:{drafts:0,matches:[],titles:{}},historySaveStatus:null,historySaveMessage:null,officialCompetitionId:null,simulationStarting:false,
+      draftHistory:[],sessionHistory:{drafts:0,matches:[],titles:{}},historySaveStatus:null,historySaveMessage:null,officialCompetitionId:null,simulationStarting:false,saveToHistory:true,
       nominationAvailableIds:new Set(),nominationOrder:[],nominationCursor:-1,nominationNominatorId:null,nominationTimeLeft:null,nominationFinalPickManagerId:null
     };
     rooms.set(code,room);socket.join(code);socket.data.room=code;socket.data.managerId=managerId;
@@ -1114,6 +1165,12 @@ io.on('connection', socket=>{
     room.mode=mode;
     for(const m of room.managers.values()){m.ready=false;if(mode!=='hard')m.formation=null;}
     emitState(room);
+  });
+
+  socket.on('setSaveToHistory', ({save},cb)=>{
+    const room=rooms.get(socket.data.room);
+    if(!room||room.phase!=='lobby'||!socketIsHost(room,socket))return cb?.({ok:false,error:'Only the host can change this before the draft starts.'});
+    room.saveToHistory=save!==false;cb?.({ok:true});emitState(room);
   });
 
   socket.on('setFormation', ({formation})=>{
@@ -1293,7 +1350,10 @@ io.on('connection', socket=>{
     room.simulationStarting=true;
     const teams=[...room.managers.values()].map(m=>({id:m.id,name:m.name,assessment:room.teamAssessments.get(m.id)}));
     room.simulation=simulateCompetition(teams);room.officialSimulation=room.simulation;room.simulationKind='official';room.exhibitionNumber=0;room.simulationRevealCount=0;
-    recordSessionCompetition(room,room.simulation);room.phase='results';room.historySaveStatus='saving';room.historySaveMessage='Saving official season to All-Time Records…';emitState(room);
+    recordSessionCompetition(room,room.simulation);room.phase='results';
+    if(room.saveToHistory===false){room.historySaveStatus='practice';room.historySaveMessage='Practice game — this official simulation will not affect permanent leaderboards.';}
+    else{room.historySaveStatus='saving';room.historySaveMessage='Saving official season to All-Time Records…';}
+    emitState(room);
     const saveResult=await saveOfficialCompetition(room,room.simulation);
     room.historySaveStatus=saveResult.status;room.historySaveMessage=saveResult.message;room.simulationStarting=false;
     cb?.({ok:true,historySaveStatus:saveResult.status});emitState(room);
@@ -1325,7 +1385,7 @@ io.on('connection', socket=>{
   socket.on('playAgain', (_,cb)=>{
     const room=rooms.get(socket.data.room);if(!room||!['finished','reveal','results'].includes(room.phase)||!socketIsHost(room,socket))return;
     clearInterval(room.timer);room.timer=null;room.phase='lobby';room.pool=[];room.initialPoolSize=0;room.auctionIndex=0;room.shownCount=0;room.current=null;room.paused=false;
-    room.teamAssessments=null;room.simulation=null;room.officialSimulation=null;room.simulationKind='official';room.exhibitionNumber=0;room.simulationRevealCount=0;room.draftHistory=[];room.historySaveStatus=null;room.historySaveMessage=null;room.officialCompetitionId=null;room.simulationStarting=false;
+    room.teamAssessments=null;room.simulation=null;room.officialSimulation=null;room.simulationKind='official';room.exhibitionNumber=0;room.simulationRevealCount=0;room.draftHistory=[];room.historySaveStatus=null;room.historySaveMessage=null;room.officialCompetitionId=null;room.simulationStarting=false;room.saveToHistory=true;
     room.nominationAvailableIds=new Set();room.nominationOrder=[];room.nominationCursor=-1;room.nominationNominatorId=null;room.nominationTimeLeft=null;room.nominationFinalPickManagerId=null;
     for(const m of room.managers.values()){resetManagerForDraft(m);m.ready=false;if(room.mode!=='hard')m.formation=null;}
     cb?.({ok:true});emitState(room);
