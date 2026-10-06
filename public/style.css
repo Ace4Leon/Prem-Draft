@@ -426,3 +426,36 @@ body[data-theme="immersive"] .nomination-heading{color:#91aa9e;border-color:rgba
 body[data-theme="immersive"] .nomination-player{border-color:rgba(142,211,177,.10)}
 body[data-theme="immersive"] .blind-auction .blind-note{background:rgba(44,118,90,.22);color:#c8fbe0}
 body[data-theme="immersive"] .exhibition-banner{background:rgba(35,86,125,.28);border-color:rgba(125,190,255,.25);color:#d8edff}
+
+/* v7 permanent manager profiles and all-time records */
+.profile-strip{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px;border:1px solid #e5e7eb;border-radius:14px;background:#f8fafc}
+.profile-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+.small-button{min-height:36px;padding:8px 10px;font-size:12px}
+.records-header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.records-header h1{margin:3px 0 0}
+.record-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-bottom:14px}
+.history-table{width:100%;border-collapse:collapse;min-width:760px;font-size:13px}
+.history-table th,.history-table td{padding:9px 7px;border-bottom:1px solid #e5e7eb;text-align:center;white-space:nowrap}
+.history-table th:nth-child(2),.history-table td:nth-child(2){text-align:left}
+.history-table thead th{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em}
+.records-filter-panel{margin-top:10px;padding:12px;border:1px solid #e5e7eb;border-radius:14px;background:#f8fafc}
+.records-filter-panel[hidden]{display:none}
+.filter-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:12px}
+.filter-columns>div{display:grid;gap:7px;align-content:start}
+.filter-check{display:flex;align-items:center;gap:8px;font-size:13px;min-height:30px}
+.filter-check input{width:18px;height:18px;flex:0 0 auto}
+.records-match-count{margin:12px 0 8px}
+.history-saved{border-color:#bbf7d0;background:#f0fdf4}
+.history-saving{border-color:#bfdbfe;background:#eff6ff}
+.history-warning{border-color:#fed7aa;background:#fff7ed}
+@media(max-width:560px){
+  .profile-strip,.records-header{align-items:flex-start;flex-direction:column}
+  .profile-actions{width:100%;justify-content:stretch}
+  .profile-actions button{flex:1}
+  .filter-columns{grid-template-columns:1fr}
+}
+body[data-theme="immersive"] .profile-strip,
+body[data-theme="immersive"] .records-filter-panel{background:rgba(7,24,18,.62);border-color:rgba(142,211,177,.18)}
+body[data-theme="immersive"] .history-saved{background:rgba(12,62,36,.72);border-color:rgba(91,255,163,.28)}
+body[data-theme="immersive"] .history-saving{background:rgba(18,45,68,.72);border-color:rgba(110,180,255,.25)}
+body[data-theme="immersive"] .history-warning{background:rgba(75,43,12,.72);border-color:rgba(255,190,94,.28)}
