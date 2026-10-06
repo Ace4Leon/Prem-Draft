@@ -62,6 +62,11 @@ async function initHistoryDb(){
         excluded BOOLEAN NOT NULL DEFAULT FALSE,
         excluded_at TIMESTAMPTZ
       )`);
+      await historyPool.query(`CREATE TABLE IF NOT EXISTS prem_draft_profile_aliases (
+        alias_code TEXT PRIMARY KEY,
+        profile_id TEXT NOT NULL REFERENCES prem_draft_profiles(profile_id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`);
       await historyPool.query('ALTER TABLE prem_draft_competitions ADD COLUMN IF NOT EXISTS excluded BOOLEAN NOT NULL DEFAULT FALSE');
       await historyPool.query('ALTER TABLE prem_draft_competitions ADD COLUMN IF NOT EXISTS excluded_at TIMESTAMPTZ');
       await historyPool.query('CREATE INDEX IF NOT EXISTS prem_draft_competitions_rivalry_idx ON prem_draft_competitions (rivalry_key)');
@@ -87,7 +92,11 @@ function profilePublic(row){
 async function profileByCode(code){
   if(!await initHistoryDb())return null;
   const c=cleanRecoveryCode(code);if(!c)return null;
-  const {rows}=await historyPool.query('SELECT profile_id,recovery_code,default_name FROM prem_draft_profiles WHERE recovery_code=$1',[c]);
+  let {rows}=await historyPool.query('SELECT profile_id,recovery_code,default_name FROM prem_draft_profiles WHERE recovery_code=$1',[c]);
+  if(rows[0])return rows[0];
+  ({rows}=await historyPool.query(`SELECT p.profile_id,p.recovery_code,p.default_name
+    FROM prem_draft_profile_aliases a JOIN prem_draft_profiles p ON p.profile_id=a.profile_id
+    WHERE a.alias_code=$1`,[c]));
   return rows[0]||null;
 }
 async function createPermanentProfile(name){
@@ -96,6 +105,8 @@ async function createPermanentProfile(name){
   for(let tries=0;tries<60;tries++){
     const code=`${prefix}-${100+Math.floor(Math.random()*900)}`;
     try{
+      const aliasCheck=await historyPool.query('SELECT 1 FROM prem_draft_profile_aliases WHERE alias_code=$1 LIMIT 1',[code]);
+      if(aliasCheck.rowCount)continue;
       const {rows}=await historyPool.query('INSERT INTO prem_draft_profiles(profile_id,recovery_code,default_name) VALUES($1,$2,$3) RETURNING profile_id,recovery_code,default_name',[profileId,code,defaultName]);
       return rows[0];
     }catch(err){if(err.code!=='23505')throw err;}
@@ -104,8 +115,9 @@ async function createPermanentProfile(name){
 }
 async function renamePermanentProfile(code,name){
   if(!await initHistoryDb())return null;
-  const c=cleanRecoveryCode(code),defaultName=cleanName(name);
-  const {rows}=await historyPool.query('UPDATE prem_draft_profiles SET default_name=$2,updated_at=NOW() WHERE recovery_code=$1 RETURNING profile_id,recovery_code,default_name',[c,defaultName]);
+  const profile=await profileByCode(code);if(!profile)return null;
+  const defaultName=cleanName(name);
+  const {rows}=await historyPool.query('UPDATE prem_draft_profiles SET default_name=$2,updated_at=NOW() WHERE profile_id=$1 RETURNING profile_id,recovery_code,default_name',[profile.profile_id,defaultName]);
   return rows[0]||null;
 }
 
@@ -162,10 +174,16 @@ async function rivalryPayload(key,modes,packs){
   const all=dataset.competitions.filter(c=>c.rivalry_key===key);
   const filtered=all.filter(c=>allowedModes.has(c.mode)&&allowedPacks.has(c.pack));
   const profileIds=all[0]?(Array.isArray(all[0].participant_profile_ids)?all[0].participant_profile_ids:(all[0].data?.participants||[]).map(p=>p.profileId).sort()):[];
+  const drafts=filtered.map(c=>{
+    const d=c.data||{},participants=[...(d.participants||[])].sort((a,b)=>(a.rank||999)-(b.rank||999));
+    const names=participants.map(p=>({profileId:p.profileId,name:dataset.nameMap.get(p.profileId)||p.displayName||'Manager',rank:p.rank||null}));
+    const champion=names.find(p=>p.profileId===d.championProfileId)||names.find(p=>p.rank===1);
+    return {competitionId:c.competition_id,completedAt:c.completed_at,mode:c.mode,pack:c.pack,champion:champion?.name||'—',participants:names};
+  });
   return {
     key,profileIds,names:profileIds.map(id=>dataset.nameMap.get(id)||'Manager').sort((a,b)=>a.localeCompare(b)),
     table:aggregateHistoryCompetitions(filtered,dataset.nameMap),matchingDrafts:filtered.length,
-    matchingMatches:filtered.reduce((n,c)=>n+(c.data?.matches?.length||0),0)
+    matchingMatches:filtered.reduce((n,c)=>n+(c.data?.matches?.length||0),0),drafts
   };
 }
 function adminCodeMatches(input){
@@ -191,6 +209,101 @@ async function adminCompetitionList(){
   });
 }
 
+async function competitionDetailPayload(competitionId){
+  if(!await initHistoryDb())return null;
+  const {rows}=await historyPool.query(`SELECT competition_id,completed_at,mode,pack,data
+    FROM prem_draft_competitions WHERE competition_id=$1 AND excluded=FALSE LIMIT 1`,[String(competitionId||'')]);
+  if(!rows[0])return null;
+  const r=rows[0],d=JSON.parse(JSON.stringify(r.data||{}));
+  const profileIds=[...new Set((d.participants||[]).map(p=>p.profileId).filter(Boolean))];
+  let nameMap=new Map();
+  if(profileIds.length){
+    const names=await historyPool.query('SELECT profile_id,default_name FROM prem_draft_profiles WHERE profile_id=ANY($1::text[])',[profileIds]);
+    nameMap=new Map(names.rows.map(x=>[x.profile_id,x.default_name]));
+  }
+  const managerNames=new Map();
+  for(const p of d.participants||[]){
+    const current=nameMap.get(p.profileId)||p.displayName||'Manager';p.displayName=current;if(p.managerId)managerNames.set(p.managerId,current);
+  }
+  for(const row of d.finalTable||[])row.name=nameMap.get(row.profileId)||managerNames.get(row.id)||row.name;
+  for(const st of d.playerStats||[])st.managerName=nameMap.get(st.profileId)||managerNames.get(st.managerId)||st.managerName;
+  for(const m of [...(d.matches||[]),...(d.playoffs||[])]){
+    m.homeName=nameMap.get(m.homeProfileId)||m.homeName;m.awayName=nameMap.get(m.awayProfileId)||m.awayName;
+  }
+  for(const p of d.teamOfSeason?.players||[])p.managerName=managerNames.get(p.managerId)||p.managerName;
+  for(const h of d.draftHistory||[])h.winnerName=managerNames.get(h.winnerId)||h.winnerName;
+  return {competitionId:r.competition_id,completedAt:r.completed_at,mode:r.mode,pack:r.pack,data:d};
+}
+async function adminProfileList(){
+  if(!await initHistoryDb())return null;
+  const [profilesRes,aliasesRes,compsRes]=await Promise.all([
+    historyPool.query('SELECT profile_id,recovery_code,default_name,created_at,updated_at FROM prem_draft_profiles ORDER BY LOWER(default_name),created_at'),
+    historyPool.query('SELECT alias_code,profile_id FROM prem_draft_profile_aliases ORDER BY alias_code'),
+    historyPool.query('SELECT completed_at,participant_profile_ids FROM prem_draft_competitions')
+  ]);
+  const aliases=new Map();
+  for(const a of aliasesRes.rows){if(!aliases.has(a.profile_id))aliases.set(a.profile_id,[]);aliases.get(a.profile_id).push(a.alias_code);}
+  const usage=new Map();
+  for(const c of compsRes.rows){
+    const ids=Array.isArray(c.participant_profile_ids)?c.participant_profile_ids:[];
+    for(const id of ids){
+      if(!usage.has(id))usage.set(id,{drafts:0,lastPlayed:null});
+      const u=usage.get(id);u.drafts++;if(!u.lastPlayed||new Date(c.completed_at)>new Date(u.lastPlayed))u.lastPlayed=c.completed_at;
+    }
+  }
+  return profilesRes.rows.map(r=>({
+    profileId:r.profile_id,recoveryCode:r.recovery_code,defaultName:r.default_name,
+    aliases:aliases.get(r.profile_id)||[],drafts:usage.get(r.profile_id)?.drafts||0,lastPlayed:usage.get(r.profile_id)?.lastPlayed||null
+  }));
+}
+function replaceProfileIdDeep(value,fromId,toId){
+  if(value===fromId)return toId;
+  if(Array.isArray(value))return value.map(v=>replaceProfileIdDeep(v,fromId,toId));
+  if(value&&typeof value==='object'){
+    const out={};for(const [k,v] of Object.entries(value))out[k]=replaceProfileIdDeep(v,fromId,toId);return out;
+  }
+  return value;
+}
+async function adminMergeProfiles(survivorId,duplicateId){
+  if(!await initHistoryDb())return {ok:false,error:'Permanent Records are not connected.'};
+  survivorId=String(survivorId||'');duplicateId=String(duplicateId||'');
+  if(!survivorId||!duplicateId||survivorId===duplicateId)return {ok:false,error:'Choose two different profiles.'};
+  const client=await historyPool.connect();
+  try{
+    await client.query('BEGIN');
+    const {rows:profiles}=await client.query('SELECT profile_id,recovery_code,default_name FROM prem_draft_profiles WHERE profile_id=ANY($1::text[]) FOR UPDATE',[[survivorId,duplicateId]]);
+    const survivor=profiles.find(p=>p.profile_id===survivorId),duplicate=profiles.find(p=>p.profile_id===duplicateId);
+    if(!survivor||!duplicate){await client.query('ROLLBACK');return {ok:false,error:'One of those profiles no longer exists.'};}
+    const {rows:allComps}=await client.query('SELECT competition_id,completed_at,participant_profile_ids,data FROM prem_draft_competitions FOR UPDATE');
+    const conflicts=allComps.filter(c=>{
+      const ids=Array.isArray(c.participant_profile_ids)?c.participant_profile_ids:[];
+      return ids.includes(survivorId)&&ids.includes(duplicateId);
+    });
+    if(conflicts.length){
+      await client.query('ROLLBACK');
+      return {ok:false,conflict:true,error:'These profiles appeared together in an official draft, so they cannot be merged safely.',conflicts:conflicts.slice(0,10).map(c=>({competitionId:c.competition_id,completedAt:c.completed_at}))};
+    }
+    const affected=allComps.filter(c=>(Array.isArray(c.participant_profile_ids)?c.participant_profile_ids:[]).includes(duplicateId));
+    for(const c of affected){
+      const ids=(Array.isArray(c.participant_profile_ids)?c.participant_profile_ids:[]).map(id=>id===duplicateId?survivorId:id);
+      const unique=[...new Set(ids)].sort();
+      const data=replaceProfileIdDeep(c.data||{},duplicateId,survivorId);
+      await client.query('UPDATE prem_draft_competitions SET participant_profile_ids=$2::jsonb,rivalry_key=$3,data=$4::jsonb WHERE competition_id=$1',
+        [c.competition_id,JSON.stringify(unique),unique.join('|'),JSON.stringify(data)]);
+    }
+    await client.query('UPDATE prem_draft_profile_aliases SET profile_id=$1 WHERE profile_id=$2',[survivorId,duplicateId]);
+    await client.query('DELETE FROM prem_draft_profiles WHERE profile_id=$1',[duplicateId]);
+    await client.query(`INSERT INTO prem_draft_profile_aliases(alias_code,profile_id) VALUES($1,$2)
+      ON CONFLICT(alias_code) DO UPDATE SET profile_id=EXCLUDED.profile_id`,[duplicate.recovery_code,survivorId]);
+    await client.query('COMMIT');
+    return {ok:true,survivor:profilePublic(survivor),mergedCode:duplicate.recovery_code,affectedDrafts:affected.length};
+  }catch(err){
+    try{await client.query('ROLLBACK');}catch{}
+    console.error('Profile merge failed:',err.message);
+    return {ok:false,error:'Could not merge those profiles.'};
+  }finally{client.release();}
+}
+
 function historyCompetitionPayload(room,simulation){
   const managers=[...room.managers.values()];
   const managerMap=new Map(managers.map(m=>[m.id,m]));
@@ -208,7 +321,13 @@ function historyCompetitionPayload(room,simulation){
     homeShotsOnTarget:m.homeShotsOnTarget,awayShotsOnTarget:m.awayShotsOnTarget,homeSaves:m.homeSaves,awaySaves:m.awaySaves,playerOfMatch:m.playerOfMatch
   }));
   return {
-    version:'v7a',participants,championProfileId:toProfile(simulation.championId),matches,
+    version:'v8',participants,championProfileId:toProfile(simulation.championId),matches,
+    playoffs:(simulation.playoffs||[]).map(m=>({
+      homeProfileId:toProfile(m.homeId),awayProfileId:toProfile(m.awayId),homeName:m.homeName,awayName:m.awayName,
+      homeGoals:m.homeGoals,awayGoals:m.awayGoals,homeScorers:m.homeScorers,awayScorers:m.awayScorers,
+      homeShotsOnTarget:m.homeShotsOnTarget,awayShotsOnTarget:m.awayShotsOnTarget,homeSaves:m.homeSaves,awaySaves:m.awaySaves,
+      playerOfMatch:m.playerOfMatch,wentExtraTime:!!m.wentExtraTime,penalties:m.penalties||null
+    })),
     finalTable:(simulation.table||[]).map((r,i)=>({...r,profileId:toProfile(r.id),rank:i+1})),
     playerStats:(simulation.playerStats||[]).map(p=>({...p,profileId:toProfile(p.managerId)})),
     teamOfSeason:simulation.teamOfSeason||null,
@@ -1094,6 +1213,24 @@ io.on('connection', socket=>{
       cb?.({ok:true});
     }catch(err){console.error('Admin records update error:',err.message);cb?.({ok:false,error:'Could not update this saved game.'});}
   });
+  socket.on('recordsAdminProfiles', async (_,cb)=>{
+    if(!socket.data.recordsAdmin)return cb?.({ok:false,error:'Admin access required.'});
+    try{const profiles=await adminProfileList();if(!profiles)return cb?.({ok:false,error:'Permanent Records are not connected.'});cb?.({ok:true,profiles});}
+    catch(err){console.error('Admin profile list error:',err.message);cb?.({ok:false,error:'Could not load profiles.'});}
+  });
+  socket.on('recordsAdminRenameProfile', async ({profileId,name},cb)=>{
+    if(!socket.data.recordsAdmin)return cb?.({ok:false,error:'Admin access required.'});
+    if(!await initHistoryDb())return cb?.({ok:false,error:'Permanent Records are not connected.'});
+    try{
+      const {rows}=await historyPool.query('UPDATE prem_draft_profiles SET default_name=$2,updated_at=NOW() WHERE profile_id=$1 RETURNING profile_id,recovery_code,default_name',[String(profileId||''),cleanName(name)]);
+      if(!rows[0])return cb?.({ok:false,error:'Profile not found.'});
+      cb?.({ok:true,profile:profilePublic(rows[0])});
+    }catch(err){console.error('Admin profile rename error:',err.message);cb?.({ok:false,error:'Could not rename this profile.'});}
+  });
+  socket.on('recordsAdminMergeProfiles', async ({survivorId,duplicateId},cb)=>{
+    if(!socket.data.recordsAdmin)return cb?.({ok:false,error:'Admin access required.'});
+    const result=await adminMergeProfiles(survivorId,duplicateId);cb?.(result);
+  });
   socket.on('profileCreate', async ({name},cb)=>{
     try{const row=await createPermanentProfile(name);if(!row)return cb?.({ok:false,error:'Permanent Records are not configured yet.'});cb?.({ok:true,profile:profilePublic(row)});}catch(err){cb?.({ok:false,error:'Could not create the manager profile.'});}
   });
@@ -1108,6 +1245,13 @@ io.on('connection', socket=>{
   });
   socket.on('recordsGroup', async ({key,modes,packs},cb)=>{
     try{const payload=await rivalryPayload(String(key||''),modes,packs);if(!payload)return cb?.({ok:false,error:'Permanent Records are not configured yet.'});cb?.({ok:true,...payload});}catch(err){console.error('Rivalry records error:',err.message);cb?.({ok:false,error:'Could not load this rivalry group.'});}
+  });
+  socket.on('recordsCompetition', async ({competitionId},cb)=>{
+    try{
+      const competition=await competitionDetailPayload(competitionId);
+      if(!competition)return cb?.({ok:false,error:'Saved draft not found or excluded.'});
+      cb?.({ok:true,competition,modeLabels:MODE_LABELS,packLabels:{...PACKS,chaos:'Chaos Mode'}});
+    }catch(err){console.error('Historical draft load error:',err.message);cb?.({ok:false,error:'Could not load this saved draft.'});}
   });
   socket.on('createRoom', async ({name,profileCode},cb)=>{
     const code=roomCode();
