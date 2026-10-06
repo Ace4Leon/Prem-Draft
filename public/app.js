@@ -9,6 +9,71 @@ let resultsTab='season';
 let statsMetric='goals';
 let nominationSearch='';
 let nominationPosition='ALL';
+let blindEndgameAnnounced=false;
+let viewingRecords=false;
+let recordsSection='rivalry';
+let recordsSummaryData=null;
+let recordsGroupData=null;
+let selectedRivalryKey='';
+let selectedRecordModes=new Set();
+let selectedRecordPacks=new Set();
+
+const SESSION_KEY='premDraftReconnectSessionV1';
+
+const PROFILE_KEY='premDraftPermanentProfileV1';
+function readSavedProfile(){
+  try{return JSON.parse(localStorage.getItem(PROFILE_KEY)||'null')}catch{return null}
+}
+function saveProfile(profile){
+  if(!profile)return;
+  try{localStorage.setItem(PROFILE_KEY,JSON.stringify(profile))}catch{}
+}
+function savedProfile(){return readSavedProfile()}
+function recoverProfileFlow(after){
+  const code=prompt('Enter your Prem Draft profile code (for example ZAK-482):','');
+  if(code===null)return;
+  socket.emit('profileRecover',{code},r=>{
+    if(!r?.ok)return showToast(r?.error||'Profile not found');
+    saveProfile(r.profile);showToast(`Profile recovered: ${r.profile.defaultName}`);
+    if(after)after(r.profile);else if(!state)home();
+  });
+}
+function editDefaultProfileName(){
+  const p=savedProfile();if(!p?.recoveryCode)return;
+  const name=prompt('Default manager name:',p.defaultName||'Manager');if(name===null)return;
+  socket.emit('profileRename',{code:p.recoveryCode,name},r=>{
+    if(!r?.ok)return showToast(r?.error||'Could not update profile');
+    saveProfile(r.profile);showToast('Default manager name updated');if(!state)home();
+  });
+}
+function ensurePermanentProfile(name,cb){
+  const p=savedProfile();if(p?.recoveryCode)return cb(p);
+  socket.emit('profileCreate',{name},r=>{
+    if(r?.ok&&r.profile){saveProfile(r.profile);showToast(`Profile created · code ${r.profile.recoveryCode}`);return cb(r.profile);}
+    // Permanent history must never block the core game if the database is temporarily unavailable.
+    showToast('Permanent Records unavailable · continuing as guest');cb(null);
+  });
+}
+let resumeInFlight=false;
+function readSavedSession(){
+  try{return JSON.parse(localStorage.getItem(SESSION_KEY)||'null')}catch{return null}
+}
+function saveSession(room,reconnectToken,managerId){
+  try{localStorage.setItem(SESSION_KEY,JSON.stringify({room,reconnectToken,managerId}))}catch{}
+}
+function clearSavedSession(){try{localStorage.removeItem(SESSION_KEY)}catch{}}
+function attemptResume(){
+  if(!socket.connected||resumeInFlight)return;
+  const saved=readSavedSession();if(!saved?.room||!saved?.reconnectToken)return;
+  const requested=q('room');if(requested&&requested.toUpperCase()!==String(saved.room).toUpperCase())return;
+  resumeInFlight=true;
+  socket.emit('resumeSession',{code:saved.room,token:saved.reconnectToken},r=>{
+    resumeInFlight=false;
+    if(!r?.ok){if(!state){clearSavedSession();home()}return;}
+    meId=r.managerId||r.state?.viewerId||saved.managerId;state=r.state;
+    history.replaceState({},'',`?room=${state.code}`);render();
+  });
+}
 
 const VISUAL_THEME_KEY='premDraftVisualTheme';
 let visualTheme='classic';
@@ -120,22 +185,92 @@ function freeformDraftSquadHtml(m){
 }
 
 function home(){
+  viewingRecords=false;
   const code=q('room')||'';
-  shell(`<div class="card"><h1>Football Auction Draft</h1><p class="muted">Build your XI with a £100m budget.</p><label>Manager name</label><input id="name" maxlength="20" placeholder="Your name"><div class="spacer10"></div>${code?`<div class="row mobile-stack"><input id="code" value="${esc(code)}"><button class="primary" id="join">Join room</button></div>`:`<button class="primary big" id="create">Create game</button><div class="spacer10"></div><div class="row mobile-stack"><input id="code" placeholder="Room code"><button class="secondary" id="join">Join</button></div>`}</div>`);
-  const create=document.querySelector('#create');
-  if(create) create.onclick=()=>{
+  const profile=savedProfile();
+  const profileCard=profile?.recoveryCode
+    ? `<div class="profile-strip"><div><div class="muted small">PERMANENT MANAGER</div><b>${esc(profile.defaultName)}</b><div class="muted small">Recovery code: <strong>${esc(profile.recoveryCode)}</strong></div></div><div class="profile-actions"><button class="secondary small-button" id="editProfile">Edit default</button><button class="secondary small-button" id="recoverProfile">Switch / recover</button></div></div>`
+    : `<div class="profile-strip"><div><b>Permanent records</b><div class="muted small">Your first room will create a short recovery code so your all-time stats follow you across rooms and days.</div></div><button class="secondary small-button" id="recoverProfile">I have a code</button></div>`;
+  shell(`<div class="card"><h1>Football Auction Draft</h1><p class="muted">Build your XI with a £100m budget.</p>${profileCard}<div class="spacer14"></div><label>Name for this room</label><input id="name" maxlength="20" value="${esc(profile?.defaultName||'')}" placeholder="Your name"><p class="muted small">Changing this only changes how you appear in this room; it does not create a new all-time identity.</p><div class="spacer10"></div>${code?`<div class="row mobile-stack"><input id="code" value="${esc(code)}"><button class="primary" id="join">Join room</button></div>`:`<button class="primary big" id="create">Create game</button><div class="spacer10"></div><div class="row mobile-stack"><input id="code" placeholder="Room code"><button class="secondary" id="join">Join</button></div>`}<div class="spacer14"></div><button class="secondary big" id="records">🏆 All-Time Records</button></div>`);
+  const recover=document.querySelector('#recoverProfile');if(recover)recover.onclick=()=>recoverProfileFlow();
+  const edit=document.querySelector('#editProfile');if(edit)edit.onclick=editDefaultProfileName;
+  document.querySelector('#records').onclick=openRecords;
+  const launch=(kind)=>{
     const name=document.querySelector('#name').value;
-    socket.emit('createRoom',{name},r=>{
-      if(!r.ok)return showToast(r.error);
-      meId=socket.id; history.replaceState({},'',`?room=${r.code}`); state=r.state; render();
+    ensurePermanentProfile(name||'Manager',profileNow=>{
+      const payload={name,profileCode:profileNow?.recoveryCode||null};
+      if(kind==='create')socket.emit('createRoom',payload,r=>{
+        if(!r?.ok)return showToast(r?.error||'Could not create room');
+        meId=r.managerId||r.state?.viewerId;saveSession(r.code,r.reconnectToken,meId);history.replaceState({},'',`?room=${r.code}`);state=r.state;render();
+      });
+      else{
+        payload.code=document.querySelector('#code').value;
+        socket.emit('joinRoom',payload,r=>{
+          if(!r?.ok)return showToast(r?.error||'Could not join room');
+          meId=r.managerId||r.state?.viewerId;saveSession(r.state.code,r.reconnectToken,meId);state=r.state;history.replaceState({},'',`?room=${state.code}`);render();
+        });
+      }
     });
   };
-  document.querySelector('#join').onclick=()=>{
-    const name=document.querySelector('#name').value,code=document.querySelector('#code').value;
-    socket.emit('joinRoom',{code,name},r=>{
-      if(!r.ok)return showToast(r.error);
-      meId=socket.id; state=r.state; history.replaceState({},'',`?room=${state.code}`); render();
-    });
+  const create=document.querySelector('#create');if(create)create.onclick=()=>launch('create');
+  document.querySelector('#join').onclick=()=>launch('join');
+}
+
+function historyTableHtml(rows){
+  return `<div class="table-wrap"><table class="history-table"><thead><tr><th>#</th><th>Manager</th><th>Drafts</th><th>Titles</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(rows||[]).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.name)}</b></td><td>${r.drafts}</td><td><b>${r.titles}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td><b>${r.pts}</b></td></tr>`).join('')}</tbody></table></div>`;
+}
+function openRecords(){
+  viewingRecords=true;recordsSummaryData=null;recordsGroupData=null;
+  shell('<div class="card"><h1>All-Time Records</h1><p class="muted">Loading permanent history…</p></div>');
+  socket.emit('recordsSummary',{},r=>{
+    if(!r?.ok){shell(`<div class="card"><h1>All-Time Records</h1><p class="muted">${esc(r?.error||'Could not load records.')}</p><button class="secondary big" id="recordsBack">Back</button></div>`);document.querySelector('#recordsBack').onclick=closeRecords;return;}
+    recordsSummaryData=r;
+    const profile=savedProfile();
+    const preferred=(r.groups||[]).find(g=>profile?.profileId&&g.profileIds?.includes(profile.profileId))||(r.groups||[])[0];
+    selectedRivalryKey=preferred?.key||'';
+    selectedRecordModes=new Set(Object.keys(r.modeLabels||{}));
+    selectedRecordPacks=new Set(Object.keys(r.packLabels||{}));
+    if(selectedRivalryKey)loadRivalryGroup();else recordsScreen();
+  });
+}
+function closeRecords(){viewingRecords=false;recordsSummaryData=null;recordsGroupData=null;if(state)render();else home();}
+function loadRivalryGroup(){
+  if(!selectedRivalryKey){recordsGroupData=null;return recordsScreen();}
+  recordsGroupData=null;recordsScreen();
+  socket.emit('recordsGroup',{key:selectedRivalryKey,modes:[...selectedRecordModes],packs:[...selectedRecordPacks]},r=>{
+    if(!r?.ok){showToast(r?.error||'Could not load rivalry group');return;}
+    recordsGroupData=r;if(viewingRecords)recordsScreen();
+  });
+}
+function recordsFiltersHtml(){
+  const modes=recordsSummaryData?.modeLabels||{},packs=recordsSummaryData?.packLabels||{};
+  return `<div class="records-filter-panel" id="recordsFilterPanel" hidden><div class="filter-columns"><div><b>Draft modes</b>${Object.entries(modes).map(([k,v])=>`<label class="filter-check"><input type="checkbox" data-filter-mode="${esc(k)}" ${selectedRecordModes.has(k)?'checked':''}> ${esc(v)}</label>`).join('')}</div><div><b>Player packs</b>${Object.entries(packs).map(([k,v])=>`<label class="filter-check"><input type="checkbox" data-filter-pack="${esc(k)}" ${selectedRecordPacks.has(k)?'checked':''}> ${esc(v)}</label>`).join('')}</div></div><div class="row"><button class="secondary grow" id="recordsAllFilters">Select all</button><button class="primary grow" id="recordsApplyFilters">Apply</button></div></div>`;
+}
+function recordsScreen(){
+  if(!viewingRecords)return;
+  if(!recordsSummaryData)return;
+  const groups=recordsSummaryData.groups||[];
+  const nav=`<div class="record-tabs"><button class="result-tab ${recordsSection==='rivalry'?'active':''}" data-record-section="rivalry">Rivalry Groups</button><button class="result-tab ${recordsSection==='all'?'active':''}" data-record-section="all">All Managers</button></div>`;
+  let body='';
+  if(recordsSection==='all'){
+    body=`<div class="card"><h2>All-Time leaderboard</h2><p class="muted">Every completed official season stored across every room and rivalry group.</p>${historyTableHtml(recordsSummaryData.allTime||[])}</div>`;
+  }else if(!groups.length){
+    body='<div class="card"><h2>Rivalry Groups</h2><p class="muted">No completed official seasons have been saved yet.</p></div>';
+  }else{
+    const options=groups.map(g=>`<option value="${esc(g.key)}" ${g.key===selectedRivalryKey?'selected':''}>${esc(g.names.join(' / '))} · ${g.drafts} draft${g.drafts===1?'':'s'}</option>`).join('');
+    const meta=recordsGroupData?`${recordsGroupData.matchingDrafts} matching draft${recordsGroupData.matchingDrafts===1?'':'s'} · ${recordsGroupData.matchingMatches} matches`:'Loading filtered table…';
+    body=`<div class="card"><div class="budget"><div><h2>Rivalry Group</h2><p class="muted no-margin">Only drafts containing exactly this combination of managers count.</p></div></div><div class="spacer10"></div><select id="rivalryGroupSelect">${options}</select><div class="spacer10"></div><button class="secondary" id="recordsFilterButton">Filters ⚙</button>${recordsFiltersHtml()}<p class="muted small records-match-count">${esc(meta)}</p>${recordsGroupData?historyTableHtml(recordsGroupData.table||[]):'<div class="muted">Loading…</div>'}</div>`;
+  }
+  shell(`<div class="card records-header"><div><div class="muted small">PERMANENT HISTORY</div><h1>🏆 All-Time Records</h1></div><button class="secondary" id="recordsBack">Back</button></div>${nav}${body}`);
+  document.querySelector('#recordsBack').onclick=closeRecords;
+  document.querySelectorAll('[data-record-section]').forEach(b=>b.onclick=()=>{recordsSection=b.dataset.recordSection;recordsScreen();});
+  const sel=document.querySelector('#rivalryGroupSelect');if(sel)sel.onchange=e=>{selectedRivalryKey=e.target.value;loadRivalryGroup();};
+  const filterBtn=document.querySelector('#recordsFilterButton'),panel=document.querySelector('#recordsFilterPanel');if(filterBtn&&panel)filterBtn.onclick=()=>{panel.hidden=!panel.hidden};
+  const all=document.querySelector('#recordsAllFilters');if(all)all.onclick=()=>{document.querySelectorAll('[data-filter-mode],[data-filter-pack]').forEach(x=>{x.checked=true});};
+  const apply=document.querySelector('#recordsApplyFilters');if(apply)apply.onclick=()=>{
+    selectedRecordModes=new Set([...document.querySelectorAll('[data-filter-mode]:checked')].map(x=>x.dataset.filterMode));
+    selectedRecordPacks=new Set([...document.querySelectorAll('[data-filter-pack]:checked')].map(x=>x.dataset.filterPack));
+    loadRivalryGroup();
   };
 }
 
@@ -179,15 +314,23 @@ const NOMINATION_POSITION_ORDER=['GK','LB','CB','RB','DM','CM','AM','LM','RM','L
 function nominationPlayersHtml(selectMode=null){
   const players=state.nomination?.availablePlayers||[];
   const term=nominationSearch.trim().toLowerCase();
-  const filtered=players.filter(p=>(nominationPosition==='ALL'||p.positions?.[0]===nominationPosition)&&(!term||p.name.toLowerCase().includes(term)));
-  if(!filtered.length)return '<div class="muted">No available players match that search.</div>';
+  const searched=players.filter(p=>!term||p.name.toLowerCase().includes(term));
+  const row=p=>`<div class="nomination-player"><div><b>${esc(p.name)}</b><div class="muted small">${esc(p.positions.join(' / '))}</div></div>${selectMode?`<button class="${selectMode==='final'?'primary':'secondary'} nominate-player" data-player="${p.id}" data-action="${selectMode}">${selectMode==='final'?'Pick £1m':'Nominate'}</button>`:''}</div>`;
+  if(nominationPosition!=='ALL'){
+    const matching=searched.filter(p=>p.positions?.includes(nominationPosition));
+    if(!matching.length)return '<div class="muted">No available players match that search.</div>';
+    const primary=matching.filter(p=>p.positions?.[0]===nominationPosition).sort((a,b)=>a.name.localeCompare(b.name));
+    const alternate=matching.filter(p=>p.positions?.[0]!==nominationPosition).sort((a,b)=>a.name.localeCompare(b.name));
+    return `${primary.length?`<div class="nomination-group"><div class="nomination-heading">${nominationPosition} · PRIMARY</div>${primary.map(row).join('')}</div>`:''}${alternate.length?`<div class="nomination-group"><div class="nomination-heading">${nominationPosition} · ALTERNATE</div>${alternate.map(row).join('')}</div>`:''}`;
+  }
+  if(!searched.length)return '<div class="muted">No available players match that search.</div>';
   return NOMINATION_POSITION_ORDER.map(pos=>{
-    const group=filtered.filter(p=>p.positions?.[0]===pos);if(!group.length)return '';
-    return `<div class="nomination-group"><div class="nomination-heading">${pos}</div>${group.map(p=>`<div class="nomination-player"><div><b>${esc(p.name)}</b><div class="muted small">${esc(p.positions.join(' / '))}</div></div>${selectMode?`<button class="${selectMode==='final'?'primary':'secondary'} nominate-player" data-player="${p.id}" data-action="${selectMode}">${selectMode==='final'?'Pick £1m':'Nominate'}</button>`:''}</div>`).join('')}</div>`;
+    const group=searched.filter(p=>p.positions?.[0]===pos);if(!group.length)return '';
+    return `<div class="nomination-group"><div class="nomination-heading">${pos}</div>${group.map(row).join('')}</div>`;
   }).join('');
 }
 function nominationPoolCard(selectMode=null){
-  return `<div class="card"><div class="budget"><div><h2>${selectMode==='final'?'Final picks':'Nomination pool'}</h2><p class="muted no-margin">Sorted only by primary position, then alphabetically. No quality or rating order is used.</p></div><b>${state.nomination?.availablePlayers?.length||0} available</b></div><div class="nomination-filters"><input id="nomSearch" value="${esc(nominationSearch)}" placeholder="Search players"><select id="nomPos"><option value="ALL">All positions</option>${NOMINATION_POSITION_ORDER.map(pos=>`<option value="${pos}" ${nominationPosition===pos?'selected':''}>${pos}</option>`).join('')}</select></div><div id="nominationList">${nominationPlayersHtml(selectMode)}</div></div>`;
+  return `<div class="card"><div class="budget"><div><h2>${selectMode==='final'?'Final picks':'Nomination pool'}</h2><p class="muted no-margin">Main list: primary position then alphabetical. Position filters also include alternate positions, with primary matches first. No quality or rating order is used.</p></div><b>${state.nomination?.availablePlayers?.length||0} available</b></div><div class="nomination-filters"><input id="nomSearch" value="${esc(nominationSearch)}" placeholder="Search players"><select id="nomPos"><option value="ALL">All positions</option>${NOMINATION_POSITION_ORDER.map(pos=>`<option value="${pos}" ${nominationPosition===pos?'selected':''}>${pos}</option>`).join('')}</select></div><div id="nominationList">${nominationPlayersHtml(selectMode)}</div></div>`;
 }
 function wireNominationPool(selectMode=null){
   const search=document.querySelector('#nomSearch'),pos=document.querySelector('#nomPos'),list=document.querySelector('#nominationList');
@@ -229,7 +372,7 @@ function blindDraftPanel(m,c){
     controls=`<div class="blind-controls"><label>${tieStage?'Tiebreak bid':'Your sealed bid'}</label><div class="blind-bid-row"><span>£</span><input id="blindBidInput" type="number" min="${min}" max="${max}" step="1" value="${bid}" ${locked||state.paused?'disabled':''}><span>m</span></div><div class="row"><button class="secondary grow blind-add" data-add="1" ${locked||state.paused?'disabled':''}>+£1m</button><button class="secondary grow blind-add" data-add="2" ${locked||state.paused?'disabled':''}>+£2m</button><button class="secondary grow blind-add" data-add="5" ${locked||state.paused?'disabled':''}>+£5m</button></div>${!tieStage?`<div class="spacer9"></div><button class="secondary big" id="blindNoBid" ${locked||state.paused?'disabled':''}>No bid (£0)</button>`:''}<div class="blind-decision">${bid>0?`Current decision: <b>£${bid}m bid</b>`:'Current decision: <b>No bid</b>'}${locked?' · LOCKED':''}</div><button class="${locked?'secondary':'primary'} big" id="blindLock" ${state.paused?'disabled':''}>${locked?'Unlock Decision':'Lock Decision'}</button></div>`;
   }
   const counter=tieStage?'TIEBREAK · 10 SECOND ROUND':`PLAYER ${state.shownCount||1} OF ${state.poolSize||'—'}`;
-  return `<div class="card budget"><div><div class="muted">YOUR BUDGET</div><strong>£${m.budget}m</strong></div><div class="right"><div class="muted">YOUR SQUAD</div><strong>${m.squad.length}/11</strong></div></div><div class="card auction blind-auction"><div class="player-counter">${counter}</div><div id="timer" class="timer ${c.timeLeft<=5?'warn':''}">${c.timeLeft}</div><div class="player">${esc(c.player.name)}</div><div class="positions">${esc(c.player.positions.join(' / '))}</div>${tieStage?'<div class="required">Only managers tied for the highest first-round bid can bid in this round. The original tied bid is your minimum.</div>':'<div class="blind-note">Nobody can see your bid, lock status, squad or remaining budget.</div>'}${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}<div class="spacer14"></div>${controls}</div>`;
+  return `<div class="card budget"><div><div class="muted">YOUR BUDGET</div><strong>£${m.budget}m</strong></div><div class="right"><div class="muted">YOUR SQUAD</div><strong>${m.squad.length}/11</strong></div></div><div class="card auction blind-auction"><div class="player-counter">${counter}</div><div id="timer" class="timer ${c.timeLeft<=5?'warn':''}">${c.timeLeft}</div><div class="player">${esc(c.player.name)}</div><div class="positions">${esc(c.player.positions.join(' / '))}</div>${c.blindEndgame?'<div class="required blind-endgame"><b>ENDGAME</b><div>Remaining players are compulsory. If nobody bids, this player will be assigned for £1m to an eligible manager with the most open squad slots; exact ties are completely random.</div></div>':''}${tieStage?'<div class="required">Only managers tied for the highest first-round bid can bid in this round. The original tied bid is your minimum.</div>':'<div class="blind-note">Nobody can see your bid, lock status, squad or remaining budget.</div>'}${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}<div class="spacer14"></div>${controls}</div>`;
 }
 function wireBlindControls(){
   const c=state.current;if(!c||state.mode!=='blind')return;
@@ -403,6 +546,11 @@ function sessionHtml(){
   const h2h=(ss.headToHead||[]).filter(x=>x.aWins+x.bWins+x.draws>0).map(x=>`<div class="h2h-card"><div><b>${esc(x.managerAName)}</b><strong>${x.aWins}</strong></div><span>${x.draws} draws<br><small>${x.aGoals}–${x.bGoals} goals</small></span><div class="right"><b>${esc(x.managerBName)}</b><strong>${x.bWins}</strong></div></div>`).join('');
   return `<div class="card"><h2>Session rivalry</h2><p class="muted">${ss.drafts||0} completed draft${ss.drafts===1?'':'s'} in this room. League matches accumulate until the room ends.</p>${table}</div>${h2h?`<div class="card"><h2>Head-to-head</h2><div class="h2h-list">${h2h}</div></div>`:''}`;
 }
+function permanentHistoryStatusHtml(){
+  if(!state?.historySaveStatus)return '';
+  const cls=state.historySaveStatus==='saved'?'history-saved':(state.historySaveStatus==='saving'?'history-saving':'history-warning');
+  return `<div class="card ${cls}"><b>${state.historySaveStatus==='saved'?'✓ Saved to All-Time Records':state.historySaveStatus==='saving'?'Saving to All-Time Records…':'Permanent history notice'}</b><div class="muted small">${esc(state.historySaveMessage||'')}</div></div>`;
+}
 function fullResults(){
   const host=state.hostId===meId,sim=state.simulation;
   const champion=state.managers.find(m=>m.id===sim.championId);
@@ -415,8 +563,9 @@ function fullResults(){
   else body=sessionHtml();
   const simNote=exhibition?`<div class="card exhibition-banner"><b>Exhibition re-simulation #${state.exhibitionNumber||1}</b><div>This result is just for fun and does not change titles, head-to-heads or session history.</div></div>`:'';
   const controls=host?`<div class="post-sim-controls"><button class="secondary big" id="resimulate">${exhibition?'Re-simulate again':'Re-simulate season'}</button>${exhibition?'<button class="secondary big" id="officialResult">View official result</button>':''}<button class="primary big" id="again">Play again</button></div>`:'<div class="card muted">Waiting for the host to choose what happens next.</div>';
-  shell(`${simNote}<div class="card champion"><div class="muted">${exhibition?'EXHIBITION WINNER':'SEASON CHAMPION'}</div><h1>🏆 ${esc(champion?.name||'Winner')}</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p></div>${resultNav()}${body}${controls}`);
+  shell(`${simNote}<div class="card champion"><div class="muted">${exhibition?'EXHIBITION WINNER':'SEASON CHAMPION'}</div><h1>🏆 ${esc(champion?.name||'Winner')}</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p></div>${!exhibition?permanentHistoryStatusHtml():''}${resultNav()}${body}<button class="secondary big" id="viewRecords">View All-Time Records</button><div class="spacer10"></div>${controls}`);
   wireResultTabs();wireStatSwitch();
+  const recordsButton=document.querySelector('#viewRecords');if(recordsButton)recordsButton.onclick=openRecords;
   if(host){
     document.querySelector('#again').onclick=()=>socket.emit('playAgain',{});
     document.querySelector('#resimulate').onclick=()=>socket.emit('resimulateSeason',{},r=>{if(r&&!r.ok)showToast(r.error)});
@@ -444,6 +593,7 @@ function finished(){
 }
 
 function render(){
+  if(viewingRecords)return recordsScreen();
   if(!state)return home();
   if(state.phase==='lobby')lobby();
   else if(state.phase==='draft')draft();
@@ -455,14 +605,17 @@ function render(){
 
 socket.on('state',s=>{
   const phaseChanged=state?.phase!==s.phase;
+  const endgameJustBegan=s.mode==='blind'&&s.phase==='draft'&&!!s.current?.blindEndgame&&!blindEndgameAnnounced;
   state=s;
-  if(!meId)meId=socket.id;
+  if(s.viewerId)meId=s.viewerId;
+  if(s.mode!=='blind'||s.phase!=='draft')blindEndgameAnnounced=false;
   if(phaseChanged){
     selectedLineupSlot=null;
     if(s.phase==='draft'){tab='draft';nominationSearch='';nominationPosition='ALL';}
     if(s.phase==='results'){resultsTab='season';statsMetric='goals';}
   }
   render();
+  if(endgameJustBegan){blindEndgameAnnounced=true;showToast('Endgame has begun · remaining players are compulsory');}
 });
 socket.on('tick',({timeLeft})=>{
   if(state?.current){
@@ -475,5 +628,6 @@ socket.on('nominationTick',({timeLeft})=>{
   if(state?.nomination){state.nomination.timeLeft=timeLeft;const t=document.querySelector('#nominationTimer');if(t){t.textContent=timeLeft;t.classList.toggle('warn',timeLeft<=5)}}
 });
 socket.on('auctionNotice',({message})=>{if(message)showToast(message)});
+socket.on('connect',attemptResume);
 applyVisualTheme();
 home();
