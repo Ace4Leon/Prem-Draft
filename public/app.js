@@ -17,6 +17,11 @@ let recordsGroupData=null;
 let selectedRivalryKey='';
 let selectedRecordModes=new Set();
 let selectedRecordPacks=new Set();
+let recordsConnectionStatus=null;
+let recordsAdminConfigured=false;
+let recordsAdminUnlocked=false;
+let recordsAdminMode=false;
+let recordsAdminData=null;
 
 const SESSION_KEY='premDraftReconnectSessionV1';
 
@@ -163,7 +168,8 @@ function wireCommissioner(){
 function shell(content){
   applyVisualTheme();
   const commissioner=(state?.hostId===meId&&['draft','team_build'].includes(state?.phase))?'<button class="theme-toggle commissioner-button" id="commissionerBtn" aria-label="Commissioner controls">⚙</button>':'';
-  app.innerHTML=`<div class="wrap"><div class="topbar"><div class="brand">⚽ Prem Draft</div><div class="top-actions">${commissioner}<button class="theme-toggle" id="themeToggle" aria-label="Visual theme: ${visualTheme}. Tap to switch.">${themeButtonLabel()}</button></div></div>${content}${commissionerMarkup()}</div>`;
+  const practice=(state&&state.phase!=='lobby'&&state.saveToHistory===false)?'<span class="practice-badge">PRACTICE</span>':'';
+  app.innerHTML=`<div class="wrap"><div class="topbar"><div class="brand">⚽ Prem Draft ${practice}</div><div class="top-actions">${commissioner}<button class="theme-toggle" id="themeToggle" aria-label="Visual theme: ${visualTheme}. Tap to switch.">${themeButtonLabel()}</button></div></div>${content}${commissionerMarkup()}</div>`;
   wireThemeToggle();wireCommissioner();
 }
 
@@ -184,6 +190,26 @@ function freeformDraftSquadHtml(m){
   return m.squad.length ? m.squad.map((p,i)=>`<div class="simple-player"><div><b>${i+1}. ${esc(p.name)}</b><div class="muted small">${p.positions.join(' / ')}</div></div><b>£${p.price}m</b></div>`).join('') : '<div class="muted">No players yet.</div>';
 }
 
+function recordsConnectionHtml(){
+  const connected=recordsConnectionStatus===true,unavailable=recordsConnectionStatus===false;
+  const label=connected?'Records connected':unavailable?'Records unavailable':'Checking records…';
+  const cls=connected?'connected':unavailable?'unavailable':'checking';
+  return `<div class="records-connection ${cls}" id="recordsConnectionStatus"><span>●</span> ${label}</div>`;
+}
+function updateRecordsConnectionIndicator(){
+  const el=document.querySelector('#recordsConnectionStatus');if(!el)return;
+  const connected=recordsConnectionStatus===true,unavailable=recordsConnectionStatus===false;
+  el.className=`records-connection ${connected?'connected':unavailable?'unavailable':'checking'}`;
+  el.innerHTML=`<span>●</span> ${connected?'Records connected':unavailable?'Records unavailable':'Checking records…'}`;
+}
+function refreshRecordsStatus(){
+  socket.emit('recordsStatus',{},r=>{
+    recordsConnectionStatus=!!r?.connected;
+    recordsAdminConfigured=!!r?.adminConfigured;
+    updateRecordsConnectionIndicator();
+  });
+}
+
 function home(){
   viewingRecords=false;
   const code=q('room')||'';
@@ -191,7 +217,8 @@ function home(){
   const profileCard=profile?.recoveryCode
     ? `<div class="profile-strip"><div><div class="muted small">PERMANENT MANAGER</div><b>${esc(profile.defaultName)}</b><div class="muted small">Recovery code: <strong>${esc(profile.recoveryCode)}</strong></div></div><div class="profile-actions"><button class="secondary small-button" id="editProfile">Edit default</button><button class="secondary small-button" id="recoverProfile">Switch / recover</button></div></div>`
     : `<div class="profile-strip"><div><b>Permanent records</b><div class="muted small">Your first room will create a short recovery code so your all-time stats follow you across rooms and days.</div></div><button class="secondary small-button" id="recoverProfile">I have a code</button></div>`;
-  shell(`<div class="card"><h1>Football Auction Draft</h1><p class="muted">Build your XI with a £100m budget.</p>${profileCard}<div class="spacer14"></div><label>Name for this room</label><input id="name" maxlength="20" value="${esc(profile?.defaultName||'')}" placeholder="Your name"><p class="muted small">Changing this only changes how you appear in this room; it does not create a new all-time identity.</p><div class="spacer10"></div>${code?`<div class="row mobile-stack"><input id="code" value="${esc(code)}"><button class="primary" id="join">Join room</button></div>`:`<button class="primary big" id="create">Create game</button><div class="spacer10"></div><div class="row mobile-stack"><input id="code" placeholder="Room code"><button class="secondary" id="join">Join</button></div>`}<div class="spacer14"></div><button class="secondary big" id="records">🏆 All-Time Records</button></div>`);
+  shell(`<div class="card"><h1>Football Auction Draft</h1><p class="muted">Build your XI with a £100m budget.</p>${profileCard}${recordsConnectionHtml()}<div class="spacer14"></div><label>Name for this room</label><input id="name" maxlength="20" value="${esc(profile?.defaultName||'')}" placeholder="Your name"><p class="muted small">Changing this only changes how you appear in this room; it does not create a new all-time identity.</p><div class="spacer10"></div>${code?`<div class="row mobile-stack"><input id="code" value="${esc(code)}"><button class="primary" id="join">Join room</button></div>`:`<button class="primary big" id="create">Create game</button><div class="spacer10"></div><div class="row mobile-stack"><input id="code" placeholder="Room code"><button class="secondary" id="join">Join</button></div>`}<div class="spacer14"></div><button class="secondary big" id="records">🏆 All-Time Records</button></div>`);
+  refreshRecordsStatus();
   const recover=document.querySelector('#recoverProfile');if(recover)recover.onclick=()=>recoverProfileFlow();
   const edit=document.querySelector('#editProfile');if(edit)edit.onclick=editDefaultProfileName;
   document.querySelector('#records').onclick=openRecords;
@@ -220,11 +247,11 @@ function historyTableHtml(rows){
   return `<div class="table-wrap"><table class="history-table"><thead><tr><th>#</th><th>Manager</th><th>Drafts</th><th>Titles</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(rows||[]).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.name)}</b></td><td>${r.drafts}</td><td><b>${r.titles}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td><b>${r.pts}</b></td></tr>`).join('')}</tbody></table></div>`;
 }
 function openRecords(){
-  viewingRecords=true;recordsSummaryData=null;recordsGroupData=null;
+  viewingRecords=true;recordsSummaryData=null;recordsGroupData=null;recordsAdminMode=false;recordsAdminData=null;
   shell('<div class="card"><h1>All-Time Records</h1><p class="muted">Loading permanent history…</p></div>');
   socket.emit('recordsSummary',{},r=>{
     if(!r?.ok){shell(`<div class="card"><h1>All-Time Records</h1><p class="muted">${esc(r?.error||'Could not load records.')}</p><button class="secondary big" id="recordsBack">Back</button></div>`);document.querySelector('#recordsBack').onclick=closeRecords;return;}
-    recordsSummaryData=r;
+    recordsSummaryData=r;recordsConnectionStatus=r.recordsConnected!==false;recordsAdminConfigured=!!r.adminConfigured;
     const profile=savedProfile();
     const preferred=(r.groups||[]).find(g=>profile?.profileId&&g.profileIds?.includes(profile.profileId))||(r.groups||[])[0];
     selectedRivalryKey=preferred?.key||'';
@@ -233,7 +260,7 @@ function openRecords(){
     if(selectedRivalryKey)loadRivalryGroup();else recordsScreen();
   });
 }
-function closeRecords(){viewingRecords=false;recordsSummaryData=null;recordsGroupData=null;if(state)render();else home();}
+function closeRecords(){viewingRecords=false;recordsSummaryData=null;recordsGroupData=null;recordsAdminMode=false;recordsAdminData=null;if(state)render();else home();}
 function loadRivalryGroup(){
   if(!selectedRivalryKey){recordsGroupData=null;return recordsScreen();}
   recordsGroupData=null;recordsScreen();
@@ -246,9 +273,44 @@ function recordsFiltersHtml(){
   const modes=recordsSummaryData?.modeLabels||{},packs=recordsSummaryData?.packLabels||{};
   return `<div class="records-filter-panel" id="recordsFilterPanel" hidden><div class="filter-columns"><div><b>Draft modes</b>${Object.entries(modes).map(([k,v])=>`<label class="filter-check"><input type="checkbox" data-filter-mode="${esc(k)}" ${selectedRecordModes.has(k)?'checked':''}> ${esc(v)}</label>`).join('')}</div><div><b>Player packs</b>${Object.entries(packs).map(([k,v])=>`<label class="filter-check"><input type="checkbox" data-filter-pack="${esc(k)}" ${selectedRecordPacks.has(k)?'checked':''}> ${esc(v)}</label>`).join('')}</div></div><div class="row"><button class="secondary grow" id="recordsAllFilters">Select all</button><button class="primary grow" id="recordsApplyFilters">Apply</button></div></div>`;
 }
+function adminDate(v){
+  try{return new Date(v).toLocaleString()}catch{return String(v||'')}
+}
+function adminRecordsHtml(){
+  if(!recordsAdminData)return '<div class="card"><h2>Admin records</h2><p class="muted">Loading saved games…</p></div>';
+  const rows=recordsAdminData.competitions||[];
+  return `<div class="card"><div class="budget"><div><h2>Admin records</h2><p class="muted no-margin">Excluded games stay in the database but do not count toward any leaderboard or Rivalry Group.</p></div><button class="secondary" id="adminBack">Back to records</button></div><div class="spacer10"></div>${rows.length?`<div class="admin-record-list">${rows.map(c=>`<div class="admin-record ${c.excluded?'excluded':''}"><div class="admin-record-main"><b>${esc((c.managers||[]).join(' / ')||'Unknown managers')}</b><div class="muted small">${esc(adminDate(c.completedAt))} · ${esc(recordsAdminData.modeLabels?.[c.mode]||c.mode)} · ${esc(recordsAdminData.packLabels?.[c.pack]||c.pack)}</div><div class="muted small">Champion: ${esc(c.champion||'—')} · ${c.excluded?'EXCLUDED':'Counting in records'}</div></div><button class="${c.excluded?'secondary':'danger-soft'} admin-record-toggle" data-comp="${esc(c.competitionId)}" data-excluded="${c.excluded?'1':'0'}">${c.excluded?'Restore':'Exclude'}</button></div>`).join('')}</div>`:'<p class="muted">No saved official games yet.</p>'}</div>`;
+}
+function loadAdminRecords(){
+  recordsAdminMode=true;recordsAdminData=null;recordsScreen();
+  socket.emit('recordsAdminList',{},r=>{
+    if(!r?.ok){recordsAdminMode=false;showToast(r?.error||'Could not load admin records');return recordsScreen();}
+    recordsAdminData=r;if(viewingRecords)recordsScreen();
+  });
+}
+function openAdminRecords(){
+  if(recordsAdminUnlocked)return loadAdminRecords();
+  const code=prompt('Enter admin code:','');if(code===null)return;
+  socket.emit('recordsAdminLogin',{code},r=>{
+    if(!r?.ok)return showToast(r?.error||'Admin access denied');
+    recordsAdminUnlocked=true;loadAdminRecords();
+  });
+}
+
 function recordsScreen(){
   if(!viewingRecords)return;
   if(!recordsSummaryData)return;
+  if(recordsAdminMode){
+    shell(`<div class="card records-header"><div><div class="muted small">PERMANENT HISTORY</div><h1>🏆 All-Time Records</h1></div><button class="secondary" id="recordsBack">Close</button></div>${adminRecordsHtml()}`);
+    document.querySelector('#recordsBack').onclick=closeRecords;
+    const back=document.querySelector('#adminBack');if(back)back.onclick=()=>openRecords();
+    document.querySelectorAll('.admin-record-toggle').forEach(b=>b.onclick=()=>{
+      const excluded=b.dataset.excluded==='1',competitionId=b.dataset.comp;
+      if(!excluded&&!confirm('Exclude this completed game from all permanent leaderboards? You can restore it later.'))return;
+      socket.emit('recordsAdminSetExcluded',{competitionId,excluded:!excluded},r=>{if(!r?.ok)return showToast(r?.error||'Could not update saved game');showToast(excluded?'Game restored':'Game excluded');loadAdminRecords();});
+    });
+    return;
+  }
   const groups=recordsSummaryData.groups||[];
   const nav=`<div class="record-tabs"><button class="result-tab ${recordsSection==='rivalry'?'active':''}" data-record-section="rivalry">Rivalry Groups</button><button class="result-tab ${recordsSection==='all'?'active':''}" data-record-section="all">All Managers</button></div>`;
   let body='';
@@ -261,8 +323,9 @@ function recordsScreen(){
     const meta=recordsGroupData?`${recordsGroupData.matchingDrafts} matching draft${recordsGroupData.matchingDrafts===1?'':'s'} · ${recordsGroupData.matchingMatches} matches`:'Loading filtered table…';
     body=`<div class="card"><div class="budget"><div><h2>Rivalry Group</h2><p class="muted no-margin">Only drafts containing exactly this combination of managers count.</p></div></div><div class="spacer10"></div><select id="rivalryGroupSelect">${options}</select><div class="spacer10"></div><button class="secondary" id="recordsFilterButton">Filters ⚙</button>${recordsFiltersHtml()}<p class="muted small records-match-count">${esc(meta)}</p>${recordsGroupData?historyTableHtml(recordsGroupData.table||[]):'<div class="muted">Loading…</div>'}</div>`;
   }
-  shell(`<div class="card records-header"><div><div class="muted small">PERMANENT HISTORY</div><h1>🏆 All-Time Records</h1></div><button class="secondary" id="recordsBack">Back</button></div>${nav}${body}`);
+  shell(`<div class="card records-header"><div><div class="muted small">PERMANENT HISTORY</div><h1>🏆 All-Time Records</h1>${recordsConnectionHtml()}</div><div class="profile-actions">${recordsAdminConfigured?'<button class="secondary small-button" id="recordsAdmin">Admin</button>':''}<button class="secondary" id="recordsBack">Back</button></div></div>${nav}${body}`);
   document.querySelector('#recordsBack').onclick=closeRecords;
+  const adminButton=document.querySelector('#recordsAdmin');if(adminButton)adminButton.onclick=openAdminRecords;
   document.querySelectorAll('[data-record-section]').forEach(b=>b.onclick=()=>{recordsSection=b.dataset.recordSection;recordsScreen();});
   const sel=document.querySelector('#rivalryGroupSelect');if(sel)sel.onchange=e=>{selectedRivalryKey=e.target.value;loadRivalryGroup();};
   const filterBtn=document.querySelector('#recordsFilterButton'),panel=document.querySelector('#recordsFilterPanel');if(filterBtn&&panel)filterBtn.onclick=()=>{panel.hidden=!panel.hidden};
@@ -290,11 +353,12 @@ function lobby(){
   shell(`<div class="card"><div class="muted">ROOM CODE</div><div class="row"><div class="code grow">${state.code}</div><button class="secondary" id="copy">Copy link</button></div></div>
   <div class="card"><h2>Game mode</h2>${host?`<select id="mode">${modeOptions}</select>`:`<div class="pack-display"><b>${esc(modeName())}</b></div>`}<p class="muted small">${esc(descriptions[state.mode]||'')}</p></div>
   <div class="card"><h2>Player pack</h2>${host?`<select id="pack">${packOptions}</select><p class="muted small">Changing the pack makes everyone ready up again.</p>`:`<div class="pack-display"><b>${esc(packName())}</b><span class="muted">${state.packCounts?.[state.pack]||0} players</span></div>`}</div>
+  <div class="card record-save-card"><label class="record-save-toggle"><input id="saveToHistory" type="checkbox" ${state.saveToHistory!==false?'checked':''} ${host?'':'disabled'}><span><b>Save this game to All-Time Records</b><small>${state.saveToHistory!==false?'Official game · completed simulation will count permanently.':'Practice / unranked · permanent leaderboards will not change.'}</small></span></label>${host?'':'<div class="muted small">Only the host can change this before the draft starts.</div>'}</div>
   ${formationCard}
   <div class="card"><h2>Managers</h2>${state.managers.map(x=>`<div class="manager"><div><b>${esc(x.name)}</b><div class="muted">${state.mode==='hard'?(x.formation||'No formation'):'Formation after draft'}</div></div><div class="${x.ready?'ready':'notready'}">${x.ready?'READY':'WAITING'}</div></div>`).join('')}</div>
   ${host?`<button class="primary big" id="start">Start draft</button>`:''}`);
   document.querySelector('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(location.href);showToast('Invite link copied')}catch{showToast('Copy the page address from your browser')}};
-  if(host){document.querySelector('#mode').onchange=e=>socket.emit('setMode',{mode:e.target.value});document.querySelector('#pack').onchange=e=>socket.emit('setPack',{pack:e.target.value});}
+  if(host){document.querySelector('#mode').onchange=e=>socket.emit('setMode',{mode:e.target.value});document.querySelector('#pack').onchange=e=>socket.emit('setPack',{pack:e.target.value});const save=document.querySelector('#saveToHistory');if(save)save.onchange=e=>socket.emit('setSaveToHistory',{save:e.target.checked},r=>{if(r&&!r.ok)showToast(r.error)});}
   if(state.mode==='hard')document.querySelector('#formation').onchange=e=>socket.emit('setFormation',{formation:e.target.value});
   document.querySelector('#ready').onclick=()=>socket.emit('setReady',{ready:!m.ready});
   if(host)document.querySelector('#start').onclick=()=>socket.emit('startDraft',{},r=>{if(r&&!r.ok)showToast(r.error)});
@@ -549,7 +613,8 @@ function sessionHtml(){
 function permanentHistoryStatusHtml(){
   if(!state?.historySaveStatus)return '';
   const cls=state.historySaveStatus==='saved'?'history-saved':(state.historySaveStatus==='saving'?'history-saving':'history-warning');
-  return `<div class="card ${cls}"><b>${state.historySaveStatus==='saved'?'✓ Saved to All-Time Records':state.historySaveStatus==='saving'?'Saving to All-Time Records…':'Permanent history notice'}</b><div class="muted small">${esc(state.historySaveMessage||'')}</div></div>`;
+  const title=state.historySaveStatus==='saved'?'✓ Saved to All-Time Records':state.historySaveStatus==='saving'?'Saving to All-Time Records…':state.historySaveStatus==='practice'?'Practice game · not saved':'Permanent history notice';
+  return `<div class="card ${cls}"><b>${title}</b><div class="muted small">${esc(state.historySaveMessage||'')}</div></div>`;
 }
 function fullResults(){
   const host=state.hostId===meId,sim=state.simulation;
@@ -628,6 +693,6 @@ socket.on('nominationTick',({timeLeft})=>{
   if(state?.nomination){state.nomination.timeLeft=timeLeft;const t=document.querySelector('#nominationTimer');if(t){t.textContent=timeLeft;t.classList.toggle('warn',timeLeft<=5)}}
 });
 socket.on('auctionNotice',({message})=>{if(message)showToast(message)});
-socket.on('connect',attemptResume);
+socket.on('connect',()=>{attemptResume();refreshRecordsStatus();});
 applyVisualTheme();
 home();
