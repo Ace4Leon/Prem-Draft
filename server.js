@@ -19,6 +19,7 @@ const START_TIMER = 15;
 const RESET_TIMER = 10;
 const NOMINATION_TIMER = 20;
 const BLIND_TIE_TIMER = 10;
+const PRIORITY_TIE_TIMER = 10;
 const MIN_BID = 1;
 const RECONNECT_GRACE_MS = 2 * 60 * 1000;
 const DEFAULT_PACK = 'all_time_prem';
@@ -121,8 +122,8 @@ async function renamePermanentProfile(code,name){
   return rows[0]||null;
 }
 
-function blankCareer(profileId,name){return {profileId,name,drafts:0,titles:0,p:0,w:0,d:0,l:0,gf:0,ga:0,gd:0,pts:0};}
-function aggregateHistoryCompetitions(comps,nameMap){
+function blankCareer(profileId,name){return {profileId,name,drafts:0,titles:0,p:0,w:0,d:0,l:0,gf:0,ga:0,gd:0,pts:0,ppg:0};}
+function aggregateHistoryCompetitions(comps,nameMap,sortMode='titles'){
   const rows=new Map();
   const ensure=(id,fallback='Manager')=>{
     if(!rows.has(id))rows.set(id,blankCareer(id,nameMap.get(id)||fallback));
@@ -138,8 +139,10 @@ function aggregateHistoryCompetitions(comps,nameMap){
       if(m.homeGoals>m.awayGoals){h.w++;a.l++;h.pts+=3;}else if(m.homeGoals<m.awayGoals){a.w++;h.l++;a.pts+=3;}else{h.d++;a.d++;h.pts++;a.pts++;}
     }
   }
-  for(const r of rows.values())r.gd=r.gf-r.ga;
-  return [...rows.values()].sort((a,b)=>b.titles-a.titles||b.pts-a.pts||b.gd-a.gd||b.gf-a.gf||a.name.localeCompare(b.name));
+  for(const r of rows.values()){r.gd=r.gf-r.ga;r.ppg=r.p?r.pts/r.p:0;}
+  const out=[...rows.values()];
+  if(sortMode==='ppg')return out.sort((a,b)=>b.ppg-a.ppg||b.titles-a.titles||b.gd-a.gd||b.pts-a.pts||b.gf-a.gf||a.name.localeCompare(b.name));
+  return out.sort((a,b)=>b.titles-a.titles||b.pts-a.pts||b.gd-a.gd||b.gf-a.gf||a.name.localeCompare(b.name));
 }
 async function loadHistoryDataset(){
   if(!await initHistoryDb())return null;
@@ -165,7 +168,7 @@ function rivalryGroupsFromDataset(dataset){
 }
 async function recordsSummaryPayload(){
   const dataset=await loadHistoryDataset();if(!dataset)return null;
-  return {allTime:aggregateHistoryCompetitions(dataset.competitions,dataset.nameMap),groups:rivalryGroupsFromDataset(dataset)};
+  return {allTime:aggregateHistoryCompetitions(dataset.competitions,dataset.nameMap,'ppg'),groups:rivalryGroupsFromDataset(dataset)};
 }
 async function rivalryPayload(key,modes,packs){
   const dataset=await loadHistoryDataset();if(!dataset)return null;
@@ -321,7 +324,7 @@ function historyCompetitionPayload(room,simulation){
     homeShotsOnTarget:m.homeShotsOnTarget,awayShotsOnTarget:m.awayShotsOnTarget,homeSaves:m.homeSaves,awaySaves:m.awaySaves,playerOfMatch:m.playerOfMatch
   }));
   return {
-    version:'v8',participants,championProfileId:toProfile(simulation.championId),matches,
+    version:'v9',participants,championProfileId:toProfile(simulation.championId),matches,
     playoffs:(simulation.playoffs||[]).map(m=>({
       homeProfileId:toProfile(m.homeId),awayProfileId:toProfile(m.awayId),homeName:m.homeName,awayName:m.awayName,
       homeGoals:m.homeGoals,awayGoals:m.awayGoals,homeScorers:m.homeScorers,awayScorers:m.awayScorers,
@@ -362,11 +365,12 @@ const MODE_LABELS = {
   freeform: 'Freeform Mode',
   nomination: 'Nomination Draft',
   blind: 'Blind Bid Draft',
-  hard: 'Hard Mode'
+  priority: 'Priority Bid',
+  hard: 'Hard Mode (Legacy)'
 };
 
 const POSITION_ORDER = ['GK','LB','CB','RB','DM','CM','AM','LM','RM','LW','RW','ST'];
-const FREEFORM_LIKE_MODES = new Set(['freeform','nomination','blind']);
+const FREEFORM_LIKE_MODES = new Set(['freeform','nomination','blind','priority']);
 function isFreeformLike(mode){ return FREEFORM_LIKE_MODES.has(mode); }
 
 // Hard Mode is intentionally unchanged from v3.
@@ -435,7 +439,7 @@ function publicPlayer(p){
   return {id:p.id,name:p.name,positions:p.positions,assignedPosition:p.assignedPosition,price:p.price,forced:!!p.forced};
 }
 function managerPublic(m,room,viewerId){
-  const blindSecret=room?.mode==='blind' && ['draft','team_build'].includes(room.phase) && m.id!==viewerId;
+  const blindSecret=(room?.mode==='blind' || (room?.mode==='priority'&&room?.priorityVisibility==='hidden')) && ['draft','team_build'].includes(room.phase) && m.id!==viewerId;
   if(blindSecret){
     return {
       id:m.id,
@@ -522,6 +526,41 @@ function nominationAvailablePlayers(room){
   const ids=room.nominationAvailableIds || new Set();
   return room.pool.filter(p=>ids.has(p.id)).map(publicPlayer);
 }
+
+function priorityPositionCounts(room){
+  const future=room.pool.slice(room.auctionIndex);
+  const groups={GK:['GK'],CB:['CB'],FB:['LB','RB','LWB','RWB'],MID:['DM','CM','AM'],WING:['LM','RM','LW','RW'],ST:['ST']};
+  return Object.fromEntries(Object.entries(groups).map(([k,positions])=>[k,future.filter(p=>p.positions?.some(pos=>positions.includes(pos))).length]));
+}
+function priorityCurrentPublic(room,viewerId){
+  const c=room.current;if(!c)return null;
+  const me=room.managers.get(viewerId);
+  const hidden=room.priorityVisibility==='hidden';
+  if(c.priorityStage==='result'){
+    const allocations=(c.priorityAllocations||[]).filter(a=>!hidden||a.managerId===viewerId).map(a=>({
+      managerId:a.managerId,managerName:room.managers.get(a.managerId)?.name||'Manager',player:publicPlayer(c.priorityBoard.find(p=>p.id===a.playerId)),price:a.price,via:a.via||'bid'
+    }));
+    return {priorityStage:'result',priorityRound:c.priorityRound,priorityBoard:c.priorityBoard.map(publicPlayer),priorityAllocations:allocations,priorityVisibility:room.priorityVisibility,paused:!!room.paused};
+  }
+  if(c.priorityStage==='tiebreak'){
+    const eligible=(c.priorityTieEligibleIds||[]).includes(viewerId);
+    return {
+      priorityStage:'tiebreak',priorityRound:c.priorityRound,priorityBoard:c.priorityBoard.map(publicPlayer),timeLeft:c.timeLeft,
+      priorityTiePlayer:publicPlayer(c.priorityBoard.find(p=>p.id===c.priorityTiePlayerId)),priorityTiebreakEligible:eligible,
+      myPriorityTieBid:eligible?Number(c.priorityTieBids?.get(viewerId)||c.priorityTieMin?.get(viewerId)||MIN_BID):null,
+      priorityTieMin:eligible?Number(c.priorityTieMin?.get(viewerId)||MIN_BID):null,
+      myPriorityLocked:eligible?c.priorityLockedIds?.has(viewerId)||false:false,
+      priorityMaxBid:me?maxBidFreeform(me):0,priorityVisibility:room.priorityVisibility,paused:!!room.paused
+    };
+  }
+  const bids=c.priorityBids?.get(viewerId)||new Map();
+  return {
+    priorityStage:'bidding',priorityRound:c.priorityRound,priorityBoard:c.priorityBoard.map(publicPlayer),timeLeft:c.timeLeft,
+    myPriorityBids:Object.fromEntries(c.priorityBoard.map(p=>[p.id,Number(bids.get(p.id)||MIN_BID)])),
+    myPriorityLocked:c.priorityLockedIds?.has(viewerId)||false,priorityMaxBid:me?maxBidFreeform(me):0,
+    priorityVisibility:room.priorityVisibility,priorityRemainingPositions:hidden?null:priorityPositionCounts(room),paused:!!room.paused
+  };
+}
 function roomPublic(room,viewerId){
   const ratingsVisible = (room.phase==='reveal' || room.phase==='results');
   const teamRatings = ratingsVisible && room.teamAssessments
@@ -529,7 +568,9 @@ function roomPublic(room,viewerId){
     : null;
   let current=null;
   if(room.current){
-    if(room.mode==='blind'){
+    if(room.mode==='priority'){
+      current=priorityCurrentPublic(room,viewerId);
+    } else if(room.mode==='blind'){
       const myBid=room.current.blindBids?.get(viewerId) ?? 0;
       const myLocked=room.current.blindLockedIds?.has(viewerId) || false;
       const tieIds=room.current.blindTieEligibleIds || [];
@@ -574,6 +615,7 @@ function roomPublic(room,viewerId){
     phase: room.phase,
     mode: room.mode,
     modeLabels: MODE_LABELS,
+    priorityVisibility: room.priorityVisibility||'visible',
     pack: room.pack,
     packLabels: {...PACKS, chaos:'Chaos Mode'},
     packCounts: packCounts(),
@@ -907,9 +949,53 @@ function buildNominationPool(room){
   const orderIndex=pos=>{const i=POSITION_ORDER.indexOf(pos);return i<0?999:i;};
   return [...base,...extras].sort((a,b)=>orderIndex(a.positions?.[0])-orderIndex(b.positions?.[0]) || a.name.localeCompare(b.name));
 }
+
+function priorityPrimaryBucket(player){
+  const pos=player?.positions?.[0];
+  if(pos==='GK')return 'GK';
+  if(pos==='CB')return 'CB';
+  if(['LB','RB','LWB','RWB'].includes(pos))return 'FB';
+  if(['DM','CM','AM'].includes(pos))return 'MID';
+  if(['LM','RM','LW','RW'].includes(pos))return 'WING';
+  if(pos==='ST')return 'ST';
+  return null;
+}
+function priorityOutfieldQuotas(managerCount){
+  const n=managerCount;
+  const base={CB:2*n,FB:2*n,MID:Math.round(2.5*n),WING:2*n};
+  base.ST=10*n-base.CB-base.FB-base.MID-base.WING;
+  const keys=['CB','FB','MID','WING','ST'];
+  const delta=Object.fromEntries(keys.map(k=>[k,0]));
+  const swaps=Math.floor(Math.random()*3); // 0-2 small shifts; never more than +/-1 from the sensible base.
+  for(let i=0;i<swaps;i++){
+    const donors=keys.filter(k=>delta[k]>-1 && base[k]+delta[k]>Math.max(2,n));
+    const receivers=keys.filter(k=>delta[k]<1);
+    if(!donors.length||!receivers.length)break;
+    const donor=randomChoice(donors);
+    const receiver=randomChoice(receivers.filter(k=>k!==donor));
+    if(!receiver)continue;
+    delta[donor]--;delta[receiver]++;
+  }
+  return Object.fromEntries(keys.map(k=>[k,base[k]+delta[k]]));
+}
+function buildPriorityPool(room){
+  const db=packPlayers(room.pack);
+  const managerCount=room.managers.size;
+  const quotas={GK:managerCount,...priorityOutfieldQuotas(managerCount)};
+  const selected=[];
+  for(const [bucket,want] of Object.entries(quotas)){
+    const candidates=shuffle(db.filter(p=>priorityPrimaryBucket(p)===bucket));
+    if(candidates.length<want)throw new Error(`Not enough ${bucket} players in this pack for Priority Bid.`);
+    selected.push(...candidates.slice(0,want));
+  }
+  if(selected.length!==managerCount*11)throw new Error('Priority Bid pool generation failed.');
+  return shuffle(selected);
+}
+
 function buildPool(room){
   if(room.mode==='hard') return buildHardPool(room);
   if(room.mode==='nomination') return buildNominationPool(room);
+  if(room.mode==='priority') return buildPriorityPool(room);
   return buildFreeformPool(room);
 }
 
@@ -1176,6 +1262,146 @@ function resolveBlindRound(room){
   room.current=null;emitState(room);setTimeout(()=>startSequentialNext(room),1200);
 }
 
+
+function priorityRoundTimer(managerCount){
+  return Math.max(20,Math.min(60,10+5*managerCount));
+}
+function priorityParticipants(room,c=room.current){
+  if(!c)return[];
+  if(c.priorityStage==='tiebreak')return (c.priorityTieEligibleIds||[]).map(id=>room.managers.get(id)).filter(Boolean);
+  return [...room.managers.values()];
+}
+function allPriorityLocked(room){
+  const c=room.current;if(!c)return false;
+  const ps=priorityParticipants(room,c);
+  return ps.length>0&&ps.every(m=>c.priorityLockedIds?.has(m.id));
+}
+function startPriorityTimer(room){
+  clearInterval(room.timer);
+  room.timer=setInterval(()=>{
+    const c=room.current;if(!c||room.mode!=='priority'||c.priorityStage==='result')return;
+    if(room.paused)return;
+    c.timeLeft--;
+    if(c.timeLeft<=0){
+      if(c.priorityStage==='tiebreak')resolvePriorityTiebreak(room);
+      else beginPriorityResolution(room);
+    }else{
+      io.to(room.code).emit('tick',{timeLeft:c.timeLeft});
+    }
+  },1000);
+}
+function startPriorityRound(room){
+  clearInterval(room.timer);room.timer=null;
+  if(allComplete(room))return enterPostDraft(room);
+  const n=room.managers.size;
+  const board=room.pool.slice(room.auctionIndex,room.auctionIndex+n);
+  if(board.length!==n){room.phase='finished';room.current=null;emitState(room);return;}
+  room.auctionIndex+=n;room.shownCount=(room.shownCount||0)+1;
+  const bids=new Map();
+  for(const m of room.managers.values())bids.set(m.id,new Map(board.map(p=>[p.id,MIN_BID])));
+  room.current={
+    priorityStage:'bidding',priorityRound:room.shownCount,priorityBoard:board,timeLeft:priorityRoundTimer(n),
+    priorityBids:bids,priorityLockedIds:new Set(),priorityRemainingManagerIds:[...room.managers.keys()],priorityRemainingPlayerIds:board.map(p=>p.id),
+    priorityAllocations:[],priorityTiebreaks:[]
+  };
+  emitState(room);startPriorityTimer(room);
+}
+function priorityBidFor(c,managerId,playerId){return Number(c.priorityBids?.get(managerId)?.get(playerId)||MIN_BID);}
+function priorityAllocate(c,managerId,playerId,price,via='bid'){
+  c.priorityAllocations.push({managerId,playerId,price:Number(price)||MIN_BID,via});
+  c.priorityRemainingManagerIds=c.priorityRemainingManagerIds.filter(id=>id!==managerId);
+  c.priorityRemainingPlayerIds=c.priorityRemainingPlayerIds.filter(id=>id!==playerId);
+}
+function beginPriorityResolution(room){
+  clearInterval(room.timer);room.timer=null;
+  const c=room.current;if(!c||room.mode!=='priority'||c.priorityStage==='result')return;
+  if(c.priorityStage==='bidding')c.priorityStage='allocating';
+  continuePriorityAllocation(room);
+}
+function continuePriorityAllocation(room){
+  const c=room.current;if(!c||room.mode!=='priority')return;
+  while(c.priorityRemainingManagerIds.length){
+    const mids=[...c.priorityRemainingManagerIds],pids=[...c.priorityRemainingPlayerIds];
+    let max=MIN_BID;
+    for(const mid of mids)for(const pid of pids)max=Math.max(max,priorityBidFor(c,mid,pid));
+    if(max<=MIN_BID){
+      const shuffledPlayers=shuffle(pids);
+      const shuffledManagers=shuffle(mids);
+      shuffledManagers.forEach((mid,i)=>priorityAllocate(c,mid,shuffledPlayers[i],MIN_BID,'random-1m'));
+      return finishPriorityRound(room);
+    }
+    const groups=new Map();
+    for(const mid of mids){
+      for(const pid of pids){
+        if(priorityBidFor(c,mid,pid)!==max)continue;
+        if(!groups.has(pid))groups.set(pid,[]);
+        groups.get(pid).push(mid);
+      }
+    }
+    const uniques=[];const ties=[];
+    for(const [pid,managerIds] of groups.entries()){
+      if(managerIds.length===1)uniques.push({pid,mid:managerIds[0]});else ties.push({pid,managerIds});
+    }
+    // Equal top bids for different players can resolve together; a manager cannot appear twice here because
+    // their above-£1 bids are unique within the sheet.
+    for(const u of uniques){
+      if(c.priorityRemainingManagerIds.includes(u.mid)&&c.priorityRemainingPlayerIds.includes(u.pid))priorityAllocate(c,u.mid,u.pid,max,'bid');
+    }
+    const tie=ties.find(t=>c.priorityRemainingPlayerIds.includes(t.pid)&&t.managerIds.filter(id=>c.priorityRemainingManagerIds.includes(id)).length>1);
+    if(tie){
+      const eligible=tie.managerIds.filter(id=>c.priorityRemainingManagerIds.includes(id));
+      c.priorityStage='tiebreak';c.priorityTiePlayerId=tie.pid;c.priorityTieEligibleIds=eligible;
+      c.priorityTieMin=new Map(eligible.map(id=>[id,max]));c.priorityTieBids=new Map(eligible.map(id=>[id,max]));c.priorityLockedIds=new Set();c.timeLeft=PRIORITY_TIE_TIMER;
+      for(const id of eligible)sendAuctionNotice(room,id,`£${max}m tie for ${c.priorityBoard.find(p=>p.id===tie.pid)?.name||'this player'} — 10 second tiebreak.`,`tie`);
+      emitState(room);startPriorityTimer(room);return;
+    }
+    if(!uniques.length){
+      // Defensive fallback; the loop should only get here if a malformed state slipped through.
+      const shuffledPlayers=shuffle(c.priorityRemainingPlayerIds),shuffledManagers=shuffle(c.priorityRemainingManagerIds);
+      shuffledManagers.forEach((mid,i)=>priorityAllocate(c,mid,shuffledPlayers[i],MIN_BID,'fallback'));
+      return finishPriorityRound(room);
+    }
+  }
+  finishPriorityRound(room);
+}
+function resolvePriorityTiebreak(room){
+  clearInterval(room.timer);room.timer=null;
+  const c=room.current;if(!c||room.mode!=='priority'||c.priorityStage!=='tiebreak')return;
+  const eligible=(c.priorityTieEligibleIds||[]).filter(id=>c.priorityRemainingManagerIds.includes(id));
+  const vals=eligible.map(id=>({id,bid:Number(c.priorityTieBids?.get(id)||c.priorityTieMin?.get(id)||MIN_BID)}));
+  const max=Math.max(...vals.map(x=>x.bid));const top=vals.filter(x=>x.bid===max);
+  const winner=top.length===1?top[0]:randomChoice(top);
+  const playerId=c.priorityTiePlayerId;
+  c.priorityTiebreaks.push({playerId,firstBid:Number(c.priorityTieMin?.get(eligible[0])||MIN_BID),bids:vals.map(x=>({managerId:x.id,amount:x.bid})),winnerId:winner.id,finalPrice:max,randomSecondTie:top.length>1});
+  priorityAllocate(c,winner.id,playerId,max,top.length>1?'tiebreak-random':'tiebreak');
+  delete c.priorityTiePlayerId;delete c.priorityTieEligibleIds;delete c.priorityTieMin;delete c.priorityTieBids;c.priorityLockedIds=new Set();c.priorityStage='allocating';
+  continuePriorityAllocation(room);
+}
+function finishPriorityRound(room){
+  clearInterval(room.timer);room.timer=null;
+  const c=room.current;if(!c)return;
+  const allocations=(c.priorityAllocations||[]).map(a=>{
+    const m=room.managers.get(a.managerId),player=c.priorityBoard.find(p=>p.id===a.playerId);
+    if(m&&player){m.budget-=a.price;m.squad.push({...player,price:a.price});}
+    return {...a,managerName:m?.name||'Manager',player:publicPlayer(player)};
+  });
+  const bidRows=[...room.managers.values()].map(m=>({
+    managerId:m.id,managerName:m.name,bids:c.priorityBoard.map(p=>({playerId:p.id,playerName:p.name,amount:priorityBidFor(c,m.id,p.id)}))
+  }));
+  if(!room.draftHistory)room.draftHistory=[];
+  room.draftHistory.push({type:'priorityRound',round:c.priorityRound,board:c.priorityBoard.map(publicPlayer),bids:bidRows,allocations,tiebreaks:c.priorityTiebreaks||[],visibility:room.priorityVisibility||'visible'});
+  c.priorityAllocations=allocations;c.priorityStage='result';c.timeLeft=null;
+  emitState(room);
+  setTimeout(()=>{if(room.current===c){room.current=null;if(allComplete(room))enterPostDraft(room);else startPriorityRound(room);}},2300);
+}
+function restartPriorityRound(room){
+  const c=room.current;if(!c||room.mode!=='priority'||c.priorityStage==='result')return false;
+  const bids=new Map();for(const m of room.managers.values())bids.set(m.id,new Map(c.priorityBoard.map(p=>[p.id,MIN_BID])));
+  c.priorityStage='bidding';c.priorityBids=bids;c.priorityLockedIds=new Set();c.priorityRemainingManagerIds=[...room.managers.keys()];c.priorityRemainingPlayerIds=c.priorityBoard.map(p=>p.id);
+  c.priorityAllocations=[];c.priorityTiebreaks=[];delete c.priorityTiePlayerId;delete c.priorityTieEligibleIds;delete c.priorityTieMin;delete c.priorityTieBids;c.timeLeft=priorityRoundTimer(room.managers.size);
+  emitState(room);startPriorityTimer(room);return true;
+}
+
 function resetManagerForDraft(m){
   m.budget=STARTING_BUDGET;
   m.squad=[];
@@ -1264,6 +1490,7 @@ io.on('connection', socket=>{
       pool:[],initialPoolSize:0,auctionIndex:0,shownCount:0,current:null,timer:null,paused:false,
       teamAssessments:null,simulation:null,officialSimulation:null,simulationKind:'official',exhibitionNumber:0,simulationRevealCount:0,
       draftHistory:[],sessionHistory:{drafts:0,matches:[],titles:{}},historySaveStatus:null,historySaveMessage:null,officialCompetitionId:null,simulationStarting:false,saveToHistory:true,
+      priorityVisibility:'visible',
       nominationAvailableIds:new Set(),nominationOrder:[],nominationCursor:-1,nominationNominatorId:null,nominationTimeLeft:null,nominationFinalPickManagerId:null
     };
     rooms.set(code,room);socket.join(code);socket.data.room=code;socket.data.managerId=managerId;
@@ -1311,6 +1538,13 @@ io.on('connection', socket=>{
     emitState(room);
   });
 
+  socket.on('setPriorityVisibility', ({visibility},cb)=>{
+    const room=rooms.get(socket.data.room);
+    if(!room||room.phase!=='lobby'||!socketIsHost(room,socket)||room.mode!=='priority')return cb?.({ok:false,error:'Priority Bid visibility can only be changed by the host in the lobby.'});
+    if(!['visible','hidden'].includes(visibility))return cb?.({ok:false,error:'Choose Visible or Hidden.'});
+    room.priorityVisibility=visibility;for(const m of room.managers.values())m.ready=false;cb?.({ok:true});emitState(room);
+  });
+
   socket.on('setSaveToHistory', ({save},cb)=>{
     const room=rooms.get(socket.data.room);
     if(!room||room.phase!=='lobby'||!socketIsHost(room,socket))return cb?.({ok:false,error:'Only the host can change this before the draft starts.'});
@@ -1346,12 +1580,14 @@ io.on('connection', socket=>{
       room.nominationNominatorId=null;room.nominationTimeLeft=null;room.nominationFinalPickManagerId=null;
     }
     cb?.({ok:true});
-    if(room.mode==='nomination')startNominationTurn(room);else startSequentialNext(room);
+    if(room.mode==='nomination')startNominationTurn(room);
+    else if(room.mode==='priority')startPriorityRound(room);
+    else startSequentialNext(room);
   });
 
   socket.on('bid', ({amount},cb)=>{
     const room=rooms.get(socket.data.room);const m=managerForSocket(room,socket);const c=room?.current;
-    if(!room||room.phase!=='draft'||!m||!c||room.mode==='blind')return;
+    if(!room||room.phase!=='draft'||!m||!c||room.mode==='blind'||room.mode==='priority')return;
     if(room.paused)return cb?.({ok:false,error:'The draft is paused.'});
     let cap=0;
     if(room.mode==='freeform'||room.mode==='nomination'){
@@ -1372,7 +1608,7 @@ io.on('connection', socket=>{
 
   socket.on('setAuctionOut', ({out},cb)=>{
     const room=rooms.get(socket.data.room);const m=managerForSocket(room,socket);const c=room?.current;
-    if(!room||room.phase!=='draft'||!m||!c||room.mode==='blind')return cb?.({ok:false,error:'No active open auction.'});
+    if(!room||room.phase!=='draft'||!m||!c||room.mode==='blind'||room.mode==='priority')return cb?.({ok:false,error:'No active open auction.'});
     if(room.paused)return cb?.({ok:false,error:'The draft is paused.'});
     if(c.bidderId===m.id&&out)return cb?.({ok:false,error:'You are currently winning this player.'});
     if(out&&!managerCanBidCurrent(room,m))return cb?.({ok:false,error:'You cannot bid on this player.'});
@@ -1403,6 +1639,43 @@ io.on('connection', socket=>{
     room.nominationAvailableIds.delete(player.id);m.budget-=MIN_BID;m.squad.push({...player,price:MIN_BID});
     recordDraftHistory(room,{player},m.id,MIN_BID,false);cb?.({ok:true});
     if(m.squad.length===11)enterPostDraft(room);else emitState(room);
+  });
+
+  socket.on('setPriorityBid', ({playerId,amount},cb)=>{
+    const room=rooms.get(socket.data.room);const m=managerForSocket(room,socket);const c=room?.current;
+    if(!room||room.phase!=='draft'||room.mode!=='priority'||!m||!c||c.priorityStage!=='bidding')return cb?.({ok:false,error:'Priority bidding is not open.'});
+    if(room.paused)return cb?.({ok:false,error:'The draft is paused.'});
+    if(c.priorityLockedIds?.has(m.id))return cb?.({ok:false,error:'Unlock your decision before changing bids.'});
+    const pid=Number(playerId);if(!c.priorityBoard.some(p=>p.id===pid))return cb?.({ok:false,error:'That player is not on this board.'});
+    let bid=Math.floor(Number(amount));if(!Number.isFinite(bid)||bid<MIN_BID)bid=MIN_BID;
+    const cap=maxBidFreeform(m);if(bid>cap)return cb?.({ok:false,error:`Your maximum safe bid is £${cap}m.`});
+    const sheet=c.priorityBids.get(m.id);if(!sheet)return cb?.({ok:false,error:'Bid sheet unavailable.'});
+    if(bid>MIN_BID&&[...sheet.entries()].some(([otherPid,v])=>Number(otherPid)!==pid&&Number(v)===bid))return cb?.({ok:false,error:`£${bid}m is already used.`});
+    sheet.set(pid,bid);cb?.({ok:true,amount:bid});
+  });
+
+  socket.on('setPriorityLock', ({locked},cb)=>{
+    const room=rooms.get(socket.data.room);const m=managerForSocket(room,socket);const c=room?.current;
+    if(!room||room.phase!=='draft'||room.mode!=='priority'||!m||!c||c.priorityStage==='result')return cb?.({ok:false,error:'No Priority Bid decision is open.'});
+    if(room.paused)return cb?.({ok:false,error:'The draft is paused.'});
+    const participants=priorityParticipants(room,c);if(!participants.some(x=>x.id===m.id))return cb?.({ok:false,error:'You are not part of this decision.'});
+    if(!c.priorityLockedIds)c.priorityLockedIds=new Set();if(locked)c.priorityLockedIds.add(m.id);else c.priorityLockedIds.delete(m.id);
+    cb?.({ok:true});emitState(room);
+    if(allPriorityLocked(room)){
+      if(c.priorityStage==='tiebreak')resolvePriorityTiebreak(room);else beginPriorityResolution(room);
+    }
+  });
+
+  socket.on('setPriorityTieBid', ({amount},cb)=>{
+    const room=rooms.get(socket.data.room);const m=managerForSocket(room,socket);const c=room?.current;
+    if(!room||room.phase!=='draft'||room.mode!=='priority'||!m||!c||c.priorityStage!=='tiebreak')return cb?.({ok:false,error:'No Priority Bid tiebreak is open.'});
+    if(room.paused)return cb?.({ok:false,error:'The draft is paused.'});
+    if(!(c.priorityTieEligibleIds||[]).includes(m.id))return cb?.({ok:false,error:'You are not part of this tiebreak.'});
+    if(c.priorityLockedIds?.has(m.id))return cb?.({ok:false,error:'Unlock your decision before changing it.'});
+    const min=Number(c.priorityTieMin?.get(m.id)||MIN_BID);let bid=Math.floor(Number(amount));if(!Number.isFinite(bid))bid=min;
+    if(bid<min)return cb?.({ok:false,error:`Your tiebreak bid cannot be lower than £${min}m.`});
+    const cap=maxBidFreeform(m);if(bid>cap)return cb?.({ok:false,error:`Your maximum safe bid is £${cap}m.`});
+    c.priorityTieBids.set(m.id,bid);cb?.({ok:true,amount:bid});
   });
 
   socket.on('setBlindBid', ({amount},cb)=>{
@@ -1458,7 +1731,9 @@ io.on('connection', socket=>{
     const room=rooms.get(socket.data.room);const c=room?.current;
     if(!room||room.phase!=='draft'||!socketIsHost(room,socket)||!c)return cb?.({ok:false,error:'There is no active auction to restart.'});
     clearInterval(room.timer);room.timer=null;
-    if(room.mode==='blind'){
+    if(room.mode==='priority'){
+      if(!restartPriorityRound(room))return cb?.({ok:false,error:'This Priority Bid round has already resolved.'});
+    }else if(room.mode==='blind'){
       c.timeLeft=START_TIMER;c.blindStage=1;c.blindTieEligibleIds=[];c.blindCarryMin=new Map();c.blindLockedIds=new Set();c.blindSettledNoticeIds=new Set();
       c.blindBids=new Map([...room.managers.values()].filter(m=>m.squad.length<11).map(m=>[m.id,0]));emitState(room);startBlindTimer(room);
     }else{
@@ -1472,6 +1747,7 @@ io.on('connection', socket=>{
   socket.on('commissionSkipCurrent', (_,cb)=>{
     const room=rooms.get(socket.data.room);const c=room?.current;
     if(!room||room.phase!=='draft'||!socketIsHost(room,socket)||!c)return cb?.({ok:false,error:'There is no active player to skip.'});
+    if(room.mode==='priority')return cb?.({ok:false,error:'Priority Bid rounds cannot be skipped because every board player must be allocated.'});
     if((room.mode==='freeform'||room.mode==='blind')&&!skippingCurrentIsSafeFreeform(room))return cb?.({ok:false,error:'This player cannot be skipped because the remaining pool is needed to complete the squads.'});
     if(room.mode==='hard'&&!skippingCurrentIsSafeHard(room))return cb?.({ok:false,error:'This player cannot be skipped because Hard Mode needs them to complete the formations.'});
     clearInterval(room.timer);room.timer=null;recordDraftHistory(room,c,null,0,false);
