@@ -168,13 +168,14 @@ function me(){return state?.managers.find(m=>m.id===meId)}
 function managerName(id){return state?.managers.find(m=>m.id===id)?.name||'—'}
 function packName(){return state?.packLabels?.[state.pack]||'Player Pack'}
 function modeName(){return state?.modeLabels?.[state.mode]||'Game Mode'}
-function isFreeformLike(){return ['freeform','nomination','blind'].includes(state?.mode)}
+function isFreeformLike(){return ['freeform','nomination','blind','priority'].includes(state?.mode)}
 function commissionerMarkup(){
   const host=state?.hostId===meId;
   const show=host&&['draft','team_build'].includes(state?.phase);
   if(!show)return '';
-  const canAuction=state.phase==='draft'&&!!state.current;
-  return `<div class="commission-modal" id="commissionModal" hidden><div class="commission-sheet"><div class="budget"><div><h2>Commissioner controls</h2><p class="muted no-margin">Failsafe controls for the host.</p></div><button class="icon-button" id="closeCommission">×</button></div>${state.phase==='draft'?`<button class="secondary big" id="pauseDraft">${state.paused?'Resume draft':'Pause draft'}</button><div class="spacer9"></div><button class="secondary big" id="restartAuction" ${canAuction?'':'disabled'}>Restart current auction</button><div class="spacer9"></div><button class="secondary big danger-soft" id="skipCurrent" ${canAuction?'':'disabled'}>Skip current player</button><div class="spacer14"></div>`:''}<button class="danger big" id="abandonDraft">Abandon draft & return to lobby</button></div></div>`;
+  const priority=state?.mode==='priority';
+  const canAuction=state.phase==='draft'&&!!state.current&&state.current?.priorityStage!=='result';
+  return `<div class="commission-modal" id="commissionModal" hidden><div class="commission-sheet"><div class="budget"><div><h2>Commissioner controls</h2><p class="muted no-margin">Failsafe controls for the host.</p></div><button class="icon-button" id="closeCommission">×</button></div>${state.phase==='draft'?`<button class="secondary big" id="pauseDraft">${state.paused?'Resume draft':'Pause draft'}</button><div class="spacer9"></div><button class="secondary big" id="restartAuction" ${canAuction?'':'disabled'}>Restart current ${priority?'round':'auction'}</button>${priority?'':`<div class="spacer9"></div><button class="secondary big danger-soft" id="skipCurrent" ${canAuction?'':'disabled'}>Skip current player</button>`}<div class="spacer14"></div>`:''}<button class="danger big" id="abandonDraft">Abandon draft & return to lobby</button></div></div>`;
 }
 function wireCommissioner(){
   const open=document.querySelector('#commissionerBtn'),modal=document.querySelector('#commissionModal');
@@ -183,7 +184,7 @@ function wireCommissioner(){
   const close=document.querySelector('#closeCommission');if(close)close.onclick=()=>{modal.hidden=true};
   modal.onclick=e=>{if(e.target===modal)modal.hidden=true};
   const pause=document.querySelector('#pauseDraft');if(pause)pause.onclick=()=>socket.emit('commissionPause',{paused:!state.paused},r=>{if(r&&!r.ok)showToast(r.error)});
-  const restart=document.querySelector('#restartAuction');if(restart)restart.onclick=()=>{if(confirm('Restart this auction from the beginning?'))socket.emit('commissionRestartAuction',{},r=>{if(r&&!r.ok)showToast(r.error)});};
+  const restart=document.querySelector('#restartAuction');if(restart)restart.onclick=()=>{if(confirm(state?.mode==='priority'?'Restart this Priority Bid round from the beginning?':'Restart this auction from the beginning?'))socket.emit('commissionRestartAuction',{},r=>{if(r&&!r.ok)showToast(r.error)});};
   const skip=document.querySelector('#skipCurrent');if(skip)skip.onclick=()=>{if(confirm('Skip this player? This cannot be undone.'))socket.emit('commissionSkipCurrent',{},r=>{if(r&&!r.ok)showToast(r.error)});};
   const abandon=document.querySelector('#abandonDraft');if(abandon)abandon.onclick=()=>{if(confirm('Abandon this draft and return everyone to the lobby?'))socket.emit('commissionAbandonDraft',{},r=>{if(r&&!r.ok)showToast(r.error)});};
 }
@@ -269,7 +270,7 @@ function home(){
 }
 
 function historyTableHtml(rows){
-  return `<div class="table-wrap"><table class="history-table"><thead><tr><th>#</th><th>Manager</th><th>Drafts</th><th>Titles</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(rows||[]).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.name)}</b></td><td>${r.drafts}</td><td><b>${r.titles}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td><b>${r.pts}</b></td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="history-table"><thead><tr><th>#</th><th>Manager</th><th>Drafts</th><th>Titles</th><th>PPG</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(rows||[]).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.name)}</b></td><td>${r.drafts}</td><td><b>${r.titles}</b></td><td><b>${Number(r.ppg||0).toFixed(2)}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td><b>${r.pts}</b></td></tr>`).join('')}</tbody></table></div>`;
 }
 function openRecords(){
   viewingRecords=true;recordsSummaryData=null;recordsGroupData=null;recordsAdminMode=false;recordsAdminData=null;recordsAdminProfilesData=null;historicalCompetition=null;
@@ -322,9 +323,23 @@ function openHistoricalCompetition(competitionId){
     recordsScreen();
   });
 }
+function priorityBidHistoryHtml(rows,title='Priority Bid history'){
+  if(!rows?.length)return '';
+  return `<div class="card"><h2>${esc(title)}</h2><p class="muted">Full bid sheets are revealed only after the teams are complete.</p><div class="priority-history-list">${rows.map(r=>{
+    const board=r.board||[],allocs=r.allocations||[];
+    const summary=allocs.map(a=>`<span class="pill"><b>${esc(a.player?.name||board.find(p=>p.id===a.playerId)?.name||'Player')}</b> → ${esc(a.managerName||'Manager')} · £${a.price}m</span>`).join('');
+    const matrix=`<div class="table-wrap"><table class="priority-matrix"><thead><tr><th>Manager</th>${board.map(p=>`<th>${esc(p.name)}</th>`).join('')}</tr></thead><tbody>${(r.bids||[]).map(row=>`<tr><td><b>${esc(row.managerName||'Manager')}</b></td>${board.map(p=>{const b=(row.bids||[]).find(x=>Number(x.playerId)===Number(p.id));return `<td>£${b?.amount??1}m</td>`}).join('')}</tr>`).join('')}</tbody></table></div>`;
+    const ties=(r.tiebreaks||[]).length?`<div class="priority-tie-history"><b>Tiebreaks</b>${r.tiebreaks.map(t=>{const p=board.find(x=>Number(x.id)===Number(t.playerId));return `<div>${esc(p?.name||'Player')}: ${(t.bids||[]).map(b=>`${esc((r.bids||[]).find(x=>x.managerId===b.managerId)?.managerName||'Manager')} £${b.amount}m`).join(' · ')}${t.randomSecondTie?' · second tie decided randomly':''}</div>`}).join('')}</div>`:'';
+    return `<details class="priority-history-round"><summary>Round ${r.round||'—'} <span>${allocs.length} signings</span></summary><div class="priority-history-summary">${summary}</div>${matrix}${ties}</details>`;
+  }).join('')}</div></div>`;
+}
+function simpleDraftHistoryHtml(rows,title='Draft / auction history'){
+  if(!rows?.length)return '';
+  return `<div class="card"><h2>${esc(title)}</h2><div class="table-wrap"><table class="draft-history-table"><thead><tr><th>#</th><th>Player</th><th>Manager</th><th>Price</th></tr></thead><tbody>${rows.map((h,i)=>`<tr><td>${i+1}</td><td><b>${esc(h.player?.name||'—')}</b></td><td>${h.noSale?'No sale':esc(h.winnerName||'—')}${h.forced?' <span class="forced-tag">forced</span>':''}</td><td>${h.noSale?'—':`£${h.price}m`}</td></tr>`).join('')}</tbody></table></div></div>`;
+}
 function historicalDraftHistoryHtml(data){
   const rows=data?.draftHistory||[];if(!rows.length)return '';
-  return `<div class="card"><h2>Draft / auction history</h2><div class="table-wrap"><table class="draft-history-table"><thead><tr><th>#</th><th>Player</th><th>Manager</th><th>Price</th></tr></thead><tbody>${rows.map((h,i)=>`<tr><td>${i+1}</td><td><b>${esc(h.player?.name||'—')}</b></td><td>${h.noSale?'No sale':esc(h.winnerName||'—')}${h.forced?' <span class="forced-tag">forced</span>':''}</td><td>${h.noSale?'—':`£${h.price}m`}</td></tr>`).join('')}</tbody></table></div></div>`;
+  return rows.some(r=>r.type==='priorityRound')?priorityBidHistoryHtml(rows.filter(r=>r.type==='priorityRound'),'Priority Bid history'):simpleDraftHistoryHtml(rows);
 }
 function historicalCompetitionScreen(){
   if(historicalCompetition?.loading){shell('<div class="card"><h1>Saved Draft</h1><p class="muted">Loading the completed season…</p></div>');return;}
@@ -425,7 +440,7 @@ function recordsScreen(){
   const nav=`<div class="record-tabs"><button class="result-tab ${recordsSection==='rivalry'?'active':''}" data-record-section="rivalry">Rivalry Groups</button><button class="result-tab ${recordsSection==='all'?'active':''}" data-record-section="all">All Managers</button></div>`;
   let body='';
   if(recordsSection==='all'){
-    body=`<div class="card"><h2>All-Time leaderboard</h2><p class="muted">Every completed official season stored across every room and rivalry group.</p>${historyTableHtml(recordsSummaryData.allTime||[])}</div>`;
+    body=`<div class="card"><h2>All-Time leaderboard</h2><p class="muted">Every completed official season stored across every room and rivalry group. Ranked by PPG, with Titles as the first tiebreak.</p>${historyTableHtml(recordsSummaryData.allTime||[])}</div>`;
   }else if(!groups.length){
     body='<div class="card"><h2>Rivalry Groups</h2><p class="muted">No completed official seasons have been saved yet.</p></div>';
   }else{
@@ -451,25 +466,36 @@ function recordsScreen(){
 function lobby(){
   const m=me(),host=state.hostId===meId;
   const packOptions=Object.entries(state.packLabels||{}).map(([key,label])=>`<option value="${key}" ${state.pack===key?'selected':''}>${esc(label)} (${state.packCounts?.[key]||0} players)</option>`).join('');
-  const modeOptions=Object.entries(state.modeLabels||{}).map(([key,label])=>`<option value="${key}" ${state.mode===key?'selected':''}>${esc(label)}</option>`).join('');
+  const mainModeEntries=Object.entries(state.modeLabels||{}).filter(([key])=>key!=='hard');
+  const modeOptions=`${state.mode==='hard'?'<option value="hard" selected disabled>Hard Mode (Legacy)</option>':''}${mainModeEntries.map(([key,label])=>`<option value="${key}" ${state.mode===key?'selected':''}>${esc(label)}</option>`).join('')}`;
   const descriptions={
     freeform:'Draft any 11 players in the normal open auction. Choose and arrange your formation after the draft.',
     nomination:'Managers take turns choosing who enters the auction. The pool is larger (18 per manager), and every nomination starts with a real £1m+ opening bid.',
     blind:'Every player is a sealed bid. Opponent budgets, squads, bids and winners stay secret until all teams are set.',
-    hard:'Choose your formation now. Every signing must fit an open position and players stay in the slot they are assigned.'
+    priority:'Every round shows one player per manager. Bid blindly on all of them; the highest remaining bids resolve first until everyone gets one player.',
+    hard:'Legacy mode. Choose your formation now; every signing must fit an open position and stays in its assigned slot.'
   };
+  const legacyControl=host?`<details class="legacy-mode-box"><summary>Legacy modes</summary><p class="muted small">Hard Mode is retired from the main mode list while we decide whether to redesign it.</p><button class="secondary big" id="legacyHard">Use Hard Mode (Legacy)</button></details>`:(state.mode==='hard'?'<div class="legacy-badge">Legacy mode</div>':'');
+  const prioritySettings=state.mode==='priority'?`<div class="card"><h2>Priority Bid visibility</h2><p class="muted small">The rules are identical; this only changes what managers can see during the draft.</p><div class="priority-visibility-row"><button class="${state.priorityVisibility==='visible'?'primary':'secondary'} grow priority-visibility" data-visibility="visible" ${host?'':'disabled'}>Visible</button><button class="${state.priorityVisibility==='hidden'?'primary':'secondary'} grow priority-visibility" data-visibility="hidden" ${host?'':'disabled'}>Hidden</button></div><p class="muted small">${state.priorityVisibility==='hidden'?'Hidden: opponent squads, budgets, winners, prices and remaining-position counts stay secret until the final team reveal.':'Visible: opponent squads/budgets stay visible; each round reveals only winning allocations and prices, plus remaining positional supply.'}</p></div>`:'';
   const formationCard=state.mode==='hard'
     ? `<div class="card"><h2>Your formation</h2><select id="formation"><option value="">Choose formation</option>${HARD_FORMATIONS.map(f=>`<option ${m.formation===f?'selected':''}>${f}</option>`).join('')}</select><div class="spacer10"></div><button class="${m.ready?'secondary':'primary'} big" id="ready" ${!m.formation?'disabled':''}>${m.ready?'Not ready':'Ready'}</button></div>`
     : `<div class="card"><h2>Your draft</h2><p class="muted">No formation yet. Draft any 11 players; you will build your XI afterwards.</p><button class="${m.ready?'secondary':'primary'} big" id="ready">${m.ready?'Not ready':'Ready'}</button></div>`;
   shell(`<div class="card"><div class="muted">ROOM CODE</div><div class="row"><div class="code grow">${state.code}</div><button class="secondary" id="copy">Copy link</button></div></div>
-  <div class="card"><h2>Game mode</h2>${host?`<select id="mode">${modeOptions}</select>`:`<div class="pack-display"><b>${esc(modeName())}</b></div>`}<p class="muted small">${esc(descriptions[state.mode]||'')}</p></div>
+  <div class="card"><h2>Game mode</h2>${host?`<select id="mode">${modeOptions}</select>`:`<div class="pack-display"><b>${esc(modeName())}</b></div>`}<p class="muted small">${esc(descriptions[state.mode]||'')}</p>${legacyControl}</div>
+  ${prioritySettings}
   <div class="card"><h2>Player pack</h2>${host?`<select id="pack">${packOptions}</select><p class="muted small">Changing the pack makes everyone ready up again.</p>`:`<div class="pack-display"><b>${esc(packName())}</b><span class="muted">${state.packCounts?.[state.pack]||0} players</span></div>`}</div>
   <div class="card record-save-card"><label class="record-save-toggle"><input id="saveToHistory" type="checkbox" ${state.saveToHistory!==false?'checked':''} ${host?'':'disabled'}><span><b>Save this game to All-Time Records</b><small>${state.saveToHistory!==false?'Official game · completed simulation will count permanently.':'Practice / unranked · permanent leaderboards will not change.'}</small></span></label>${host?'':'<div class="muted small">Only the host can change this before the draft starts.</div>'}</div>
   ${formationCard}
   <div class="card"><h2>Managers</h2>${state.managers.map(x=>`<div class="manager"><div><b>${esc(x.name)}</b><div class="muted">${state.mode==='hard'?(x.formation||'No formation'):'Formation after draft'}</div></div><div class="${x.ready?'ready':'notready'}">${x.ready?'READY':'WAITING'}</div></div>`).join('')}</div>
   ${host?`<button class="primary big" id="start">Start draft</button>`:''}`);
   document.querySelector('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(location.href);showToast('Invite link copied')}catch{showToast('Copy the page address from your browser')}};
-  if(host){document.querySelector('#mode').onchange=e=>socket.emit('setMode',{mode:e.target.value});document.querySelector('#pack').onchange=e=>socket.emit('setPack',{pack:e.target.value});const save=document.querySelector('#saveToHistory');if(save)save.onchange=e=>socket.emit('setSaveToHistory',{save:e.target.checked},r=>{if(r&&!r.ok)showToast(r.error)});}
+  if(host){
+    document.querySelector('#mode').onchange=e=>socket.emit('setMode',{mode:e.target.value});
+    document.querySelector('#pack').onchange=e=>socket.emit('setPack',{pack:e.target.value});
+    const save=document.querySelector('#saveToHistory');if(save)save.onchange=e=>socket.emit('setSaveToHistory',{save:e.target.checked},r=>{if(r&&!r.ok)showToast(r.error)});
+    const legacy=document.querySelector('#legacyHard');if(legacy)legacy.onclick=()=>socket.emit('setMode',{mode:'hard'});
+    document.querySelectorAll('.priority-visibility').forEach(b=>b.onclick=()=>socket.emit('setPriorityVisibility',{visibility:b.dataset.visibility},r=>{if(r&&!r.ok)showToast(r.error)}));
+  }
   if(state.mode==='hard')document.querySelector('#formation').onchange=e=>socket.emit('setFormation',{formation:e.target.value});
   document.querySelector('#ready').onclick=()=>socket.emit('setReady',{ready:!m.ready});
   if(host)document.querySelector('#start').onclick=()=>socket.emit('startDraft',{},r=>{if(r&&!r.ok)showToast(r.error)});
@@ -526,11 +552,71 @@ function wireNominationButtons(selectMode){
   });
 }
 function managerTabHtml(){
-  if(state.mode==='blind')return state.managers.map(x=>x.id===meId
-    ? `<div class="card"><div class="budget"><h3>${esc(x.name)} (you)</h3><b>£${x.budget}m · ${x.squad.length}/11</b></div></div>`
+  if(state.managers.some(x=>x.hidden))return state.managers.map(x=>x.id===meId
+    ? `<div class="card"><div class="budget"><h3>${esc(x.name)} (you)</h3><b>£${x.budget}m · ${x.squad.length}/11</b></div><div>${x.squad.map(p=>`<span class="pill">${esc(p.name)} · ${esc(p.positions.join('/'))} · £${p.price}m</span>`).join('')||'<span class="muted">No players yet</span>'}</div></div>`
     : `<div class="card blind-hidden"><h3>${esc(x.name)}</h3><p class="muted">Squad and budget hidden until the team reveal.</p></div>`).join('');
   return state.managers.map(x=>`<div class="card"><div class="budget"><h3>${esc(x.name)}</h3><b>£${x.budget}m · ${x.squad.length}/11</b></div><div>${x.squad.map(p=>`<span class="pill">${esc(p.name)} · ${state.mode==='hard'?esc(p.assignedPosition||'—'):esc(p.positions.join('/'))} · £${p.price}m</span>`).join('')||'<span class="muted">No players yet</span>'}</div></div>`).join('');
 }
+
+function priorityPositionCounterHtml(counts){
+  if(!counts)return '';
+  const labels={GK:'GK',CB:'CB',FB:'FB',MID:'MID',WING:'WING',ST:'ST'};
+  return `<div class="priority-position-counter"><div class="muted small">ELIGIBLE PLAYERS REMAINING AFTER THIS ROUND</div><div class="priority-position-grid">${Object.entries(labels).map(([k,label])=>`<div><span>${label}</span><b>${counts[k]??0}</b></div>`).join('')}</div><div class="muted tiny">Players can count in more than one category through alternate positions.</div></div>`;
+}
+function priorityDraftPanel(m,c){
+  if(!c)return '<div class="card">Loading next Priority Bid board…</div>';
+  if(c.priorityStage==='result'){
+    const rows=c.priorityAllocations||[];
+    const hidden=c.priorityVisibility==='hidden';
+    return `<div class="card priority-resolution"><div class="player-counter">ROUND ${c.priorityRound} OF 11</div><h2>${hidden?'Your result':'Round resolved'}</h2>${rows.length?rows.map(a=>`<div class="priority-result-row"><div><b>${esc(a.player?.name||'Player')}</b><div class="muted small">${esc(a.player?.positions?.join(' / ')||'')}</div></div><div class="right"><b>${hidden?'You':esc(a.managerName||'Manager')}</b><div>£${a.price}m</div></div></div>`).join(''):'<p class="muted">Other allocations remain hidden until the final team reveal.</p>'}<p class="muted small">Next board loading…</p></div>`;
+  }
+  if(c.priorityStage==='tiebreak'){
+    const eligible=!!c.priorityTiebreakEligible,locked=!!c.myPriorityLocked,min=Number(c.priorityTieMin||1),max=Number(c.priorityMaxBid||min),bid=Number(c.myPriorityTieBid||min);
+    if(!eligible)return `<div class="card"><div class="player-counter">ROUND ${c.priorityRound} OF 11 · TIEBREAK</div><div id="timer" class="timer ${Number(c.timeLeft)<=5?'warn':''}">${c.timeLeft}</div><h2>Tiebreak in progress</h2><p class="muted">The round will continue as soon as the tied managers settle it.</p>${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}</div>`;
+    return `<div class="card priority-tiebreak"><div class="player-counter">ROUND ${c.priorityRound} OF 11 · TIEBREAK</div><div id="timer" class="timer ${Number(c.timeLeft)<=5?'warn':''}">${c.timeLeft}</div><h2>${esc(c.priorityTiePlayer?.name||'Tied player')}</h2><p class="muted">Your original £${min}m bid carries forward. Keep it or increase it; you cannot lower it.</p><div class="priority-tie-control"><button class="secondary priority-tie-step" data-step="-1" ${locked||state.paused?'disabled':''}>−</button><input id="priorityTieInput" inputmode="numeric" type="number" min="${min}" max="${max}" value="${bid}" ${locked||state.paused?'disabled':''}><span>m</span><button class="secondary priority-tie-step" data-step="1" ${locked||state.paused?'disabled':''}>+</button></div><button class="${locked?'secondary':'primary'} big" id="priorityLock" ${state.paused?'disabled':''}>${locked?'Unlock Decision':'Lock Decision'}</button>${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}</div>`;
+  }
+  const locked=!!c.myPriorityLocked,bids=c.myPriorityBids||{},max=Number(c.priorityMaxBid||1);
+  const rows=(c.priorityBoard||[]).map(p=>{
+    const bid=Number(bids[p.id]||1);
+    return `<div class="priority-bid-row" data-priority-player="${p.id}"><div class="priority-player-info"><b>${esc(p.name)}</b><span>${esc(p.positions.join(' / '))}</span></div><div class="priority-bid-control"><button class="secondary priority-step" data-player="${p.id}" data-step="-1" ${locked||state.paused?'disabled':''}>−</button><div class="priority-bid-input-wrap"><span>£</span><input class="priority-bid-input" data-player="${p.id}" inputmode="numeric" type="number" min="1" max="${max}" value="${bid}" ${locked||state.paused?'disabled':''}><span>m</span></div><button class="secondary priority-step" data-player="${p.id}" data-step="1" ${locked||state.paused?'disabled':''}>+</button></div></div>`;
+  }).join('');
+  return `<div class="card priority-board"><div class="priority-board-head"><div><div class="player-counter">ROUND ${c.priorityRound} OF 11</div><h2>Bid on every player</h2><p class="muted no-margin">Bids above £1m must be unique. £1m can be repeated.</p></div><div id="timer" class="timer ${Number(c.timeLeft)<=5?'warn':''}">${c.timeLeft}</div></div>${priorityPositionCounterHtml(c.priorityRemainingPositions)}<div class="priority-bid-list">${rows}</div><div class="priority-sticky"><div><span class="muted small">BUDGET</span><b>£${m.budget}m</b><span class="muted small">MAX SAFE BID £${max}m</span></div><button class="${locked?'secondary':'primary'}" id="priorityLock" ${state.paused?'disabled':''}>${locked?'Unlock Decision':'Lock Decision'}</button></div>${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}</div>`;
+}
+function priorityUsedAmounts(c,exceptPlayerId){
+  const used=new Set();for(const [pid,v] of Object.entries(c.myPriorityBids||{})){if(Number(pid)!==Number(exceptPlayerId)&&Number(v)>1)used.add(Number(v));}return used;
+}
+function nextPriorityAmount(c,playerId,current,step){
+  const used=priorityUsedAmounts(c,playerId),max=Number(c.priorityMaxBid||1);let next=Math.max(1,Math.min(max,Number(current)+Number(step)));
+  if(step>0){while(next<=max&&next>1&&used.has(next))next++;if(next>max)return Number(current);}
+  else{while(next>1&&used.has(next))next--;}
+  return Math.max(1,Math.min(max,next));
+}
+function wirePriorityControls(){
+  const c=state.current;if(!c||state.mode!=='priority')return;
+  const lock=document.querySelector('#priorityLock');if(lock)lock.onclick=()=>socket.emit('setPriorityLock',{locked:!c.myPriorityLocked},r=>{if(r&&!r.ok)showToast(r.error)});
+  if(c.priorityStage==='tiebreak'){
+    const input=document.querySelector('#priorityTieInput');
+    const submit=v=>socket.emit('setPriorityTieBid',{amount:Number(v)},r=>{if(!r?.ok){showToast(r?.error||'Could not set tiebreak bid');if(input)input.value=String(c.myPriorityTieBid||c.priorityTieMin||1);return;}c.myPriorityTieBid=Number(r.amount);if(input)input.value=String(r.amount)});
+    document.querySelectorAll('.priority-tie-step').forEach(b=>b.onclick=()=>{const min=Number(c.priorityTieMin||1),max=Number(c.priorityMaxBid||min),cur=Number(input?.value||min);submit(Math.max(min,Math.min(max,cur+Number(b.dataset.step))))});
+    if(input)input.onchange=()=>submit(input.value);
+    return;
+  }
+  if(c.priorityStage!=='bidding')return;
+  const submit=(playerId,amount,input)=>socket.emit('setPriorityBid',{playerId:Number(playerId),amount:Number(amount)},r=>{
+    if(!r?.ok){showToast(r?.error||'Could not set bid');if(input)input.value=String(c.myPriorityBids?.[playerId]||1);return;}
+    c.myPriorityBids[playerId]=Number(r.amount);if(input)input.value=String(r.amount);
+  });
+  document.querySelectorAll('.priority-step').forEach(b=>b.onclick=()=>{
+    const playerId=b.dataset.player,input=document.querySelector(`.priority-bid-input[data-player="${playerId}"]`),cur=Number(c.myPriorityBids?.[playerId]||1);
+    const next=nextPriorityAmount(c,playerId,cur,Number(b.dataset.step));if(next!==cur)submit(playerId,next,input);
+  });
+  document.querySelectorAll('.priority-bid-input').forEach(input=>input.onchange=()=>{
+    const playerId=input.dataset.player,amount=Math.floor(Number(input.value));
+    if(amount>1&&priorityUsedAmounts(c,playerId).has(amount)){showToast(`£${amount}m is already used`);input.value=String(c.myPriorityBids?.[playerId]||1);return;}
+    submit(playerId,amount,input);
+  });
+}
+
 function blindDraftPanel(m,c){
   if(!c)return '<div class="card">Loading next player…</div>';
   const complete=m.squad.length>=11;
@@ -599,14 +685,16 @@ function draft(){
   document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;draft()});
   const panel=document.querySelector('#panel');
   if(tab==='draft'){
-    if(state.mode==='blind')panel.innerHTML=blindDraftPanel(m,c);
+    if(state.mode==='priority')panel.innerHTML=priorityDraftPanel(m,c);
+    else if(state.mode==='blind')panel.innerHTML=blindDraftPanel(m,c);
     else if(state.mode==='nomination'&&!c)panel.innerHTML=nominationTurnPanel();
     else panel.innerHTML=openAuctionPanel(m,c);
   }else if(tab==='pool'&&state.mode==='nomination')panel.innerHTML=nominationPoolCard(null);
   else if(tab==='team')panel.innerHTML=state.mode==='hard'?`<div class="card"><h2>${m.formation} · £${m.budget}m left</h2><div class="squad">${hardSquadHtml(m)}</div></div>`:`<div class="card"><div class="budget"><h2>Your 11</h2><b>£${m.budget}m left</b></div>${freeformDraftSquadHtml(m)}</div>`;
   else if(tab==='managers')panel.innerHTML=managerTabHtml();
+  if(state.mode==='priority'&&tab==='draft')wirePriorityControls();
   if(state.mode==='blind'&&tab==='draft')wireBlindControls();
-  if(state.mode!=='blind'&&tab==='draft'&&c)wireOpenAuction(c);
+  if(!['blind','priority'].includes(state.mode)&&tab==='draft'&&c)wireOpenAuction(c);
   if(state.mode==='nomination'&&((tab==='draft'&&!c)||tab==='pool'))wireNominationPool(tab==='draft'&&!c?(state.nomination?.finalPickManagerId===meId?'final':state.nomination?.nominatorId===meId?'nominate':null):null);
 }
 
@@ -722,8 +810,10 @@ function revealedTeamHtml(m){
 }
 
 function draftHistoryHtml(){
-  if(state.mode!=='blind'||!state.draftHistory?.length)return '';
-  return `<div class="card"><h2>Blind auction reveal</h2><p class="muted">Now that every team is locked, the hidden winners and prices are revealed.</p><div class="table-wrap"><table class="draft-history-table"><thead><tr><th>#</th><th>Player</th><th>Manager</th><th>Price</th></tr></thead><tbody>${state.draftHistory.map((h,i)=>`<tr><td>${i+1}</td><td><b>${esc(h.player?.name||'—')}</b></td><td>${h.noSale?'No sale':esc(h.winnerName||'—')}${h.forced?' <span class="forced-tag">forced</span>':''}</td><td>${h.noSale?'—':`£${h.price}m`}</td></tr>`).join('')}</tbody></table></div></div>`;
+  if(!state.draftHistory?.length)return '';
+  if(state.mode==='priority')return priorityBidHistoryHtml(state.draftHistory.filter(r=>r.type==='priorityRound'),'Priority Bid reveal');
+  if(state.mode==='blind')return simpleDraftHistoryHtml(state.draftHistory,'Blind auction reveal');
+  return '';
 }
 function reveal(){
   const host=state.hostId===meId;
@@ -790,7 +880,7 @@ function fullResults(){
   if(postSimView==='teams'){
     body=teamReviewHtml(state.managers,sim.playerStats||[],reviewManagerId,false,sim.matches||[]);
   }else{
-    if(resultsTab==='season') body=`<div class="card"><h2>Final table</h2>${standingsHtml(sim.table)}</div>${playoffs}<div class="card"><h2>Match results</h2><div class="matches">${(sim.matches||[]).map((m,i)=>matchHtml(m,`Match ${i+1} of ${sim.matches.length}`)).join('')}</div></div><div class="card"><h2>Team ratings</h2><p class="muted small">The team ratings that drove the simulation. Individual hidden player ratings remain secret.</p>${state.managers.map(m=>`<div class="rating-summary"><div><b>${esc(m.name)}</b><span>${isFreeformLike()?esc(m.finalFormation||'XI'):esc(m.formation||'XI')}</span></div><strong>${state.teamRatings?.[m.id]?.overall??'—'}</strong></div>`).join('')}</div>${state.mode==='blind'?draftHistoryHtml():''}`;
+    if(resultsTab==='season') body=`<div class="card"><h2>Final table</h2>${standingsHtml(sim.table)}</div>${playoffs}<div class="card"><h2>Match results</h2><div class="matches">${(sim.matches||[]).map((m,i)=>matchHtml(m,`Match ${i+1} of ${sim.matches.length}`)).join('')}</div></div><div class="card"><h2>Team ratings</h2><p class="muted small">The team ratings that drove the simulation. Individual hidden player ratings remain secret.</p>${state.managers.map(m=>`<div class="rating-summary"><div><b>${esc(m.name)}</b><span>${isFreeformLike()?esc(m.finalFormation||'XI'):esc(m.formation||'XI')}</span></div><strong>${state.teamRatings?.[m.id]?.overall??'—'}</strong></div>`).join('')}</div>${['blind','priority'].includes(state.mode)?draftHistoryHtml():''}`;
     else if(resultsTab==='players') body=`<div class="card"><h2>League player stats</h2><p class="muted">Top 10 performers across every manager's XI.</p>${leaderboardHtml(statsMetric)}</div>`;
     else if(resultsTab==='tots') body=`<div class="card"><div class="budget"><div><h2>Team of the Season</h2><p class="muted no-margin">Best-performing valid XI by average match rating, using the positions players were actually deployed in with sensible neighbouring roles.</p></div><b>${esc(sim.teamOfSeason?.formation||'XI')}</b></div><div class="spacer14"></div>${totsPitchHtml(sim.teamOfSeason)}</div>`;
     else body=sessionHtml();
