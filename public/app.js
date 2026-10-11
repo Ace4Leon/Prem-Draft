@@ -16,6 +16,7 @@ let viewingRecords=false;
 let recordsSection='rivalry';
 let recordsSummaryData=null;
 let recordsGroupData=null;
+let recordsAllData=null;
 let selectedRivalryKey='';
 let selectedRecordModes=new Set();
 let selectedRecordPacks=new Set();
@@ -31,6 +32,11 @@ let historicalView='results';
 let historicalResultTab='season';
 let historicalStatsMetric='goals';
 let historicalTeamId=null;
+let historicalReturnSection='rivalry';
+let firstSessionRecoveryCode=null;
+let openCustomBidDraft={playerId:null,value:null};
+const RECORD_FILTERS_KEY='premDraftRecordFiltersV1';
+const PROFILE_ONBOARDING_KEY='premDraftProfileOnboardingPendingV1';
 
 const SESSION_KEY='premDraftReconnectSessionV1';
 
@@ -63,11 +69,30 @@ function editDefaultProfileName(){
 function ensurePermanentProfile(name,cb){
   const p=savedProfile();if(p?.recoveryCode)return cb(p);
   socket.emit('profileCreate',{name},r=>{
-    if(r?.ok&&r.profile){saveProfile(r.profile);showToast(`Profile created · code ${r.profile.recoveryCode}`);return cb(r.profile);}
+    if(r?.ok&&r.profile){saveProfile(r.profile);firstSessionRecoveryCode=r.profile.recoveryCode;try{localStorage.setItem(PROFILE_ONBOARDING_KEY,r.profile.recoveryCode)}catch{};return cb(r.profile);}
     // Permanent history must never block the core game if the database is temporarily unavailable.
     showToast('Permanent Records unavailable · continuing as guest');cb(null);
   });
 }
+
+function showRecoveryOnboardingIfNeeded(){
+  let pending='';try{pending=localStorage.getItem(PROFILE_ONBOARDING_KEY)||''}catch{}
+  const profile=savedProfile();
+  if(!pending||!profile?.recoveryCode||pending!==profile.recoveryCode||document.querySelector('#profileOnboarding'))return;
+  const wrap=document.createElement('div');wrap.id='profileOnboarding';wrap.className='profile-onboarding-backdrop';
+  wrap.innerHTML=`<div class="profile-onboarding-card"><div class="muted small">YOUR PERMANENT PREM DRAFT PROFILE</div><h2>Your profile is ready</h2><p class="muted">This recovery code lets you get your profile, records and history back on another device.</p><div class="recovery-code-large">${esc(profile.recoveryCode)}</div><p class="muted small">This browser remembers you automatically, so you do not need to enter the code every time. Keep the code somewhere you will remember.</p><button class="primary big" id="profileOnboardingContinue">Continue</button></div>`;
+  document.body.appendChild(wrap);
+  document.querySelector('#profileOnboardingContinue').onclick=()=>{try{localStorage.removeItem(PROFILE_ONBOARDING_KEY)}catch{};wrap.remove();};
+}
+function cleanRoomCodeInput(value){return String(value||'').toUpperCase().replace(/\s+/g,'').replace(/[^A-Z0-9]/g,'').slice(0,6);}
+function wireRoomCodeInput(input){
+  if(!input)return;
+  input.setAttribute('autocapitalize','characters');input.setAttribute('autocomplete','off');input.setAttribute('spellcheck','false');
+  input.oninput=()=>{const cleaned=cleanRoomCodeInput(input.value);if(input.value!==cleaned)input.value=cleaned;};
+}
+function managerDot(m){return `<span class="manager-dot" style="--manager-color:${esc(m?.color||'#64748b')}"></span>`;}
+function managerNameHtml(m){return `${managerDot(m)}<span>${esc(m?.name||'Manager')}</span>`;}
+
 let resumeInFlight=false;
 function readSavedSession(){
   try{return JSON.parse(localStorage.getItem(SESSION_KEY)||'null')}catch{return null}
@@ -139,23 +164,42 @@ const HARD_SLOTS={
 
 // Slot arrays use the same order as the server. Rows control how the XI is drawn on screen.
 const FF_LAYOUTS={
-  '4-3-3':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','LW','ST','RW'],rows:[[8,9,10],[5,6,7],[1,2,3,4],[0]]},
-  '4-4-2':{slots:['GK','LB','CB','CB','RB','LM','CM','CM','RM','ST','ST'],rows:[[9,10],[5,6,7,8],[1,2,3,4],[0]]},
-  '4-2-3-1':{slots:['GK','LB','CB','CB','RB','DM','DM','LW','AM','RW','ST'],rows:[[10],[7,8,9],[5,6],[1,2,3,4],[0]]},
-  '4-1-4-1':{slots:['GK','LB','CB','CB','RB','DM','LM','CM','CM','RM','ST'],rows:[[10],[6,7,8,9],[5],[1,2,3,4],[0]]},
-  '4-3-1-2':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','AM','ST','ST'],rows:[[9,10],[8],[5,6,7],[1,2,3,4],[0]]},
-  '4-2-2-2':{slots:['GK','LB','CB','CB','RB','DM','DM','AM','AM','ST','ST'],rows:[[9,10],[7,8],[5,6],[1,2,3,4],[0]]},
-  '4-1-2-1-2':{slots:['GK','LB','CB','CB','RB','DM','CM','CM','AM','ST','ST'],rows:[[9,10],[8],[6,7],[5],[1,2,3,4],[0]]},
-  '4-3-2-1':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','AM','AM','ST'],rows:[[10],[8,9],[5,6,7],[1,2,3,4],[0]]},
-  '3-5-2':{slots:['GK','CB','CB','CB','LM','CM','CM','AM','RM','ST','ST'],rows:[[9,10],[7],[4,5,6,8],[1,2,3],[0]]},
-  '3-4-3':{slots:['GK','CB','CB','CB','LM','CM','CM','RM','LW','ST','RW'],rows:[[8,9,10],[4,5,6,7],[1,2,3],[0]]},
-  '3-4-2-1':{slots:['GK','CB','CB','CB','LM','CM','CM','RM','AM','AM','ST'],rows:[[10],[8,9],[4,5,6,7],[1,2,3],[0]]},
+  '3-1-4-2':{slots:['GK','CB','CB','CB','DM','LM','CM','CM','RM','ST','ST'],rows:[[9,10],[5,6,7,8],[4],[1,2,3],[0]]},
   '3-4-1-2':{slots:['GK','CB','CB','CB','LM','CM','CM','RM','AM','ST','ST'],rows:[[9,10],[8],[4,5,6,7],[1,2,3],[0]]},
-  '5-3-2':{slots:['GK','LB','CB','CB','CB','RB','CM','CM','CM','ST','ST'],rows:[[9,10],[6,7,8],[1,2,3,4,5],[0]]},
+  '3-4-2-1':{slots:['GK','CB','CB','CB','LM','CM','CM','RM','AM','AM','ST'],rows:[[10],[8,9],[4,5,6,7],[1,2,3],[0]]},
+  '3-4-3':{slots:['GK','CB','CB','CB','LM','CM','CM','RM','LW','ST','RW'],rows:[[8,9,10],[4,5,6,7],[1,2,3],[0]]},
+  '3-5-2':{slots:['GK','CB','CB','CB','LM','CM','CM','AM','RM','ST','ST'],rows:[[9,10],[7],[4,5,6,8],[1,2,3],[0]]},
+  '4-1-2-1-2 Narrow':{slots:['GK','LB','CB','CB','RB','DM','CM','CM','AM','ST','ST'],rows:[[9,10],[8],[6,7],[5],[1,2,3,4],[0]]},
+  '4-1-2-1-2 Wide':{slots:['GK','LB','CB','CB','RB','DM','LM','RM','AM','ST','ST'],rows:[[9,10],[8],[6,7],[5],[1,2,3,4],[0]]},
+  '4-1-3-2':{slots:['GK','LB','CB','CB','RB','DM','LM','CM','RM','ST','ST'],rows:[[9,10],[6,7,8],[5],[1,2,3,4],[0]]},
+  '4-1-4-1':{slots:['GK','LB','CB','CB','RB','DM','LM','CM','CM','RM','ST'],rows:[[10],[6,7,8,9],[5],[1,2,3,4],[0]]},
+  '4-2-1-3':{slots:['GK','LB','CB','CB','RB','DM','DM','AM','LW','ST','RW'],rows:[[8,9,10],[7],[5,6],[1,2,3,4],[0]]},
+  '4-2-2-2':{slots:['GK','LB','CB','CB','RB','DM','DM','AM','AM','ST','ST'],rows:[[9,10],[7,8],[5,6],[1,2,3,4],[0]]},
+  '4-2-3-1 Wide':{slots:['GK','LB','CB','CB','RB','DM','DM','LM','AM','RM','ST'],rows:[[10],[7,8,9],[5,6],[1,2,3,4],[0]]},
+  '4-2-3-1 Narrow':{slots:['GK','LB','CB','CB','RB','DM','DM','AM','AM','AM','ST'],rows:[[10],[7,8,9],[5,6],[1,2,3,4],[0]]},
+  '4-2-4':{slots:['GK','LB','CB','CB','RB','CM','CM','LW','ST','ST','RW'],rows:[[7,8,9,10],[5,6],[1,2,3,4],[0]]},
+  '4-3-1-2':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','AM','ST','ST'],rows:[[9,10],[8],[5,6,7],[1,2,3,4],[0]]},
+  '4-3-2-1':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','AM','AM','ST'],rows:[[10],[8,9],[5,6,7],[1,2,3,4],[0]]},
+  '4-3-3 Wide':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','LW','ST','RW'],rows:[[8,9,10],[5,6,7],[1,2,3,4],[0]]},
+  '4-3-3 Holding':{slots:['GK','LB','CB','CB','RB','DM','CM','CM','LW','ST','RW'],rows:[[8,9,10],[6,7],[5],[1,2,3,4],[0]]},
+  '4-3-3 Attack':{slots:['GK','LB','CB','CB','RB','CM','CM','AM','LW','ST','RW'],rows:[[8,9,10],[7],[5,6],[1,2,3,4],[0]]},
+  '4-3-3 Balanced':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','LW','ST','RW'],rows:[[8,9,10],[5,6,7],[1,2,3,4],[0]]},
+  '4-4-1-1':{slots:['GK','LB','CB','CB','RB','LM','CM','CM','RM','AM','ST'],rows:[[10],[9],[5,6,7,8],[1,2,3,4],[0]]},
+  '4-4-2':{slots:['GK','LB','CB','CB','RB','LM','CM','CM','RM','ST','ST'],rows:[[9,10],[5,6,7,8],[1,2,3,4],[0]]},
+  '4-4-2 Holding':{slots:['GK','LB','CB','CB','RB','LM','DM','DM','RM','ST','ST'],rows:[[9,10],[5,6,7,8],[1,2,3,4],[0]]},
+  '4-5-1':{slots:['GK','LB','CB','CB','RB','LM','CM','CM','CM','RM','ST'],rows:[[10],[5,6,7,8,9],[1,2,3,4],[0]]},
+  '4-5-1 Attack':{slots:['GK','LB','CB','CB','RB','LM','DM','AM','DM','RM','ST'],rows:[[10],[7],[5,6,8,9],[1,2,3,4],[0]]},
+  '5-2-1-2':{slots:['GK','LB','CB','CB','CB','RB','CM','CM','AM','ST','ST'],rows:[[9,10],[8],[6,7],[1,2,3,4,5],[0]]},
   '5-2-3':{slots:['GK','LB','CB','CB','CB','RB','CM','CM','LW','ST','RW'],rows:[[8,9,10],[6,7],[1,2,3,4,5],[0]]},
-  '5-4-1':{slots:['GK','LB','CB','CB','CB','RB','LM','CM','CM','RM','ST'],rows:[[10],[6,7,8,9],[1,2,3,4,5],[0]]},
-  '5-2-1-2':{slots:['GK','LB','CB','CB','CB','RB','CM','CM','AM','ST','ST'],rows:[[9,10],[8],[6,7],[1,2,3,4,5],[0]]}
+  '5-3-2':{slots:['GK','LB','CB','CB','CB','RB','CM','CM','CM','ST','ST'],rows:[[9,10],[6,7,8],[1,2,3,4,5],[0]]},
+  '5-4-1':{slots:['GK','LB','CB','CB','CB','RB','LM','CM','CM','RM','ST'],rows:[[10],[6,7,8,9],[1,2,3,4,5],[0]]}
 };
+// Hidden legacy aliases keep old saved drafts viewable without putting old formations back in the selector.
+Object.assign(FF_LAYOUTS,{
+  '4-3-3':FF_LAYOUTS['4-3-3 Wide'],
+  '4-2-3-1':FF_LAYOUTS['4-2-3-1 Wide'],
+  '4-1-2-1-2':FF_LAYOUTS['4-1-2-1-2 Narrow']
+});
 
 function showToast(msg){
   toast.textContent=msg;
@@ -254,17 +298,18 @@ function home(){
       const payload={name,profileCode:profileNow?.recoveryCode||null};
       if(kind==='create')socket.emit('createRoom',payload,r=>{
         if(!r?.ok)return showToast(r?.error||'Could not create room');
-        meId=r.managerId||r.state?.viewerId;saveSession(r.code,r.reconnectToken,meId);history.replaceState({},'',`?room=${r.code}`);state=r.state;render();
+        meId=r.managerId||r.state?.viewerId;saveSession(r.code,r.reconnectToken,meId);history.replaceState({},'',`?room=${r.code}`);state=r.state;render();showRecoveryOnboardingIfNeeded();
       });
       else{
-        payload.code=document.querySelector('#code').value;
+        payload.code=cleanRoomCodeInput(document.querySelector('#code').value);
         socket.emit('joinRoom',payload,r=>{
           if(!r?.ok)return showToast(r?.error||'Could not join room');
-          meId=r.managerId||r.state?.viewerId;saveSession(r.state.code,r.reconnectToken,meId);state=r.state;history.replaceState({},'',`?room=${state.code}`);render();
+          meId=r.managerId||r.state?.viewerId;saveSession(r.state.code,r.reconnectToken,meId);state=r.state;history.replaceState({},'',`?room=${state.code}`);render();showRecoveryOnboardingIfNeeded();
         });
       }
     });
   };
+  wireRoomCodeInput(document.querySelector('#code'));
   const create=document.querySelector('#create');if(create)create.onclick=()=>launch('create');
   document.querySelector('#join').onclick=()=>launch('join');
 }
@@ -272,8 +317,41 @@ function home(){
 function historyTableHtml(rows){
   return `<div class="table-wrap"><table class="history-table"><thead><tr><th>#</th><th>Manager</th><th>Drafts</th><th>Titles</th><th>PPG</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(rows||[]).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.name)}</b></td><td>${r.drafts}</td><td><b>${r.titles}</b></td><td><b>${Number(r.ppg||0).toFixed(2)}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td><b>${r.pts}</b></td></tr>`).join('')}</tbody></table></div>`;
 }
+
+function readSavedRecordFilters(modeLabels,packLabels){
+  try{
+    const raw=JSON.parse(localStorage.getItem(RECORD_FILTERS_KEY)||'null');
+    if(!raw)return null;
+    const modes=(raw.modes||[]).filter(x=>Object.prototype.hasOwnProperty.call(modeLabels||{},x));
+    const packs=(raw.packs||[]).filter(x=>Object.prototype.hasOwnProperty.call(packLabels||{},x));
+    if(!modes.length||!packs.length)return null;
+    return {modes:new Set(modes),packs:new Set(packs)};
+  }catch{return null}
+}
+function saveRecordFilters(){
+  try{localStorage.setItem(RECORD_FILTERS_KEY,JSON.stringify({modes:[...selectedRecordModes],packs:[...selectedRecordPacks]}))}catch{}
+}
+function recordFilterCount(){
+  const allModes=Object.keys(recordsSummaryData?.modeLabels||{}).length,allPacks=Object.keys(recordsSummaryData?.packLabels||{}).length;
+  return Math.max(0,allModes-selectedRecordModes.size)+Math.max(0,allPacks-selectedRecordPacks.size);
+}
+function recordFilterSummary(){
+  const modes=recordsSummaryData?.modeLabels||{},packs=recordsSummaryData?.packLabels||{};
+  const active=[];
+  if(selectedRecordModes.size!==Object.keys(modes).length)active.push(...[...selectedRecordModes].map(k=>modes[k]).filter(Boolean));
+  if(selectedRecordPacks.size!==Object.keys(packs).length)active.push(...[...selectedRecordPacks].map(k=>packs[k]).filter(Boolean));
+  return active.length?`<div class="active-filter-chips">${active.map(x=>`<span>${esc(x)}</span>`).join('')}</div>`:'';
+}
+function loadAllRecords(){
+  recordsAllData=null;recordsScreen();
+  socket.emit('recordsAll',{modes:[...selectedRecordModes],packs:[...selectedRecordPacks]},r=>{
+    if(!r?.ok){showToast(r?.error||'Could not load All-Time Records');return;}
+    recordsAllData=r;if(viewingRecords&&!historicalCompetition)recordsScreen();
+  });
+}
+
 function openRecords(){
-  viewingRecords=true;recordsSummaryData=null;recordsGroupData=null;recordsAdminMode=false;recordsAdminData=null;recordsAdminProfilesData=null;historicalCompetition=null;
+  viewingRecords=true;recordsSummaryData=null;recordsGroupData=null;recordsAllData=null;recordsAdminMode=false;recordsAdminData=null;recordsAdminProfilesData=null;historicalCompetition=null;
   shell('<div class="card"><h1>All-Time Records</h1><p class="muted">Loading permanent history…</p></div>');
   socket.emit('recordsSummary',{},r=>{
     if(!r?.ok){shell(`<div class="card"><h1>All-Time Records</h1><p class="muted">${esc(r?.error||'Could not load records.')}</p><button class="secondary big" id="recordsBack">Back</button></div>`);document.querySelector('#recordsBack').onclick=closeRecords;return;}
@@ -281,13 +359,16 @@ function openRecords(){
     const profile=savedProfile();
     const preferred=(r.groups||[]).find(g=>profile?.profileId&&g.profileIds?.includes(profile.profileId))||(r.groups||[])[0];
     selectedRivalryKey=preferred?.key||'';
-    selectedRecordModes=new Set(Object.keys(r.modeLabels||{}));
-    selectedRecordPacks=new Set(Object.keys(r.packLabels||{}));
-    if(selectedRivalryKey)loadRivalryGroup();else recordsScreen();
+    const saved=readSavedRecordFilters(r.modeLabels||{},r.packLabels||{});
+    selectedRecordModes=saved?.modes||new Set(Object.keys(r.modeLabels||{}));
+    selectedRecordPacks=saved?.packs||new Set(Object.keys(r.packLabels||{}));
+    if(recordsSection==='all')loadAllRecords();
+    else if(selectedRivalryKey)loadRivalryGroup();
+    else recordsScreen();
   });
 }
 function closeRecords(){
-  viewingRecords=false;recordsSummaryData=null;recordsGroupData=null;recordsAdminMode=false;recordsAdminData=null;recordsAdminProfilesData=null;historicalCompetition=null;
+  viewingRecords=false;recordsSummaryData=null;recordsGroupData=null;recordsAllData=null;recordsAdminMode=false;recordsAdminData=null;recordsAdminProfilesData=null;historicalCompetition=null;
   if(state)render();else home();
 }
 function loadRivalryGroup(){
@@ -300,7 +381,7 @@ function loadRivalryGroup(){
 }
 function recordsFiltersHtml(){
   const modes=recordsSummaryData?.modeLabels||{},packs=recordsSummaryData?.packLabels||{};
-  return `<div class="records-filter-panel" id="recordsFilterPanel" hidden><div class="filter-columns"><div><b>Draft modes</b>${Object.entries(modes).map(([k,v])=>`<label class="filter-check"><input type="checkbox" data-filter-mode="${esc(k)}" ${selectedRecordModes.has(k)?'checked':''}> ${esc(v)}</label>`).join('')}</div><div><b>Player packs</b>${Object.entries(packs).map(([k,v])=>`<label class="filter-check"><input type="checkbox" data-filter-pack="${esc(k)}" ${selectedRecordPacks.has(k)?'checked':''}> ${esc(v)}</label>`).join('')}</div></div><div class="row"><button class="secondary grow" id="recordsAllFilters">Select all</button><button class="primary grow" id="recordsApplyFilters">Apply</button></div></div>`;
+  return `<div class="records-filter-panel" id="recordsFilterPanel" hidden><div class="filter-columns"><div><b>Draft modes</b>${Object.entries(modes).map(([k,v])=>`<label class="filter-check"><input type="checkbox" data-filter-mode="${esc(k)}" ${selectedRecordModes.has(k)?'checked':''}> ${esc(v)}</label>`).join('')}</div><div><b>Player packs</b>${Object.entries(packs).map(([k,v])=>`<label class="filter-check"><input type="checkbox" data-filter-pack="${esc(k)}" ${selectedRecordPacks.has(k)?'checked':''}> ${esc(v)}</label>`).join('')}</div></div><div class="row mobile-stack"><button class="secondary grow" id="recordsAllFilters">Select all</button><button class="secondary grow" id="recordsClearFilters">Reset</button><button class="primary grow" id="recordsApplyFilters">Apply</button></div></div>`;
 }
 function adminDate(v){
   try{return new Date(v).toLocaleString()}catch{return String(v||'')}
@@ -313,6 +394,7 @@ function draftHistoryCardsHtml(drafts){
   }).join('')}</div>`;
 }
 function openHistoricalCompetition(competitionId){
+  historicalReturnSection=recordsSection;
   historicalCompetition={loading:true,competitionId};historicalView='results';historicalResultTab='season';historicalStatsMetric='goals';historicalTeamId=null;recordsScreen();
   socket.emit('recordsCompetition',{competitionId},r=>{
     if(!r?.ok){historicalCompetition=null;showToast(r?.error||'Could not load saved draft');return recordsScreen();}
@@ -354,14 +436,14 @@ function historicalCompetitionScreen(){
     const nav=`<div class="result-tabs"><button class="result-tab ${historicalResultTab==='season'?'active':''}" data-historical-tab="season">Season</button><button class="result-tab ${historicalResultTab==='players'?'active':''}" data-historical-tab="players">Player stats</button><button class="result-tab ${historicalResultTab==='tots'?'active':''}" data-historical-tab="tots">Team of Season</button></div>`;
     if(historicalResultTab==='season'){
       const playoffs=(d.playoffs||[]).length?`<div class="card"><h2>Title tiebreak</h2>${d.playoffs.map(m=>matchHtml(m,'Tiebreak playoff')).join('')}</div>`:'';
-      body=`${nav}<div class="card"><h2>Final table</h2>${standingsHtml(d.finalTable||[])}</div>${playoffs}<div class="card"><h2>Match results</h2><div class="matches">${(d.matches||[]).map((m,i)=>matchHtml(m,`Match ${i+1} of ${d.matches.length}`)).join('')}</div></div>${historicalDraftHistoryHtml(d)}`;
+      body=`${nav}<div class="card"><h2>Final table</h2>${standingsHtml(d.finalTable||[])}</div>${playoffs}<div class="card"><h2>${(d.matches||[]).some(m=>m.gameweekNumber)?'Gameweek results':'Match results'}</h2><div class="matches">${gameweekResultsHtml(d.matches||[])}</div></div>${historicalDraftHistoryHtml(d)}`;
     }else if(historicalResultTab==='players'){
       body=`${nav}<div class="card"><h2>League player stats</h2><p class="muted">Top 10 performers from this saved season.</p>${historicalLeaderboardHtml(d.playerStats||[],historicalStatsMetric)}</div>`;
     }else{
       body=`${nav}<div class="card"><div class="budget"><div><h2>Team of the Season</h2><p class="muted no-margin">The Team of the Season generated when this draft was played.</p></div><b>${esc(d.teamOfSeason?.formation||'XI')}</b></div><div class="spacer14"></div>${totsPitchHtml(d.teamOfSeason)}</div>`;
     }
   }
-  shell(`<div class="card records-header"><div><div class="muted small">SAVED OFFICIAL DRAFT · ${esc(adminDate(c.completedAt))}</div><h1>🏆 ${esc(champion?.displayName||'Completed draft')}</h1><p class="muted no-margin">${esc(pack)} · ${esc(mode)}</p></div><button class="secondary" id="historicalBack">Back to rivalry</button></div>${viewToggle}${body}`);
+  shell(`<div class="card records-header"><div><div class="muted small">SAVED OFFICIAL DRAFT · ${esc(adminDate(c.completedAt))}</div><h1>🏆 ${esc(champion?.displayName||'Completed draft')}</h1><p class="muted no-margin">${esc(pack)} · ${esc(mode)}</p></div><button class="secondary" id="historicalBack">${historicalReturnSection==='all'?'Back to All-Time':'Back to rivalry'}</button></div>${viewToggle}${body}`);
   document.querySelector('#historicalBack').onclick=()=>{historicalCompetition=null;recordsScreen();};
   document.querySelectorAll('[data-historical-view]').forEach(b=>b.onclick=()=>{historicalView=b.dataset.historicalView;recordsScreen();});
   document.querySelectorAll('[data-historical-tab]').forEach(b=>b.onclick=()=>{historicalResultTab=b.dataset.historicalTab;recordsScreen();});
@@ -438,28 +520,37 @@ function recordsScreen(){
   }
   const groups=recordsSummaryData.groups||[];
   const nav=`<div class="record-tabs"><button class="result-tab ${recordsSection==='rivalry'?'active':''}" data-record-section="rivalry">Rivalry Groups</button><button class="result-tab ${recordsSection==='all'?'active':''}" data-record-section="all">All Managers</button></div>`;
+  const filterCount=recordFilterCount();
+  const filterButton=`<button class="secondary" id="recordsFilterButton">Filters${filterCount?` (${filterCount})`:''} ⚙</button>${recordsFiltersHtml()}${recordFilterSummary()}`;
   let body='';
   if(recordsSection==='all'){
-    body=`<div class="card"><h2>All-Time leaderboard</h2><p class="muted">Every completed official season stored across every room and rivalry group. Ranked by PPG, with Titles as the first tiebreak.</p>${historyTableHtml(recordsSummaryData.allTime||[])}</div>`;
+    const meta=recordsAllData?`${recordsAllData.matchingDrafts} matching draft${recordsAllData.matchingDrafts===1?'':'s'} · ${recordsAllData.matchingMatches} matches`:'Loading filtered records…';
+    body=`<div class="card"><h2>All-Time leaderboard</h2><p class="muted">Every completed official season stored across every room and rivalry group. Ranked by PPG, with Titles as the first tiebreak.</p>${filterButton}<p class="muted small records-match-count">${esc(meta)}</p>${recordsAllData?historyTableHtml(recordsAllData.table||[]):'<div class="muted">Loading…</div>'}</div>${recordsAllData?`<div class="card"><h2>Draft History</h2><p class="muted">Every official saved draft matching the filters, newest first.</p>${draftHistoryCardsHtml(recordsAllData.drafts||[])}</div>`:''}`;
   }else if(!groups.length){
-    body='<div class="card"><h2>Rivalry Groups</h2><p class="muted">No completed official seasons have been saved yet.</p></div>';
+    body=`<div class="card"><h2>Rivalry Groups</h2><p class="muted">No completed official seasons have been saved yet.</p>${filterButton}</div>`;
   }else{
     const options=groups.map(g=>`<option value="${esc(g.key)}" ${g.key===selectedRivalryKey?'selected':''}>${esc(g.names.join(' / '))} · ${g.drafts} draft${g.drafts===1?'':'s'}</option>`).join('');
     const meta=recordsGroupData?`${recordsGroupData.matchingDrafts} matching draft${recordsGroupData.matchingDrafts===1?'':'s'} · ${recordsGroupData.matchingMatches} matches`:'Loading filtered table…';
-    body=`<div class="card"><div class="budget"><div><h2>Rivalry Group</h2><p class="muted no-margin">Only drafts containing exactly this combination of managers count.</p></div></div><div class="spacer10"></div><select id="rivalryGroupSelect">${options}</select><div class="spacer10"></div><button class="secondary" id="recordsFilterButton">Filters ⚙</button>${recordsFiltersHtml()}<p class="muted small records-match-count">${esc(meta)}</p>${recordsGroupData?historyTableHtml(recordsGroupData.table||[]):'<div class="muted">Loading…</div>'}</div>${recordsGroupData?`<div class="card"><h2>Draft History</h2><p class="muted">Open any saved official draft and revisit its final results and teams.</p>${draftHistoryCardsHtml(recordsGroupData.drafts||[])}</div>`:''}`;
+    body=`<div class="card"><div class="budget"><div><h2>Rivalry Group</h2><p class="muted no-margin">Only drafts containing exactly this combination of managers count.</p></div></div><div class="spacer10"></div><select id="rivalryGroupSelect">${options}</select><div class="spacer10"></div>${filterButton}<p class="muted small records-match-count">${esc(meta)}</p>${recordsGroupData?historyTableHtml(recordsGroupData.table||[]):'<div class="muted">Loading…</div>'}</div>${recordsGroupData?`<div class="card"><h2>Draft History</h2><p class="muted">Open any saved official draft and revisit its final results and teams.</p>${draftHistoryCardsHtml(recordsGroupData.drafts||[])}</div>`:''}`;
   }
   shell(`<div class="card records-header"><div><div class="muted small">PERMANENT HISTORY</div><h1>🏆 All-Time Records</h1>${recordsConnectionHtml()}</div><div class="profile-actions">${recordsAdminConfigured?'<button class="secondary small-button" id="recordsAdmin">Admin</button>':''}<button class="secondary" id="recordsBack">Back</button></div></div>${nav}${body}`);
   document.querySelector('#recordsBack').onclick=closeRecords;
   const adminButton=document.querySelector('#recordsAdmin');if(adminButton)adminButton.onclick=openAdminRecords;
-  document.querySelectorAll('[data-record-section]').forEach(b=>b.onclick=()=>{recordsSection=b.dataset.recordSection;recordsScreen();});
+  document.querySelectorAll('[data-record-section]').forEach(b=>b.onclick=()=>{
+    recordsSection=b.dataset.recordSection;
+    if(recordsSection==='all')loadAllRecords();else if(selectedRivalryKey)loadRivalryGroup();else recordsScreen();
+  });
   document.querySelectorAll('[data-historical-comp]').forEach(b=>b.onclick=()=>openHistoricalCompetition(b.dataset.historicalComp));
   const sel=document.querySelector('#rivalryGroupSelect');if(sel)sel.onchange=e=>{selectedRivalryKey=e.target.value;loadRivalryGroup();};
   const filterBtn=document.querySelector('#recordsFilterButton'),panel=document.querySelector('#recordsFilterPanel');if(filterBtn&&panel)filterBtn.onclick=()=>{panel.hidden=!panel.hidden};
   const all=document.querySelector('#recordsAllFilters');if(all)all.onclick=()=>{document.querySelectorAll('[data-filter-mode],[data-filter-pack]').forEach(x=>{x.checked=true});};
+  const reset=document.querySelector('#recordsClearFilters');if(reset)reset.onclick=()=>{document.querySelectorAll('[data-filter-mode],[data-filter-pack]').forEach(x=>{x.checked=true});};
   const apply=document.querySelector('#recordsApplyFilters');if(apply)apply.onclick=()=>{
-    selectedRecordModes=new Set([...document.querySelectorAll('[data-filter-mode]:checked')].map(x=>x.dataset.filterMode));
-    selectedRecordPacks=new Set([...document.querySelectorAll('[data-filter-pack]:checked')].map(x=>x.dataset.filterPack));
-    loadRivalryGroup();
+    const modes=[...document.querySelectorAll('[data-filter-mode]:checked')].map(x=>x.dataset.filterMode);
+    const packs=[...document.querySelectorAll('[data-filter-pack]:checked')].map(x=>x.dataset.filterPack);
+    if(!modes.length||!packs.length)return showToast('Choose at least one mode and one player pack.');
+    selectedRecordModes=new Set(modes);selectedRecordPacks=new Set(packs);saveRecordFilters();
+    if(recordsSection==='all')loadAllRecords();else loadRivalryGroup();
   };
 }
 
@@ -480,15 +571,30 @@ function lobby(){
   const formationCard=state.mode==='hard'
     ? `<div class="card"><h2>Your formation</h2><select id="formation"><option value="">Choose formation</option>${HARD_FORMATIONS.map(f=>`<option ${m.formation===f?'selected':''}>${f}</option>`).join('')}</select><div class="spacer10"></div><button class="${m.ready?'secondary':'primary'} big" id="ready" ${!m.formation?'disabled':''}>${m.ready?'Not ready':'Ready'}</button></div>`
     : `<div class="card"><h2>Your draft</h2><p class="muted">No formation yet. Draft any 11 players; you will build your XI afterwards.</p><button class="${m.ready?'secondary':'primary'} big" id="ready">${m.ready?'Not ready':'Ready'}</button></div>`;
-  shell(`<div class="card"><div class="muted">ROOM CODE</div><div class="row"><div class="code grow">${state.code}</div><button class="secondary" id="copy">Copy link</button></div></div>
+  const firstProfileReminder=firstSessionRecoveryCode&&savedProfile()?.recoveryCode===firstSessionRecoveryCode?`<div class="card first-profile-reminder"><div class="muted small">NEW PERMANENT PROFILE</div><b>Recovery code: ${esc(firstSessionRecoveryCode)}</b><div class="muted small">Keep this code if you want to recover your records on another device.</div></div>`:'';
+  const managersHtml=state.managers.map(x=>`<div class="manager manager-colour-row" style="--manager-color:${esc(x.color||'#64748b')}"><div class="manager-main"><b class="manager-name-with-dot">${managerNameHtml(x)}</b><div class="muted">${state.mode==='hard'?(x.formation||'No formation'):'Formation after draft'}${x.connected===false?' · disconnected':''}</div></div><div class="manager-actions"><div class="${x.ready?'ready':'notready'}">${x.ready?'READY':'WAITING'}</div>${host&&x.id!==meId?`<button class="secondary small-button remove-manager" data-manager="${esc(x.id)}">Remove</button>`:''}</div></div>`).join('');
+  shell(`<div class="card"><div class="budget"><div><div class="muted">ROOM CODE</div><div class="code">${state.code}</div></div><div class="lobby-top-actions"><button class="secondary small-button" id="copy">Copy link</button><button class="secondary small-button" id="lobbyRecords">Records</button><button class="secondary small-button" id="leaveLobby">Back to Home</button></div></div></div>
+  ${firstProfileReminder}
   <div class="card"><h2>Game mode</h2>${host?`<select id="mode">${modeOptions}</select>`:`<div class="pack-display"><b>${esc(modeName())}</b></div>`}<p class="muted small">${esc(descriptions[state.mode]||'')}</p>${legacyControl}</div>
   ${prioritySettings}
   <div class="card"><h2>Player pack</h2>${host?`<select id="pack">${packOptions}</select><p class="muted small">Changing the pack makes everyone ready up again.</p>`:`<div class="pack-display"><b>${esc(packName())}</b><span class="muted">${state.packCounts?.[state.pack]||0} players</span></div>`}</div>
   <div class="card record-save-card"><label class="record-save-toggle"><input id="saveToHistory" type="checkbox" ${state.saveToHistory!==false?'checked':''} ${host?'':'disabled'}><span><b>Save this game to All-Time Records</b><small>${state.saveToHistory!==false?'Official game · completed simulation will count permanently.':'Practice / unranked · permanent leaderboards will not change.'}</small></span></label>${host?'':'<div class="muted small">Only the host can change this before the draft starts.</div>'}</div>
   ${formationCard}
-  <div class="card"><h2>Managers</h2>${state.managers.map(x=>`<div class="manager"><div><b>${esc(x.name)}</b><div class="muted">${state.mode==='hard'?(x.formation||'No formation'):'Formation after draft'}</div></div><div class="${x.ready?'ready':'notready'}">${x.ready?'READY':'WAITING'}</div></div>`).join('')}</div>
+  <div class="card"><h2>Managers</h2>${managersHtml}</div>
   ${host?`<button class="primary big" id="start">Start draft</button>`:''}`);
   document.querySelector('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(location.href);showToast('Invite link copied')}catch{showToast('Copy the page address from your browser')}};
+  document.querySelector('#lobbyRecords').onclick=openRecords;
+  document.querySelector('#leaveLobby').onclick=()=>{
+    socket.emit('leaveLobby',{},r=>{
+      if(!r?.ok)return showToast(r?.error||'Could not leave the lobby');
+      clearSavedSession();state=null;meId=null;firstSessionRecoveryCode=null;history.replaceState({},'',location.pathname);home();
+    });
+  };
+  document.querySelectorAll('.remove-manager').forEach(b=>b.onclick=()=>{
+    const target=state.managers.find(x=>x.id===b.dataset.manager);
+    if(!confirm(`Remove ${target?.name||'this manager'} from the lobby? They can rejoin later with the room code.`))return;
+    socket.emit('removeLobbyManager',{managerId:b.dataset.manager},r=>{if(!r?.ok)showToast(r?.error||'Could not remove manager')});
+  });
   if(host){
     document.querySelector('#mode').onchange=e=>socket.emit('setMode',{mode:e.target.value});
     document.querySelector('#pack').onchange=e=>socket.emit('setPack',{pack:e.target.value});
@@ -498,7 +604,7 @@ function lobby(){
   }
   if(state.mode==='hard')document.querySelector('#formation').onchange=e=>socket.emit('setFormation',{formation:e.target.value});
   document.querySelector('#ready').onclick=()=>socket.emit('setReady',{ready:!m.ready});
-  if(host)document.querySelector('#start').onclick=()=>socket.emit('startDraft',{},r=>{if(r&&!r.ok)showToast(r.error)});
+  if(host)document.querySelector('#start').onclick=()=>{firstSessionRecoveryCode=null;socket.emit('startDraft',{},r=>{if(r&&!r.ok)showToast(r.error)})};
 }
 
 function scarcityHtml(c){
@@ -553,9 +659,9 @@ function wireNominationButtons(selectMode){
 }
 function managerTabHtml(){
   if(state.managers.some(x=>x.hidden))return state.managers.map(x=>x.id===meId
-    ? `<div class="card"><div class="budget"><h3>${esc(x.name)} (you)</h3><b>£${x.budget}m · ${x.squad.length}/11</b></div><div>${x.squad.map(p=>`<span class="pill">${esc(p.name)} · ${esc(p.positions.join('/'))} · £${p.price}m</span>`).join('')||'<span class="muted">No players yet</span>'}</div></div>`
-    : `<div class="card blind-hidden"><h3>${esc(x.name)}</h3><p class="muted">Squad and budget hidden until the team reveal.</p></div>`).join('');
-  return state.managers.map(x=>`<div class="card"><div class="budget"><h3>${esc(x.name)}</h3><b>£${x.budget}m · ${x.squad.length}/11</b></div><div>${x.squad.map(p=>`<span class="pill">${esc(p.name)} · ${state.mode==='hard'?esc(p.assignedPosition||'—'):esc(p.positions.join('/'))} · £${p.price}m</span>`).join('')||'<span class="muted">No players yet</span>'}</div></div>`).join('');
+    ? `<div class="card manager-accent-card" style="--manager-color:${esc(x.color||'#64748b')}"><div class="budget"><h3 class="manager-name-with-dot">${managerNameHtml(x)} (you)</h3><b>£${x.budget}m · ${x.squad.length}/11</b></div><div>${x.squad.map(p=>`<span class="pill">${esc(p.name)} · ${esc(p.positions.join('/'))} · £${p.price}m</span>`).join('')||'<span class="muted">No players yet</span>'}</div></div>`
+    : `<div class="card blind-hidden manager-accent-card" style="--manager-color:${esc(x.color||'#64748b')}"><h3 class="manager-name-with-dot">${managerNameHtml(x)}</h3><p class="muted">Squad and budget hidden until the team reveal.</p></div>`).join('');
+  return state.managers.map(x=>`<div class="card manager-accent-card" style="--manager-color:${esc(x.color||'#64748b')}"><div class="budget"><h3 class="manager-name-with-dot">${managerNameHtml(x)}</h3><b>£${x.budget}m · ${x.squad.length}/11</b></div><div>${x.squad.map(p=>`<span class="pill">${esc(p.name)} · ${state.mode==='hard'?esc(p.assignedPosition||'—'):esc(p.positions.join('/'))} · £${p.price}m</span>`).join('')||'<span class="muted">No players yet</span>'}</div></div>`).join('');
 }
 
 function priorityPositionCounterHtml(counts){
@@ -598,7 +704,7 @@ function wirePriorityControls(){
     const input=document.querySelector('#priorityTieInput');
     const submit=v=>socket.emit('setPriorityTieBid',{amount:Number(v)},r=>{if(!r?.ok){showToast(r?.error||'Could not set tiebreak bid');if(input)input.value=String(c.myPriorityTieBid||c.priorityTieMin||1);return;}c.myPriorityTieBid=Number(r.amount);if(input)input.value=String(r.amount)});
     document.querySelectorAll('.priority-tie-step').forEach(b=>b.onclick=()=>{const min=Number(c.priorityTieMin||1),max=Number(c.priorityMaxBid||min),cur=Number(input?.value||min);submit(Math.max(min,Math.min(max,cur+Number(b.dataset.step))))});
-    if(input)input.onchange=()=>submit(input.value);
+    if(input)input.oninput=()=>{const v=Math.floor(Number(input.value));if(Number.isFinite(v))submit(v)};
     return;
   }
   if(c.priorityStage!=='bidding')return;
@@ -610,7 +716,7 @@ function wirePriorityControls(){
     const playerId=b.dataset.player,input=document.querySelector(`.priority-bid-input[data-player="${playerId}"]`),cur=Number(c.myPriorityBids?.[playerId]||1);
     const next=nextPriorityAmount(c,playerId,cur,Number(b.dataset.step));if(next!==cur)submit(playerId,next,input);
   });
-  document.querySelectorAll('.priority-bid-input').forEach(input=>input.onchange=()=>{
+  document.querySelectorAll('.priority-bid-input').forEach(input=>input.oninput=()=>{
     const playerId=input.dataset.player,amount=Math.floor(Number(input.value));
     if(amount>1&&priorityUsedAmounts(c,playerId).has(amount)){showToast(`£${amount}m is already used`);input.value=String(c.myPriorityBids?.[playerId]||1);return;}
     submit(playerId,amount,input);
@@ -647,16 +753,28 @@ function wireBlindControls(){
 function openAuctionPanel(m,c){
   const currentBid=c?.bid||0,next=currentBid+1,mandatory=c?.mandatoryIds?.includes(meId),complete=m.squad.length>=11;
   const isOut=!!c?.outIds?.includes(meId),leading=c?.bidderId===meId,eligible=!!c?.eligibleIds?.includes(meId);
+  if(c?.player?.id!==openCustomBidDraft.playerId)openCustomBidDraft={playerId:c?.player?.id||null,value:next};
+  const safeMax=Math.max(1,Number(m.budget||0)-Math.max(0,(11-(m.squad?.length||0))-1));
+  const customValue=Math.max(1,Number(openCustomBidDraft.value||next));
   let controls='';
   if(complete)controls='<button class="secondary big" disabled>Squad complete · automatically out</button>';
   else if(c){
-    const bidControls=(eligible||leading)?`<button class="primary big" id="bid">BID £${next}m</button><div class="spacer9"></div><div class="row"><button class="secondary grow jump" data-jump="2">+£2m</button><button class="secondary grow jump" data-jump="5">+£5m</button><button class="secondary grow" id="custom">Custom</button></div>`:'<button class="secondary big" disabled>Automatically out for this player</button>';
+    const bidControls=(eligible||leading)?`<button class="primary big" id="bid">BID £${next}m</button><div class="spacer9"></div><div class="row"><button class="secondary grow jump" data-jump="2">+£2m</button><button class="secondary grow jump" data-jump="5">+£5m</button></div><div class="custom-bid-row"><div class="custom-bid-input"><span>£</span><input id="customBidInput" inputmode="numeric" type="number" min="${next}" max="${safeMax}" value="${customValue}"><span>m</span></div><button class="secondary" id="customBidSubmit">Submit custom</button></div><div id="customBidHint" class="muted tiny"></div>`:'<button class="secondary big" disabled>Automatically out for this player</button>';
     const outControl=leading?'<button class="secondary out-button" disabled>You are currently leading</button>':eligible?`<button class="${isOut?'out-button active':'out-button'}" id="auctionOut">${isOut?'I’m Out ✓ · tap to re-enter':'I’m Out'}</button>`:'';
     controls=`${bidControls}${outControl?`<div class="spacer9"></div>${outControl}`:''}`;
   }
   const counter=state.mode==='nomination'?`AUCTION ${state.shownCount||1} · ${state.nomination?.availablePlayers?.length||0} STILL AVAILABLE`:`PLAYER ${state.shownCount||1} OF ${state.poolSize||'—'}`;
   const compulsory=mandatory?`<div class="required">${state.mode==='freeform'?'The draft has reached its compulsory endgame. If nobody bids, this player will go for £1m to an eligible manager with the most open squad slots; exact ties are completely random.':'This player cannot safely be skipped. If nobody bids, they will be randomly assigned for £1m to one eligible manager.'}</div>`:'';
-  return `<div class="card budget"><div><div class="muted">YOUR BUDGET</div><strong>£${m.budget}m</strong></div><div class="right"><div class="muted">SQUAD</div><strong>${m.squad.length}/11</strong></div></div>${c?`<div class="card auction"><div class="player-counter">${counter}</div><div id="timer" class="timer ${c.timeLeft<=5?'warn':''}">${c.timeLeft}</div><div class="player">${esc(c.player.name)}</div><div class="positions">${c.player.positions.join(' / ')}</div>${state.mode==='freeform'?scarcityHtml(c):''}${compulsory}<div class="bidvalue">£${currentBid}m</div><div class="leader">${c.bidderId?esc(managerName(c.bidderId))+' leads':'No bids yet'}</div>${isOut?'<div class="out-status">You are out of the bidding for this player. Place a bid or tap again to re-enter.</div>':''}${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}<div class="spacer14"></div>${controls}</div>`:'<div class="card">Loading next player…</div>'}`;
+  return `<div class="card budget"><div><div class="muted">YOUR BUDGET</div><strong>£${m.budget}m</strong></div><div class="right"><div class="muted">SQUAD</div><strong>${m.squad.length}/11</strong></div></div>${c?`<div class="card auction"><div class="player-counter">${counter}</div><div id="timer" class="timer ${c.timeLeft<=5?'warn':''}">${c.timeLeft}</div><div class="player">${esc(c.player.name)}</div><div class="positions">${c.player.positions.join(' / ')}</div>${state.mode==='freeform'?scarcityHtml(c):''}${compulsory}<div class="bidvalue" id="currentBidValue">£${currentBid}m</div><div class="leader" id="currentBidLeader">${c.bidderId?esc(managerName(c.bidderId))+' leads':'No bids yet'}</div>${isOut?'<div class="out-status">You are out of the bidding for this player. Place a bid or tap again to re-enter.</div>':''}${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}<div class="spacer14"></div>${controls}</div>`:'<div class="card">Loading next player…</div>'}`;
+}
+function updateCustomBidValidity(){
+  const input=document.querySelector('#customBidInput'),hint=document.querySelector('#customBidHint'),submit=document.querySelector('#customBidSubmit');
+  if(!input||!state?.current)return;
+  const min=Number(state.current.bid||0)+1,value=Math.floor(Number(input.value));
+  input.min=String(min);openCustomBidDraft={playerId:state.current.player?.id||null,value:input.value};
+  const valid=Number.isFinite(value)&&value>=min&&value<=Math.max(1,Number(me()?.budget||0)-Math.max(0,(11-(me()?.squad?.length||0))-1));
+  if(hint)hint.textContent=valid?'':value<min?`Current minimum is £${min}m.`:`Maximum safe bid is £${Math.max(1,Number(me()?.budget||0)-Math.max(0,(11-(me()?.squad?.length||0))-1))}m.`;
+  if(submit)submit.disabled=!valid;
 }
 function wireOpenAuction(c){
   const m=me();if(!c||m.squad.length>=11)return;
@@ -665,7 +783,9 @@ function wireOpenAuction(c){
     const send=amt=>socket.emit('bid',{amount:amt},r=>{if(r&&!r.ok)showToast(r.error)});
     const bidBtn=document.querySelector('#bid');if(bidBtn)bidBtn.onclick=()=>send(next);
     document.querySelectorAll('.jump').forEach(b=>b.onclick=()=>send(currentBid+Number(b.dataset.jump)));
-    const custom=document.querySelector('#custom');if(custom)custom.onclick=()=>{const v=prompt('Bid amount in £m',String(next));if(v)send(Number(v))};
+    const custom=document.querySelector('#customBidInput'),submit=document.querySelector('#customBidSubmit');
+    if(custom){custom.oninput=()=>{openCustomBidDraft={playerId:c.player?.id||null,value:custom.value};updateCustomBidValidity();};updateCustomBidValidity();}
+    if(submit)submit.onclick=()=>{const v=Math.floor(Number(custom?.value));if(Number.isFinite(v))send(v);};
   }
   const outBtn=document.querySelector('#auctionOut');if(outBtn)outBtn.onclick=()=>socket.emit('setAuctionOut',{out:!c.outIds?.includes(meId)},r=>{if(r&&!r.ok)showToast(r.error)});
 }
@@ -712,12 +832,23 @@ function pitchHtml(m,editable=false){
   }).join('')}</div>`).join('')}</div>`;
 }
 
+
+function formationOptionsHtml(selected){
+  const available=state.freeformFormations||Object.keys(FF_LAYOUTS).filter(k=>!['4-3-3','4-2-3-1','4-1-2-1-2'].includes(k));
+  const groups=[
+    ['3 at the back',available.filter(f=>f.startsWith('3-'))],
+    ['4 at the back',available.filter(f=>f.startsWith('4-'))],
+    ['5 at the back',available.filter(f=>f.startsWith('5-'))]
+  ];
+  return groups.filter(([,items])=>items.length).map(([label,items])=>`<optgroup label="${label}">${items.map(f=>`<option value="${esc(f)}" ${selected===f?'selected':''}>${esc(f)}</option>`).join('')}</optgroup>`).join('');
+}
+
 function teamBuild(){
   const m=me();
-  const formationOptions=(state.freeformFormations||Object.keys(FF_LAYOUTS)).map(f=>`<option value="${f}" ${m.finalFormation===f?'selected':''}>${f}</option>`).join('');
+  const formationOptions=formationOptionsHtml(m.finalFormation);
   const readyCount=state.managers.filter(x=>x.teamReady).length;
   shell(`<div class="mode-strip">${esc(modeName())} team builder · ${esc(packName())}</div>
-    <div class="card"><div class="budget"><div><h1>Build your XI</h1><p class="muted no-margin">Positions are completely unrestricted.</p></div><b>${readyCount}/${state.managers.length} set</b></div></div>
+    <div class="card"><div class="budget"><div><h1>Build your XI</h1><p class="muted no-margin">Positions are completely unrestricted.</p></div><b id="teamReadyCount">${readyCount}/${state.managers.length} set</b></div></div>
     <div class="card"><label>Formation</label><select id="finalFormation"><option value="">Choose formation</option>${formationOptions}</select></div>
     <div class="card"><div class="builder-hint">${m.finalFormation?'The game has suggested the best positional fit for this formation. Tap a position, then a player, to change it. Players swap automatically.':'Choose a formation first.'}</div>${pitchHtml(m,true)}</div>
     <div class="card"><h2>Your players</h2><div class="player-picker">${m.squad.map(p=>{
@@ -725,7 +856,7 @@ function teamBuild(){
       const slotLabel=m.finalFormation&&idx>=0?FF_LAYOUTS[m.finalFormation]?.slots[idx]:'';
       return `<button type="button" class="picker-player" data-player="${p.id}" ${selectedLineupSlot===null?'disabled':''}><span><b>${esc(p.name)}</b><small>${esc(p.positions.join(' / '))}</small></span><span class="picker-position">${slotLabel||'—'}</span></button>`;
     }).join('')}</div></div>
-    <div class="card"><h2>Managers</h2>${state.managers.map(x=>`<div class="manager"><b>${esc(x.name)}</b><div class="${x.teamReady?'ready':'notready'}">${x.teamReady?'TEAM SET':'ARRANGING'}</div></div>`).join('')}</div>
+    <div class="card"><h2>Managers</h2>${state.managers.map(x=>`<div class="manager manager-colour-row" style="--manager-color:${esc(x.color||'#64748b')}"><b class="manager-name-with-dot">${managerNameHtml(x)}</b><div data-team-status="${esc(x.id)}" class="${x.teamReady?'ready':'notready'}">${x.teamReady?'TEAM SET':'ARRANGING'}</div></div>`).join('')}</div>
     <button class="${m.teamReady?'secondary':'primary'} big" id="teamReady" ${!m.finalFormation?'disabled':''}>${m.teamReady?'Unset team':'Set team'}</button>`);
 
   document.querySelector('#finalFormation').onchange=e=>{
@@ -789,8 +920,9 @@ function teamPerformanceTableHtml(m,playerStats,matches){
 function teamReviewHtml(managers,playerStats,selectedId,historical=false,matches=[]){
   if(!managers?.length)return '<div class="card muted">No saved teams available.</div>';
   const chosen=managers.find(m=>reviewManagerKey(m)===String(selectedId||''))||managers[0];
+  const idx=managers.indexOf(chosen),prev=managers[(idx-1+managers.length)%managers.length],next=managers[(idx+1)%managers.length];
   const rating=historical?chosen.teamRating:state.teamRatings?.[chosen.id];
-  return `<div class="team-review-switch">${managers.map(m=>`<button class="result-tab ${reviewManagerKey(m)===reviewManagerKey(chosen)?'active':''}" data-team-review="${esc(reviewManagerKey(m))}">${esc(reviewManagerName(m))}</button>`).join('')}</div><div class="card team-performance-card"><div class="budget"><div><h2>${esc(reviewManagerName(chosen))}</h2><div class="muted">${esc(reviewFormation(chosen))}</div></div><b>£${chosen.budget??'—'}m left</b></div>${ratingPanelHtml(rating)}<div class="spacer14"></div>${performancePitchHtml(chosen,playerStats)}<div class="spacer14"></div><h3>Full XI performance</h3>${teamPerformanceTableHtml(chosen,playerStats,matches)}</div>`;
+  return `<div class="team-review-sticky"><button class="secondary small-button" data-team-review="${esc(reviewManagerKey(prev))}">← ${esc(reviewManagerName(prev))}</button><div class="team-review-current">${managerDot(chosen)}<b>${esc(reviewManagerName(chosen))}</b></div><button class="secondary small-button" data-team-review="${esc(reviewManagerKey(next))}">${esc(reviewManagerName(next))} →</button></div><div class="team-review-switch">${managers.map(m=>`<button class="result-tab ${reviewManagerKey(m)===reviewManagerKey(chosen)?'active':''}" data-team-review="${esc(reviewManagerKey(m))}" style="--manager-color:${esc(m.color||'#64748b')}">${managerDot(m)}${esc(reviewManagerName(m))}</button>`).join('')}</div><div class="card team-performance-card" style="--manager-color:${esc(chosen.color||'#64748b')}"><div class="budget"><div><h2 class="manager-name-with-dot">${managerNameHtml(chosen)}</h2><div class="muted">${esc(reviewFormation(chosen))}</div></div><b>£${chosen.budget??'—'}m left</b></div>${ratingPanelHtml(rating)}<div class="spacer14"></div>${performancePitchHtml(chosen,playerStats)}<div class="spacer14"></div><h3>Full XI performance</h3>${teamPerformanceTableHtml(chosen,playerStats,matches)}</div>`;
 }
 function historicalLeaderboardHtml(stats,metric){
   const labels={goals:'Goals',assists:'Assists',saves:'Saves',rating:'Avg rating'};
@@ -804,9 +936,9 @@ function historicalLeaderboardHtml(stats,metric){
 }
 function revealedTeamHtml(m){
   if(isFreeformLike()){
-    return `<div class="card team-reveal"><div class="budget"><div><h2>${esc(m.name)}</h2><div class="muted">${esc(m.finalFormation||'XI')}</div></div><b>£${m.budget}m left</b></div>${ratingsHtml(m)}${pitchHtml(m,false)}</div>`;
+    return `<div class="card team-reveal manager-accent-card" style="--manager-color:${esc(m.color||'#64748b')}"><div class="budget"><div><h2 class="manager-name-with-dot">${managerNameHtml(m)}</h2><div class="muted">${esc(m.finalFormation||'XI')}</div></div><b>£${m.budget}m left</b></div>${ratingsHtml(m)}${pitchHtml(m,false)}</div>`;
   }
-  return `<div class="card team-reveal"><div class="budget"><div><h2>${esc(m.name)}</h2><div class="muted">${esc(m.formation||'XI')}</div></div><b>£${m.budget}m left</b></div>${ratingsHtml(m)}<div class="squad">${hardSquadHtml(m)}</div></div>`;
+  return `<div class="card team-reveal manager-accent-card" style="--manager-color:${esc(m.color||'#64748b')}"><div class="budget"><div><h2 class="manager-name-with-dot">${managerNameHtml(m)}</h2><div class="muted">${esc(m.formation||'XI')}</div></div><b>£${m.budget}m left</b></div>${ratingsHtml(m)}<div class="squad">${hardSquadHtml(m)}</div></div>`;
 }
 
 function draftHistoryHtml(){
@@ -817,21 +949,47 @@ function draftHistoryHtml(){
 }
 function reveal(){
   const host=state.hostId===meId;
-  shell(`<div class="card"><h1>Teams revealed</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p><p class="muted small">Individual player ratings remain hidden. These team scores judge the XI as deployed.</p></div>${state.managers.map(revealedTeamHtml).join('')}${draftHistoryHtml()}<div class="card"><h2>Season simulation</h2><p class="muted">Every team gets a balanced home/away schedule. Two managers play 10 matches; three managers play 12; with four or more, every pair plays home and away once. Results are revealed one match at a time.</p></div>${host?'<button class="primary big" id="simulate">Simulate season</button>':'<div class="card muted">Waiting for the host to start the simulation.</div>'}`);
+  shell(`<div class="card"><h1>Teams revealed</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p><p class="muted small">Individual player ratings remain hidden. These team scores judge the XI as deployed.</p></div>${state.managers.map(revealedTeamHtml).join('')}${draftHistoryHtml()}<div class="card"><h2>Season simulation</h2><p class="muted">Every opponent pairing is perfectly balanced home and away. Seasons are longer and revealed by Gameweek, with every fixture in that Gameweek shown together.</p></div>${host?'<button class="primary big" id="simulate">Simulate season</button>':'<div class="card muted">Waiting for the host to start the simulation.</div>'}`);
   if(host)document.querySelector('#simulate').onclick=()=>socket.emit('startSimulation',{},r=>{if(r&&!r.ok)showToast(r.error)});
 }
 function scorerList(goals){
   return (goals||[]).length ? goals.map(g=>`${esc(g.player)} ${g.minute}'${g.assist?` <span class="assist">(assist: ${esc(g.assist)})</span>`:''}`).join(' · ') : '—';
 }
+
+function managerColourById(id){
+  return state?.managers?.find(x=>x.id===id)?.color||null;
+}
+function gameweeksFromMatches(matches){
+  const rows=[...(matches||[])];
+  if(!rows.length)return [];
+  if(!rows.some(m=>m.gameweekNumber))return rows.map((m,i)=>({number:i+1,matches:[m],byeIds:[]}));
+  const map=new Map();
+  for(const m of rows){
+    const n=Number(m.gameweekNumber)||1;
+    if(!map.has(n))map.set(n,{number:n,matches:[],byeIds:[]});
+    map.get(n).matches.push(m);
+  }
+  return [...map.values()].sort((a,b)=>a.number-b.number);
+}
+function gameweekCardHtml(gw,{showByes=true}={}){
+  const byeNames=(gw.byeIds||[]).map(id=>state?.managers?.find(m=>m.id===id)?.name).filter(Boolean);
+  return `<div class="gameweek-card"><div class="gameweek-heading"><b>Gameweek ${gw.number}</b>${showByes&&byeNames.length?`<span class="muted small">BYE: ${esc(byeNames.join(', '))}</span>`:''}</div><div class="gameweek-fixtures">${(gw.matches||[]).map(m=>matchHtml(m,'')).join('')}</div></div>`;
+}
+function gameweekResultsHtml(matches,gameweeks=null){
+  const rows=gameweeks?.length?gameweeks:gameweeksFromMatches(matches);
+  return rows.map(g=>gameweekCardHtml(g,{showByes:!!gameweeks?.length})).join('');
+}
+
 function matchHtml(m,label='League match'){
   const pen=m.penalties?` <span class="pens">(${m.penalties.home}–${m.penalties.away} pens)</span>`:'';
   const et=m.wentExtraTime?' · AET':'';
   const pom=m.playerOfMatch?`<div class="potm">⭐ Player of the Match: <b>${esc(m.playerOfMatch.player)}</b> · ${Number(m.playerOfMatch.rating).toFixed(1)}</div>`:'';
   const shotLine=(Number.isFinite(m.homeShotsOnTarget)&&Number.isFinite(m.awayShotsOnTarget))?`<div class="match-meta"><span>Shots on target ${m.homeShotsOnTarget}–${m.awayShotsOnTarget}</span><span>GK saves ${m.homeSaves??0}–${m.awaySaves??0}</span></div>`:'';
-  return `<div class="match-card"><div class="match-label">${esc(label)}${et}</div><div class="scoreline"><div><b>${esc(m.homeName)}</b><span>HOME</span></div><strong>${m.homeGoals}–${m.awayGoals}${pen}</strong><div class="right-team"><b>${esc(m.awayName)}</b><span>AWAY</span></div></div><div class="scorers"><div><b>${esc(m.homeName)}:</b> ${scorerList(m.homeScorers)}</div><div><b>${esc(m.awayName)}:</b> ${scorerList(m.awayScorers)}</div></div>${shotLine}${pom}</div>`;
+  const homeColour=managerColourById(m.homeId),awayColour=managerColourById(m.awayId);
+  return `<div class="match-card">${label?`<div class="match-label">${esc(label)}${et}</div>`:''}<div class="scoreline"><div>${homeColour?`<span class="manager-dot" style="--manager-color:${esc(homeColour)}"></span>`:''}<b>${esc(m.homeName)}</b><span>HOME</span></div><strong>${m.homeGoals}–${m.awayGoals}${pen}</strong><div class="right-team">${awayColour?`<span class="manager-dot" style="--manager-color:${esc(awayColour)}"></span>`:''}<b>${esc(m.awayName)}</b><span>AWAY</span></div></div><div class="scorers"><div><b>${esc(m.homeName)}:</b> ${scorerList(m.homeScorers)}</div><div><b>${esc(m.awayName)}:</b> ${scorerList(m.awayScorers)}</div></div>${shotLine}${pom}</div>`;
 }
 function standingsHtml(rows){
-  return `<div class="table-wrap"><table class="standings"><thead><tr><th>#</th><th>Manager</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(rows||[]).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.name)}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td><b>${r.pts}</b></td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="standings"><thead><tr><th>#</th><th>Manager</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(rows||[]).map((r,i)=>{const c=managerColourById(r.id);return `<tr><td>${i+1}</td><td><b>${c?`<span class="manager-dot" style="--manager-color:${esc(c)}"></span>`:''}${esc(r.name)}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td><b>${r.pts}</b></td></tr>`}).join('')}</tbody></table></div>`;
 }
 function resultNav(){
   const tabs=[['season','Season'],['players','Player stats'],['tots','Team of Season'],['session','Session']];
@@ -859,8 +1017,9 @@ function totsPitchHtml(tots){
 }
 function sessionHtml(){
   const ss=state.sessionStats||{drafts:0,table:[],headToHead:[]};
-  const table=`<div class="table-wrap"><table class="session-table"><thead><tr><th>#</th><th>Manager</th><th>Titles</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(ss.table||[]).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.name)}</b></td><td><b>${r.titles}</b></td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td>${r.pts}</td></tr>`).join('')}</tbody></table></div>`;
-  const h2h=(ss.headToHead||[]).filter(x=>x.aWins+x.bWins+x.draws>0).map(x=>`<div class="h2h-card"><div><b>${esc(x.managerAName)}</b><strong>${x.aWins}</strong></div><span>${x.draws} draws<br><small>${x.aGoals}–${x.bGoals} goals</small></span><div class="right"><b>${esc(x.managerBName)}</b><strong>${x.bWins}</strong></div></div>`).join('');
+  const colour=id=>state.managers.find(m=>m.id===id)?.color||null;
+  const table=`<div class="table-wrap"><table class="session-table"><thead><tr><th>#</th><th>Manager</th><th>Titles</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(ss.table||[]).map((r,i)=>`<tr><td>${i+1}</td><td><b>${colour(r.id)?`<span class="manager-dot" style="--manager-color:${esc(colour(r.id))}"></span>`:''}${esc(r.name)}</b></td><td><b>${r.titles}</b></td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td>${r.pts}</td></tr>`).join('')}</tbody></table></div>`;
+  const h2h=(ss.headToHead||[]).filter(x=>x.aWins+x.bWins+x.draws>0).map(x=>`<div class="h2h-card"><div><b>${colour(x.managerAId)?`<span class="manager-dot" style="--manager-color:${esc(colour(x.managerAId))}"></span>`:''}${esc(x.managerAName)}</b><strong>${x.aWins}</strong></div><span>${x.draws} draws<br><small>${x.aGoals}–${x.bGoals} goals</small></span><div class="right"><b>${colour(x.managerBId)?`<span class="manager-dot" style="--manager-color:${esc(colour(x.managerBId))}"></span>`:''}${esc(x.managerBName)}</b><strong>${x.bWins}</strong></div></div>`).join('');
   return `<div class="card"><h2>Session rivalry</h2><p class="muted">${ss.drafts||0} completed draft${ss.drafts===1?'':'s'} in this room. League matches accumulate until the room ends.</p>${table}</div>${h2h?`<div class="card"><h2>Head-to-head</h2><div class="h2h-list">${h2h}</div></div>`:''}`;
 }
 function permanentHistoryStatusHtml(){
@@ -880,7 +1039,7 @@ function fullResults(){
   if(postSimView==='teams'){
     body=teamReviewHtml(state.managers,sim.playerStats||[],reviewManagerId,false,sim.matches||[]);
   }else{
-    if(resultsTab==='season') body=`<div class="card"><h2>Final table</h2>${standingsHtml(sim.table)}</div>${playoffs}<div class="card"><h2>Match results</h2><div class="matches">${(sim.matches||[]).map((m,i)=>matchHtml(m,`Match ${i+1} of ${sim.matches.length}`)).join('')}</div></div><div class="card"><h2>Team ratings</h2><p class="muted small">The team ratings that drove the simulation. Individual hidden player ratings remain secret.</p>${state.managers.map(m=>`<div class="rating-summary"><div><b>${esc(m.name)}</b><span>${isFreeformLike()?esc(m.finalFormation||'XI'):esc(m.formation||'XI')}</span></div><strong>${state.teamRatings?.[m.id]?.overall??'—'}</strong></div>`).join('')}</div>${['blind','priority'].includes(state.mode)?draftHistoryHtml():''}`;
+    if(resultsTab==='season') body=`<div class="card"><h2>Final table</h2>${standingsHtml(sim.table)}</div>${playoffs}<div class="card"><h2>Gameweek results</h2><div class="matches">${gameweekResultsHtml(sim.matches||[],sim.gameweeks||null)}</div></div><div class="card"><h2>Team ratings</h2><p class="muted small">The team ratings that drove the simulation. Individual hidden player ratings remain secret.</p>${state.managers.map(m=>`<div class="rating-summary"><div><b>${esc(m.name)}</b><span>${isFreeformLike()?esc(m.finalFormation||'XI'):esc(m.formation||'XI')}</span></div><strong>${state.teamRatings?.[m.id]?.overall??'—'}</strong></div>`).join('')}</div>${['blind','priority'].includes(state.mode)?draftHistoryHtml():''}`;
     else if(resultsTab==='players') body=`<div class="card"><h2>League player stats</h2><p class="muted">Top 10 performers across every manager's XI.</p>${leaderboardHtml(statsMetric)}</div>`;
     else if(resultsTab==='tots') body=`<div class="card"><div class="budget"><div><h2>Team of the Season</h2><p class="muted no-margin">Best-performing valid XI by average match rating, using the positions players were actually deployed in with sensible neighbouring roles.</p></div><b>${esc(sim.teamOfSeason?.formation||'XI')}</b></div><div class="spacer14"></div>${totsPitchHtml(sim.teamOfSeason)}</div>`;
     else body=sessionHtml();
@@ -902,11 +1061,12 @@ function fullResults(){
 
 function results(){
   const host=state.hostId===meId,sim=state.simulation;if(!sim)return reveal();
-  const total=sim.matches?.length||0,shown=Math.min(state.simulationRevealCount||0,total),exhibition=state.simulationKind==='exhibition';
+  const gameweeks=sim.gameweeks?.length?sim.gameweeks:gameweeksFromMatches(sim.matches||[]);
+  const total=gameweeks.length,shown=Math.min(state.simulationRevealCount||0,total),exhibition=state.simulationKind==='exhibition';
   if(shown>=total)return fullResults();
-  const latest=shown>0?sim.matches[shown-1]:null,liveTable=shown>0?sim.progressTables?.[shown-1]:null;
-  const controls=host?`<div class="reveal-controls"><button class="primary big" id="revealNext">${shown===0?'Reveal first match':`Reveal match ${shown+1}`}</button><button class="secondary" id="revealAll">Reveal all results</button></div>`:'<div class="card muted">Waiting for the host to reveal the next match.</div>';
-  shell(`${exhibition?`<div class="card exhibition-banner"><b>Exhibition re-simulation #${state.exhibitionNumber||1}</b><div>Does not affect official session history.</div></div>`:''}<div class="card reveal-header"><div class="muted">${exhibition?'EXHIBITION MATCHDAY REVEAL':'MATCHDAY REVEAL'}</div><h1>${shown} / ${total}</h1><p class="muted">Results and the league table are being revealed live to everyone in the room.</p></div>${latest?`<div class="card"><h2>Latest result</h2>${matchHtml(latest,`Match ${shown} of ${total}`)}</div>`:'<div class="card"><h2>Season ready</h2><p class="muted">No results have been shown yet.</p></div>'}${liveTable?`<div class="card"><h2>Live table</h2>${standingsHtml(liveTable)}</div>`:''}${controls}`);
+  const latest=shown>0?gameweeks[shown-1]:null,liveTable=shown>0?sim.progressTables?.[shown-1]:null;
+  const controls=host?`<div class="reveal-controls"><button class="primary big" id="revealNext">${shown===0?'Reveal first Gameweek':`Reveal Gameweek ${shown+1}`}</button><button class="secondary" id="revealAll">Reveal all results</button></div>`:'<div class="card muted">Waiting for the host to reveal the next Gameweek.</div>';
+  shell(`${exhibition?`<div class="card exhibition-banner"><b>Exhibition re-simulation #${state.exhibitionNumber||1}</b><div>Does not affect official session history.</div></div>`:''}<div class="card reveal-header"><div class="muted">${exhibition?'EXHIBITION GAMEWEEK REVEAL':'GAMEWEEK REVEAL'}</div><h1>${shown} / ${total}</h1><p class="muted">Every fixture in a Gameweek is revealed together and the live table updates once afterwards.</p></div>${latest?gameweekCardHtml(latest):'<div class="card"><h2>Season ready</h2><p class="muted">No Gameweeks have been shown yet.</p></div>'}${liveTable?`<div class="card"><h2>Live table</h2>${standingsHtml(liveTable)}</div>`:''}${controls}`);
   if(host){document.querySelector('#revealNext').onclick=()=>socket.emit('revealNextMatch',{});document.querySelector('#revealAll').onclick=()=>socket.emit('revealAllMatches',{});}
 }
 
@@ -918,6 +1078,55 @@ function finished(){
     shell(`<div class="card"><h1>Draft complete</h1><p class="muted">${esc(packName())} · Hard Mode</p></div>${state.managers.map(m=>`<div class="card"><div class="budget"><h2>${esc(m.name)}</h2><b>${m.formation} · £${m.budget}m left</b></div><div class="squad">${hardSquadHtml(m)}</div></div>`).join('')}${host?'<button class="primary big" id="again">Play again</button>':'<div class="card muted">Waiting for the host to start another game.</div>'}`);
   }
   if(host)document.querySelector('#again').onclick=()=>socket.emit('playAgain',{});
+}
+
+
+function ownTeamBuildSignature(s){
+  const id=s?.viewerId||meId,m=s?.managers?.find(x=>x.id===id);
+  if(!m)return '';
+  return JSON.stringify({formation:m.finalFormation,lineup:m.lineup,ready:m.teamReady,squad:(m.squad||[]).map(p=>p.id),budget:m.budget});
+}
+function patchTeamBuildShared(){
+  const count=document.querySelector('#teamReadyCount');if(count)count.textContent=`${state.managers.filter(x=>x.teamReady).length}/${state.managers.length} set`;
+  for(const m of state.managers){
+    const el=document.querySelector(`[data-team-status="${CSS.escape(String(m.id))}"]`);if(!el)continue;
+    el.className=m.teamReady?'ready':'notready';el.textContent=m.teamReady?'TEAM SET':'ARRANGING';
+  }
+}
+function samePriorityInteraction(a,b){
+  const ac=a?.current,bc=b?.current;if(!ac||!bc)return false;
+  if(ac.priorityRound!==bc.priorityRound||ac.priorityStage!==bc.priorityStage)return false;
+  if(!['bidding','tiebreak'].includes(bc.priorityStage))return false;
+  if(bc.priorityStage==='bidding'){
+    const aa=(ac.priorityBoard||[]).map(p=>p.id).join(','),bb=(bc.priorityBoard||[]).map(p=>p.id).join(',');
+    return aa===bb;
+  }
+  return ac.priorityTiePlayer?.id===bc.priorityTiePlayer?.id;
+}
+function patchPriorityInteraction(){
+  const c=state?.current;if(!c)return;
+  const locked=!!c.myPriorityLocked,disabled=locked||!!state.paused;
+  const lock=document.querySelector('#priorityLock');
+  if(lock){lock.textContent=locked?'Unlock Decision':'Lock Decision';lock.classList.toggle('primary',!locked);lock.classList.toggle('secondary',locked);lock.disabled=!!state.paused;}
+  if(c.priorityStage==='bidding'){
+    document.querySelectorAll('.priority-bid-input').forEach(input=>{
+      const pid=input.dataset.player;
+      if(document.activeElement!==input)input.value=String(c.myPriorityBids?.[pid]??1);
+      input.disabled=disabled;
+    });
+    document.querySelectorAll('.priority-step').forEach(b=>b.disabled=disabled);
+  }else if(c.priorityStage==='tiebreak'&&c.priorityTiebreakEligible){
+    const input=document.querySelector('#priorityTieInput');
+    if(input){if(document.activeElement!==input)input.value=String(c.myPriorityTieBid??c.priorityTieMin??1);input.disabled=disabled;}
+    document.querySelectorAll('.priority-tie-step').forEach(b=>b.disabled=disabled);
+  }
+}
+function patchOpenAuctionLive(){
+  const c=state?.current;if(!c)return;
+  const bid=document.querySelector('#currentBidValue'),leader=document.querySelector('#currentBidLeader');
+  if(bid)bid.textContent=`£${c.bid||0}m`;
+  if(leader)leader.textContent=c.bidderId?`${managerName(c.bidderId)} leads`:'No bids yet';
+  updateCustomBidValidity();
 }
 
 function render(){
@@ -932,17 +1141,33 @@ function render(){
 }
 
 socket.on('state',s=>{
-  const phaseChanged=state?.phase!==s.phase;
+  const previous=state;
+  const phaseChanged=previous?.phase!==s.phase;
   const endgameJustBegan=s.mode==='blind'&&s.phase==='draft'&&!!s.current?.blindEndgame&&!blindEndgameAnnounced;
+  const active=document.activeElement;
   state=s;
   if(s.viewerId)meId=s.viewerId;
   if(s.mode!=='blind'||s.phase!=='draft')blindEndgameAnnounced=false;
   if(phaseChanged){
     selectedLineupSlot=null;
-    if(s.phase==='draft'){tab='draft';nominationSearch='';nominationPosition='ALL';}
+    if(s.phase==='draft'){tab='draft';nominationSearch='';nominationPosition='ALL';firstSessionRecoveryCode=null;}
     if(s.phase==='results'){resultsTab='season';statsMetric='goals';postSimView='results';reviewManagerId=meId||null;}
   }
-  render();
+  let handled=false;
+  if(viewingRecords){
+    // Room activity can continue behind the Records overlay without rebuilding the
+    // records UI or closing an in-progress filter/history interaction.
+    handled=true;
+  }else if(!phaseChanged&&previous&&s.phase==='team_build'&&ownTeamBuildSignature(previous)===ownTeamBuildSignature(s)){
+    patchTeamBuildShared();handled=true;
+  }else if(!phaseChanged&&previous&&s.phase==='draft'&&s.mode==='priority'&&samePriorityInteraction(previous,s)){
+    // Keep simultaneous Priority Bid edits stable. Server state remains authoritative,
+    // but bid inputs are patched in place instead of destroying/recreating the form.
+    patchPriorityInteraction();handled=true;
+  }else if(!phaseChanged&&previous&&s.phase==='draft'&&!['blind','priority'].includes(s.mode)&&active?.id==='customBidInput'&&previous.current?.player?.id===s.current?.player?.id){
+    patchOpenAuctionLive();handled=true;
+  }
+  if(!handled)render();
   if(endgameJustBegan){blindEndgameAnnounced=true;showToast('Endgame has begun · remaining players are compulsory');}
 });
 socket.on('tick',({timeLeft})=>{
@@ -956,6 +1181,9 @@ socket.on('nominationTick',({timeLeft})=>{
   if(state?.nomination){state.nomination.timeLeft=timeLeft;const t=document.querySelector('#nominationTimer');if(t){t.textContent=timeLeft;t.classList.toggle('warn',timeLeft<=5)}}
 });
 socket.on('auctionNotice',({message})=>{if(message)showToast(message)});
+socket.on('removedFromLobby',({message})=>{
+  clearSavedSession();state=null;meId=null;firstSessionRecoveryCode=null;history.replaceState({},'',location.pathname);home();showToast(message||'You were removed from the lobby.');
+});
 socket.on('connect',()=>{attemptResume();refreshRecordsStatus();});
 applyVisualTheme();
 home();
