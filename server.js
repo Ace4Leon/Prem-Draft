@@ -170,6 +170,24 @@ async function recordsSummaryPayload(){
   const dataset=await loadHistoryDataset();if(!dataset)return null;
   return {allTime:aggregateHistoryCompetitions(dataset.competitions,dataset.nameMap,'ppg'),groups:rivalryGroupsFromDataset(dataset)};
 }
+async function allRecordsPayload(modes,packs){
+  const dataset=await loadHistoryDataset();if(!dataset)return null;
+  const allowedModes=new Set(Array.isArray(modes)?modes.filter(x=>MODE_LABELS[x]):Object.keys(MODE_LABELS));
+  const allowedPacks=new Set(Array.isArray(packs)?packs.filter(x=>x==='chaos'||Object.prototype.hasOwnProperty.call(PACKS,x)):[...Object.keys(PACKS),'chaos']);
+  const filtered=dataset.competitions.filter(c=>allowedModes.has(c.mode)&&allowedPacks.has(c.pack));
+  const drafts=filtered.map(c=>{
+    const d=c.data||{},participants=[...(d.participants||[])].sort((a,b)=>(a.rank||999)-(b.rank||999));
+    const names=participants.map(p=>({profileId:p.profileId,name:dataset.nameMap.get(p.profileId)||p.displayName||'Manager',rank:p.rank||null}));
+    const champion=names.find(p=>p.profileId===d.championProfileId)||names.find(p=>p.rank===1);
+    return {competitionId:c.competition_id,completedAt:c.completed_at,mode:c.mode,pack:c.pack,champion:champion?.name||'—',participants:names};
+  });
+  return {
+    table:aggregateHistoryCompetitions(filtered,dataset.nameMap,'ppg'),
+    matchingDrafts:filtered.length,
+    matchingMatches:filtered.reduce((n,c)=>n+(c.data?.matches?.length||0),0),
+    drafts
+  };
+}
 async function rivalryPayload(key,modes,packs){
   const dataset=await loadHistoryDataset();if(!dataset)return null;
   const allowedModes=new Set(Array.isArray(modes)?modes.filter(x=>MODE_LABELS[x]):Object.keys(MODE_LABELS));
@@ -313,18 +331,19 @@ function historyCompetitionPayload(room,simulation){
   const rankByManager=new Map((simulation.table||[]).map((r,i)=>[r.id,i+1]));
   const toProfile=id=>managerMap.get(id)?.profileId||null;
   const participants=managers.map(m=>({
-    profileId:m.profileId,displayName:m.name,managerId:m.id,rank:rankByManager.get(m.id)||null,
+    profileId:m.profileId,displayName:m.name,managerId:m.id,color:m.color||null,rank:rankByManager.get(m.id)||null,
     formation:isFreeformLike(room.mode)?m.finalFormation:m.formation,budget:m.budget,
     teamRating:room.teamAssessments?.get(m.id)?publicAssessment(room.teamAssessments.get(m.id)):null,
     squad:m.squad.map(publicPlayer),lineup:Array.isArray(m.lineup)?[...m.lineup]:[]
   }));
   const matches=(simulation.matches||[]).map(m=>({
     homeProfileId:toProfile(m.homeId),awayProfileId:toProfile(m.awayId),homeName:m.homeName,awayName:m.awayName,
+    matchNumber:m.matchNumber||null,gameweekNumber:m.gameweekNumber||null,
     homeGoals:m.homeGoals,awayGoals:m.awayGoals,homeScorers:m.homeScorers,awayScorers:m.awayScorers,
     homeShotsOnTarget:m.homeShotsOnTarget,awayShotsOnTarget:m.awayShotsOnTarget,homeSaves:m.homeSaves,awaySaves:m.awaySaves,playerOfMatch:m.playerOfMatch
   }));
   return {
-    version:'v9',participants,championProfileId:toProfile(simulation.championId),matches,
+    version:'v10',participants,championProfileId:toProfile(simulation.championId),matches,
     playoffs:(simulation.playoffs||[]).map(m=>({
       homeProfileId:toProfile(m.homeId),awayProfileId:toProfile(m.awayId),homeName:m.homeName,awayName:m.awayName,
       homeGoals:m.homeGoals,awayGoals:m.awayGoals,homeScorers:m.homeScorers,awayScorers:m.awayScorers,
@@ -369,6 +388,11 @@ const MODE_LABELS = {
   hard: 'Hard Mode (Legacy)'
 };
 
+const MANAGER_COLOURS = ['#2563eb','#f97316','#16a34a','#9333ea','#db2777','#0891b2','#ca8a04','#dc2626'];
+function nextManagerColour(room){
+  const used=new Set([...room.managers.values()].map(m=>m.color).filter(Boolean));
+  return MANAGER_COLOURS.find(c=>!used.has(c))||MANAGER_COLOURS[room.managers.size%MANAGER_COLOURS.length];
+}
 const POSITION_ORDER = ['GK','LB','CB','RB','DM','CM','AM','LM','RM','LW','RW','ST'];
 const FREEFORM_LIKE_MODES = new Set(['freeform','nomination','blind','priority']);
 function isFreeformLike(mode){ return FREEFORM_LIKE_MODES.has(mode); }
@@ -385,22 +409,35 @@ const HARD_FORMATIONS = {
 
 // Freeform formations are only used AFTER the auction. Position eligibility is ignored.
 const FREEFORM_FORMATIONS = {
-  '4-3-3': ['GK','LB','CB','CB','RB','CM','CM','CM','LW','ST','RW'],
-  '4-4-2': ['GK','LB','CB','CB','RB','LM','CM','CM','RM','ST','ST'],
-  '4-2-3-1': ['GK','LB','CB','CB','RB','DM','DM','LW','AM','RW','ST'],
-  '4-1-4-1': ['GK','LB','CB','CB','RB','DM','LM','CM','CM','RM','ST'],
-  '4-3-1-2': ['GK','LB','CB','CB','RB','CM','CM','CM','AM','ST','ST'],
-  '4-2-2-2': ['GK','LB','CB','CB','RB','DM','DM','AM','AM','ST','ST'],
-  '4-1-2-1-2': ['GK','LB','CB','CB','RB','DM','CM','CM','AM','ST','ST'],
-  '4-3-2-1': ['GK','LB','CB','CB','RB','CM','CM','CM','AM','AM','ST'],
-  '3-5-2': ['GK','CB','CB','CB','LM','CM','CM','AM','RM','ST','ST'],
-  '3-4-3': ['GK','CB','CB','CB','LM','CM','CM','RM','LW','ST','RW'],
-  '3-4-2-1': ['GK','CB','CB','CB','LM','CM','CM','RM','AM','AM','ST'],
+  '3-1-4-2': ['GK','CB','CB','CB','DM','LM','CM','CM','RM','ST','ST'],
   '3-4-1-2': ['GK','CB','CB','CB','LM','CM','CM','RM','AM','ST','ST'],
-  '5-3-2': ['GK','LB','CB','CB','CB','RB','CM','CM','CM','ST','ST'],
+  '3-4-2-1': ['GK','CB','CB','CB','LM','CM','CM','RM','AM','AM','ST'],
+  '3-4-3': ['GK','CB','CB','CB','LM','CM','CM','RM','LW','ST','RW'],
+  '3-5-2': ['GK','CB','CB','CB','LM','CM','CM','AM','RM','ST','ST'],
+  '4-1-2-1-2 Narrow': ['GK','LB','CB','CB','RB','DM','CM','CM','AM','ST','ST'],
+  '4-1-2-1-2 Wide': ['GK','LB','CB','CB','RB','DM','LM','RM','AM','ST','ST'],
+  '4-1-3-2': ['GK','LB','CB','CB','RB','DM','LM','CM','RM','ST','ST'],
+  '4-1-4-1': ['GK','LB','CB','CB','RB','DM','LM','CM','CM','RM','ST'],
+  '4-2-1-3': ['GK','LB','CB','CB','RB','DM','DM','AM','LW','ST','RW'],
+  '4-2-2-2': ['GK','LB','CB','CB','RB','DM','DM','AM','AM','ST','ST'],
+  '4-2-3-1 Wide': ['GK','LB','CB','CB','RB','DM','DM','LM','AM','RM','ST'],
+  '4-2-3-1 Narrow': ['GK','LB','CB','CB','RB','DM','DM','AM','AM','AM','ST'],
+  '4-2-4': ['GK','LB','CB','CB','RB','CM','CM','LW','ST','ST','RW'],
+  '4-3-1-2': ['GK','LB','CB','CB','RB','CM','CM','CM','AM','ST','ST'],
+  '4-3-2-1': ['GK','LB','CB','CB','RB','CM','CM','CM','AM','AM','ST'],
+  '4-3-3 Wide': ['GK','LB','CB','CB','RB','CM','CM','CM','LW','ST','RW'],
+  '4-3-3 Holding': ['GK','LB','CB','CB','RB','DM','CM','CM','LW','ST','RW'],
+  '4-3-3 Attack': ['GK','LB','CB','CB','RB','CM','CM','AM','LW','ST','RW'],
+  '4-3-3 Balanced': ['GK','LB','CB','CB','RB','CM','CM','CM','LW','ST','RW'],
+  '4-4-1-1': ['GK','LB','CB','CB','RB','LM','CM','CM','RM','AM','ST'],
+  '4-4-2': ['GK','LB','CB','CB','RB','LM','CM','CM','RM','ST','ST'],
+  '4-4-2 Holding': ['GK','LB','CB','CB','RB','LM','DM','DM','RM','ST','ST'],
+  '4-5-1': ['GK','LB','CB','CB','RB','LM','CM','CM','CM','RM','ST'],
+  '4-5-1 Attack': ['GK','LB','CB','CB','RB','LM','DM','AM','DM','RM','ST'],
+  '5-2-1-2': ['GK','LB','CB','CB','CB','RB','CM','CM','AM','ST','ST'],
   '5-2-3': ['GK','LB','CB','CB','CB','RB','CM','CM','LW','ST','RW'],
-  '5-4-1': ['GK','LB','CB','CB','CB','RB','LM','CM','CM','RM','ST'],
-  '5-2-1-2': ['GK','LB','CB','CB','CB','RB','CM','CM','AM','ST','ST']
+  '5-3-2': ['GK','LB','CB','CB','CB','RB','CM','CM','CM','ST','ST'],
+  '5-4-1': ['GK','LB','CB','CB','CB','RB','LM','CM','CM','RM','ST']
 };
 
 const FREEFORM_BASE_433 = ['GK','LB','CB','CB','RB','CM','CM','CM','LW','ST','RW'];
@@ -444,6 +481,8 @@ function managerPublic(m,room,viewerId){
     return {
       id:m.id,
       name:m.name,
+      color:m.color||null,
+      connected:!!m.connected,
       formation:null,
       ready:m.ready,
       budget:null,
@@ -458,6 +497,8 @@ function managerPublic(m,room,viewerId){
   return {
     id:m.id,
     name:m.name,
+    color:m.color||null,
+    connected:!!m.connected,
     formation:m.formation,
     ready:m.ready,
     budget:m.budget,
@@ -1409,6 +1450,24 @@ function resetManagerForDraft(m){
   m.lineup=[];
   m.teamReady=false;
 }
+function removeLobbyManager(room,managerId,{notify=true,message='You were removed from the lobby.'}={}){
+  if(!room||room.phase!=='lobby')return false;
+  const m=room.managers.get(managerId);if(!m)return false;
+  if(m.disconnectTimer){clearTimeout(m.disconnectTimer);m.disconnectTimer=null;}
+  if(m.socketId){
+    const s=io.sockets.sockets.get(m.socketId);
+    if(s){
+      if(notify)s.emit('removedFromLobby',{message});
+      s.leave(room.code);s.data.room=null;s.data.managerId=null;
+    }
+  }
+  room.managers.delete(managerId);
+  if(room.mode==='nomination')room.nominationOrder=(room.nominationOrder||[]).filter(id=>id!==managerId);
+  if(room.hostId===managerId)room.hostId=[...room.managers.keys()][0]||null;
+  if(room.managers.size===0){clearInterval(room.timer);rooms.delete(room.code);return true;}
+  emitState(room);return true;
+}
+
 function validLineup(m){
   if(!m.finalFormation || !FREEFORM_FORMATIONS[m.finalFormation]) return false;
   if(!Array.isArray(m.lineup) || m.lineup.length!==11) return false;
@@ -1469,6 +1528,9 @@ io.on('connection', socket=>{
   socket.on('recordsSummary', async (_,cb)=>{
     try{const payload=await recordsSummaryPayload();if(!payload)return cb?.({ok:false,error:'Permanent Records are not configured yet.'});cb?.({ok:true,...payload,modeLabels:MODE_LABELS,packLabels:{...PACKS,chaos:'Chaos Mode'},recordsConnected:!!historyDbReady,adminConfigured:!!ADMIN_CODE});}catch(err){console.error('Records summary error:',err.message);cb?.({ok:false,error:'Could not load All-Time Records.'});}
   });
+  socket.on('recordsAll', async ({modes,packs},cb)=>{
+    try{const payload=await allRecordsPayload(modes,packs);if(!payload)return cb?.({ok:false,error:'Permanent Records are not configured yet.'});cb?.({ok:true,...payload});}catch(err){console.error('All records error:',err.message);cb?.({ok:false,error:'Could not load filtered All-Time Records.'});}
+  });
   socket.on('recordsGroup', async ({key,modes,packs},cb)=>{
     try{const payload=await rivalryPayload(String(key||''),modes,packs);if(!payload)return cb?.({ok:false,error:'Permanent Records are not configured yet.'});cb?.({ok:true,...payload});}catch(err){console.error('Rivalry records error:',err.message);cb?.({ok:false,error:'Could not load this rivalry group.'});}
   });
@@ -1484,7 +1546,7 @@ io.on('connection', socket=>{
     let profile=null;try{profile=profileCode?await profileByCode(profileCode):null;}catch{}
     if(profileCode&&historyDbReady&&!profile)return cb?.({ok:false,error:'Your saved manager profile could not be found. Recover or create a profile and try again.'});
     const managerId=newManagerId(), reconnectToken=newReconnectToken();
-    const m={id:managerId,profileId:profile?.profile_id||null,profileDefaultName:profile?.default_name||null,name:cleanName(name||profile?.default_name),formation:null,ready:false,budget:STARTING_BUDGET,squad:[],finalFormation:null,lineup:[],teamReady:false,reconnectToken,socketId:socket.id,connected:true,disconnectTimer:null};
+    const m={id:managerId,profileId:profile?.profile_id||null,profileDefaultName:profile?.default_name||null,name:cleanName(name||profile?.default_name),color:MANAGER_COLOURS[0],formation:null,ready:false,budget:STARTING_BUDGET,squad:[],finalFormation:null,lineup:[],teamReady:false,reconnectToken,socketId:socket.id,connected:true,disconnectTimer:null};
     const room={
       code,hostId:managerId,phase:'lobby',mode:DEFAULT_MODE,pack:DEFAULT_PACK,managers:new Map([[managerId,m]]),
       pool:[],initialPoolSize:0,auctionIndex:0,shownCount:0,current:null,timer:null,paused:false,
@@ -1504,7 +1566,7 @@ io.on('connection', socket=>{
     if(profileCode&&historyDbReady&&!profile)return cb?.({ok:false,error:'Your saved manager profile could not be found. Recover or create a profile and try again.'});
     if(profile&&[...room.managers.values()].some(m=>m.profileId===profile.profile_id))return cb?.({ok:false,error:'That permanent manager profile is already in this room.'});
     const managerId=newManagerId(), reconnectToken=newReconnectToken();
-    const m={id:managerId,profileId:profile?.profile_id||null,profileDefaultName:profile?.default_name||null,name:cleanName(name||profile?.default_name),formation:null,ready:false,budget:STARTING_BUDGET,squad:[],finalFormation:null,lineup:[],teamReady:false,reconnectToken,socketId:socket.id,connected:true,disconnectTimer:null};
+    const m={id:managerId,profileId:profile?.profile_id||null,profileDefaultName:profile?.default_name||null,name:cleanName(name||profile?.default_name),color:nextManagerColour(room),formation:null,ready:false,budget:STARTING_BUDGET,squad:[],finalFormation:null,lineup:[],teamReady:false,reconnectToken,socketId:socket.id,connected:true,disconnectTimer:null};
     room.managers.set(managerId,m);socket.join(code);socket.data.room=code;socket.data.managerId=managerId;
     cb?.({ok:true,managerId,reconnectToken,state:roomPublic(room,managerId)});emitState(room);
   });
@@ -1522,6 +1584,24 @@ io.on('connection', socket=>{
     m.socketId=socket.id;m.connected=true;
     socket.data.room=code;socket.data.managerId=m.id;socket.join(code);
     cb?.({ok:true,managerId:m.id,state:roomPublic(room,m.id)});emitState(room);
+  });
+
+  socket.on('leaveLobby', (_,cb)=>{
+    const room=rooms.get(socket.data.room),managerId=managerIdForSocket(socket);
+    if(!room||room.phase!=='lobby'||!managerId)return cb?.({ok:false,error:'You can only leave cleanly from the lobby.'});
+    removeLobbyManager(room,managerId,{notify:false});
+    socket.leave(room.code);socket.data.room=null;socket.data.managerId=null;
+    cb?.({ok:true});
+  });
+
+  socket.on('removeLobbyManager', ({managerId},cb)=>{
+    const room=rooms.get(socket.data.room);
+    if(!room||room.phase!=='lobby'||!socketIsHost(room,socket))return cb?.({ok:false,error:'Only the host can remove managers from the lobby.'});
+    managerId=String(managerId||'');
+    if(!managerId||managerId===room.hostId)return cb?.({ok:false,error:'Use Back to Home if you want to leave the lobby yourself.'});
+    if(!room.managers.has(managerId))return cb?.({ok:false,error:'That manager is no longer in the lobby.'});
+    removeLobbyManager(room,managerId,{notify:true,message:'The host removed you from this lobby. You can rejoin with the room code at any time.'});
+    cb?.({ok:true});
   });
 
   socket.on('setPack', ({pack})=>{
@@ -1781,7 +1861,7 @@ io.on('connection', socket=>{
 
   socket.on('resimulateSeason', (_,cb)=>{
     const room=rooms.get(socket.data.room);if(!room||room.phase!=='results'||!socketIsHost(room,socket)||!room.teamAssessments||!room.officialSimulation)return;
-    const total=room.simulation?.matches?.length||0;if((room.simulationRevealCount||0)<total)return cb?.({ok:false,error:'Finish revealing the current simulation first.'});
+    const total=room.simulation?.gameweeks?.length||room.simulation?.matches?.length||0;if((room.simulationRevealCount||0)<total)return cb?.({ok:false,error:'Finish revealing the current simulation first.'});
     const teams=[...room.managers.values()].map(m=>({id:m.id,name:m.name,assessment:room.teamAssessments.get(m.id)}));
     room.simulation=simulateCompetition(teams);room.simulationKind='exhibition';room.exhibitionNumber=(room.exhibitionNumber||0)+1;room.simulationRevealCount=0;
     cb?.({ok:true});emitState(room);
@@ -1789,17 +1869,17 @@ io.on('connection', socket=>{
 
   socket.on('viewOfficialSimulation', (_,cb)=>{
     const room=rooms.get(socket.data.room);if(!room||room.phase!=='results'||!socketIsHost(room,socket)||!room.officialSimulation)return;
-    room.simulation=room.officialSimulation;room.simulationKind='official';room.simulationRevealCount=room.simulation.matches?.length||0;cb?.({ok:true});emitState(room);
+    room.simulation=room.officialSimulation;room.simulationKind='official';room.simulationRevealCount=room.simulation.gameweeks?.length||room.simulation.matches?.length||0;cb?.({ok:true});emitState(room);
   });
 
   socket.on('revealNextMatch', (_,cb)=>{
     const room=rooms.get(socket.data.room);if(!room||room.phase!=='results'||!socketIsHost(room,socket)||!room.simulation)return;
-    const total=room.simulation.matches?.length||0;room.simulationRevealCount=Math.min(total,(room.simulationRevealCount||0)+1);cb?.({ok:true});emitState(room);
+    const total=room.simulation.gameweeks?.length||room.simulation.matches?.length||0;room.simulationRevealCount=Math.min(total,(room.simulationRevealCount||0)+1);cb?.({ok:true});emitState(room);
   });
 
   socket.on('revealAllMatches', (_,cb)=>{
     const room=rooms.get(socket.data.room);if(!room||room.phase!=='results'||!socketIsHost(room,socket)||!room.simulation)return;
-    room.simulationRevealCount=room.simulation.matches?.length||0;cb?.({ok:true});emitState(room);
+    room.simulationRevealCount=room.simulation.gameweeks?.length||room.simulation.matches?.length||0;cb?.({ok:true});emitState(room);
   });
 
   socket.on('playAgain', (_,cb)=>{
