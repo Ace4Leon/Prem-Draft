@@ -1009,19 +1009,46 @@ function simulateMatch(home,away,{neutral=false,knockout=false}={}){
 }
 
 function scheduleFor(teams){
-  const games=[];
-  if(teams.length===2){
-    const [a,b]=teams;
-    for(let i=0;i<5;i++) games.push([a,b],[b,a]);
-    return games;
+  const shuffle=(items)=>{
+    const out=[...items];
+    for(let i=out.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[out[i],out[j]]=[out[j],out[i]];}
+    return out;
+  };
+  const setsByManagers={2:9,3:5,4:3,5:2,6:2};
+  const homeAwaySets=setsByManagers[teams.length]||1;
+  const gameweeks=[];
+  let gw=1;
+  const makeLeg=(ordered)=>{
+    const arr=[...ordered];
+    if(arr.length%2===1)arr.push(null);
+    const rounds=[];
+    const total=arr.length;
+    for(let r=0;r<total-1;r++){
+      const fixtures=[];const byeIds=[];
+      for(let i=0;i<total/2;i++){
+        const a=arr[i],b=arr[total-1-i];
+        if(!a||!b){const team=a||b;if(team)byeIds.push(team.id);continue;}
+        // Alternating the first-leg orientation avoids one team always opening at home.
+        const flip=((r+i)%2)===1;
+        fixtures.push(flip?[b,a]:[a,b]);
+      }
+      rounds.push({fixtures,byeIds});
+      const fixed=arr[0],rest=arr.slice(1);
+      rest.unshift(rest.pop());
+      arr.splice(0,arr.length,fixed,...rest);
+    }
+    return rounds;
+  };
+  for(let set=0;set<homeAwaySets;set++){
+    const firstLeg=makeLeg(shuffle(teams));
+    for(const round of firstLeg)gameweeks.push({number:gw++,fixtures:round.fixtures,byeIds:round.byeIds});
+    for(const round of firstLeg)gameweeks.push({
+      number:gw++,
+      fixtures:round.fixtures.map(([h,a])=>[a,h]),
+      byeIds:[...round.byeIds]
+    });
   }
-  const repeats=teams.length===3 ? 2 : 1;
-  for(let i=0;i<teams.length;i++) for(let j=i+1;j<teams.length;j++){
-    for(let r=0;r<repeats;r++) games.push([teams[i],teams[j]],[teams[j],teams[i]]);
-  }
-  // Shuffle fixture order without changing home/away counts.
-  for(let i=games.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[games[i],games[j]]=[games[j],games[i]];}
-  return games;
+  return gameweeks;
 }
 
 function blankRow(t){return {id:t.id,name:t.name,p:0,w:0,d:0,l:0,gf:0,ga:0,gd:0,pts:0};}
@@ -1180,9 +1207,17 @@ function leaderboards(playerStats){
 
 function simulateCompetition(teamInputs){
   const teams=teamInputs.map(t=>({...t,assessment:t.assessment}));
-  const fixtures=scheduleFor(teams);
-  const matches=fixtures.map(([h,a],i)=>({...simulateMatch(h,a),matchNumber:i+1}));
-  const progressTables=matches.map((_,i)=>tableFromResults(teams,matches.slice(0,i+1)));
+  const schedule=scheduleFor(teams);
+  const matches=[];
+  const gameweeks=[];
+  const progressTables=[];
+  let matchNumber=1;
+  for(const gw of schedule){
+    const gwMatches=gw.fixtures.map(([h,a])=>({...simulateMatch(h,a),matchNumber:matchNumber++,gameweekNumber:gw.number}));
+    matches.push(...gwMatches);
+    gameweeks.push({number:gw.number,matches:gwMatches,byeIds:[...(gw.byeIds||[])]});
+    progressTables.push(tableFromResults(teams,matches));
+  }
   const table=tableFromResults(teams,matches);
   let tied=tiedAtTopAfterAllCriteria(table,matches);
   const playoffs=[];
@@ -1203,7 +1238,7 @@ function simulateCompetition(teamInputs){
     championId=pool[0]?.id||championId;
   }
   const playerStats=aggregatePlayerStats(teams,matches);
-  return {matches,progressTables,table,playoffs,championId,playerStats,leaderboards:leaderboards(playerStats),teamOfSeason:teamOfSeason(playerStats)};
+  return {matches,gameweeks,progressTables,table,playoffs,championId,playerStats,leaderboards:leaderboards(playerStats),teamOfSeason:teamOfSeason(playerStats)};
 }
 
 module.exports={qualityFor,getProfile,positionalFit,assessLineup,publicAssessment,simulateCompetition};
