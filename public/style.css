@@ -594,3 +594,59 @@ body[data-theme="immersive"] .priority-history-round[open] summary,
 body[data-theme="immersive"] .priority-matrix th,
 body[data-theme="immersive"] .priority-matrix td,
 body[data-theme="immersive"] .priority-tie-history{border-color:rgba(142,211,177,.12)}
+
+/* v10 navigation, records, manager colours, gameweeks and stable inputs */
+.profile-onboarding-backdrop{position:fixed;inset:0;z-index:120;display:grid;place-items:center;padding:18px;background:rgba(15,23,42,.58);backdrop-filter:blur(5px)}
+.profile-onboarding-card{width:min(460px,100%);background:#fff;border:1px solid #e5e7eb;border-radius:20px;padding:22px;box-shadow:0 24px 70px rgba(15,23,42,.28);text-align:center}
+.profile-onboarding-card h2{margin:4px 0 8px}
+.recovery-code-large{display:inline-block;margin:10px 0 12px;padding:13px 18px;border:2px solid #111827;border-radius:14px;background:#f8fafc;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:28px;font-weight:1000;letter-spacing:.09em;line-height:1.1}
+.first-profile-reminder{border-color:#fde68a;background:#fffbeb;text-align:center}
+.first-profile-reminder b{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:19px;letter-spacing:.05em;margin:4px 0}
+.lobby-top-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+.small-button{min-height:38px;padding:8px 11px;font-size:12px;border-radius:10px}
+.manager-main{min-width:0;display:grid;gap:3px}
+.manager-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.manager-colour-row{position:relative;padding-left:13px}
+.manager-colour-row:before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:4px;border-radius:99px;background:var(--manager-color,#64748b)}
+.manager-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--manager-color,#64748b);box-shadow:0 0 0 1px rgba(15,23,42,.1);flex:0 0 auto}
+.manager-name-with-dot{display:inline-flex;align-items:center;gap:7px;min-width:0}
+.manager-name-with-dot .manager-dot{width:10px;height:10px}
+.manager-accent-card{border-left:4px solid var(--manager-color,#64748b)}
+.active-filter-chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 12px}
+.active-filter-chips span{display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;background:#eef2ff;border:1px solid #e0e7ff;font-size:11px;font-weight:800;color:#3730a3}
+.team-review-sticky{position:sticky;top:6px;z-index:7;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:7px;margin-bottom:10px;padding:8px;border:1px solid #e5e7eb;border-radius:14px;background:rgba(255,255,255,.95);box-shadow:0 8px 22px rgba(15,23,42,.08);backdrop-filter:blur(8px)}
+.team-review-sticky>button:last-child{text-align:right}
+.team-review-current{display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;font-size:12px}
+.team-review-switch .result-tab{position:relative;border:1px solid transparent}
+.team-review-switch .result-tab.active{box-shadow:inset 0 -3px 0 var(--manager-color,#111827)}
+.gameweek-card{margin:10px 0 14px;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;background:#fff}
+.gameweek-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:#f8fafc;border-bottom:1px solid #e5e7eb}
+.gameweek-heading .small{margin:0}
+.gameweek-fixtures{padding:2px 12px 7px}
+.gameweek-fixtures .match{margin:8px 0}
+.custom-bid-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;margin-top:9px}
+.custom-bid-input{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px;align-items:center;padding:0 10px;border:1px solid #d1d5db;border-radius:12px;background:#fff;min-height:46px}
+.custom-bid-input input{border:0!important;min-height:0!important;padding:0!important;text-align:center;font-weight:900;background:transparent!important}
+.custom-bid-input input:focus{outline:0}
+
+@media(max-width:560px){
+  .profile-onboarding-card{padding:19px 16px}
+  .recovery-code-large{font-size:24px;max-width:100%;overflow-wrap:anywhere}
+  .lobby-top-actions{width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin-top:10px}
+  .lobby-top-actions button{padding:8px 5px;font-size:11px}
+  .manager{align-items:flex-start}
+  .manager-actions{align-items:flex-end;flex-direction:column}
+  .team-review-sticky{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);top:4px;padding:6px}
+  .team-review-sticky button{padding:7px 6px;font-size:10px;min-height:36px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .team-review-current{font-size:10px;max-width:94px;overflow:hidden;text-overflow:ellipsis}
+  .gameweek-heading{align-items:flex-start;flex-direction:column;gap:3px}
+  .custom-bid-row{grid-template-columns:1fr}
+  .custom-bid-row button{width:100%}
+}
+body[data-theme="immersive"] .profile-onboarding-card,
+body[data-theme="immersive"] .team-review-sticky,
+body[data-theme="immersive"] .gameweek-card,
+body[data-theme="immersive"] .custom-bid-input{background:#0b2119;border-color:rgba(142,211,177,.2);color:#eef7f3}
+body[data-theme="immersive"] .first-profile-reminder{background:rgba(82,61,7,.58);border-color:rgba(250,204,21,.3)}
+body[data-theme="immersive"] .active-filter-chips span{background:rgba(49,46,129,.35);border-color:rgba(129,140,248,.25);color:#c7d2fe}
+body[data-theme="immersive"] .gameweek-heading{background:rgba(7,24,18,.72);border-color:rgba(142,211,177,.14)}
