@@ -1,1189 +1,1249 @@
-const socket=io();
-const app=document.querySelector('#app');
-const toast=document.querySelector('#toast');
-let state=null;
-let meId=null;
-let tab='draft';
-let selectedLineupSlot=null;
-let resultsTab='season';
-let statsMetric='goals';
-let postSimView='results';
-let reviewManagerId=null;
-let nominationSearch='';
-let nominationPosition='ALL';
-let blindEndgameAnnounced=false;
-let viewingRecords=false;
-let recordsSection='rivalry';
-let recordsSummaryData=null;
-let recordsGroupData=null;
-let recordsAllData=null;
-let selectedRivalryKey='';
-let selectedRecordModes=new Set();
-let selectedRecordPacks=new Set();
-let recordsConnectionStatus=null;
-let recordsAdminConfigured=false;
-let recordsAdminUnlocked=false;
-let recordsAdminMode=false;
-let recordsAdminData=null;
-let recordsAdminProfilesData=null;
-let recordsAdminSection='games';
-let historicalCompetition=null;
-let historicalView='results';
-let historicalResultTab='season';
-let historicalStatsMetric='goals';
-let historicalTeamId=null;
-let historicalReturnSection='rivalry';
-let firstSessionRecoveryCode=null;
-let openCustomBidDraft={playerId:null,value:null};
-const RECORD_FILTERS_KEY='premDraftRecordFiltersV1';
-const PROFILE_ONBOARDING_KEY='premDraftProfileOnboardingPendingV1';
+// Hidden multi-pack simulation profiles. The legacy filename is retained so upgrading from v5A only requires replacing the file.
+// These values never leave the server. Individual player ratings/traits are deliberately not sent to clients.
+// All-Time Prem: best 2-3 season Premier League peak + small sustained-excellence bonus.
+// Current packs: 2026/27 current ability. All-Time World: career peak + small sustained-excellence lift. Chaos: strongest available pack version.
 
-const SESSION_KEY='premDraftReconnectSessionV1';
+const clamp=(n,min,max)=>Math.max(min,Math.min(max,n));
+const round1=n=>Math.round(n*10)/10;
 
-const PROFILE_KEY='premDraftPermanentProfileV1';
-function readSavedProfile(){
-  try{return JSON.parse(localStorage.getItem(PROFILE_KEY)||'null')}catch{return null}
-}
-function saveProfile(profile){
-  if(!profile)return;
-  try{localStorage.setItem(PROFILE_KEY,JSON.stringify(profile))}catch{}
-}
-function savedProfile(){return readSavedProfile()}
-function recoverProfileFlow(after){
-  const code=prompt('Enter your Prem Draft profile code (for example ZAK-482):','');
-  if(code===null)return;
-  socket.emit('profileRecover',{code},r=>{
-    if(!r?.ok)return showToast(r?.error||'Profile not found');
-    saveProfile(r.profile);showToast(`Profile recovered: ${r.profile.defaultName}`);
-    if(after)after(r.profile);else if(!state)home();
-  });
-}
-function editDefaultProfileName(){
-  const p=savedProfile();if(!p?.recoveryCode)return;
-  const name=prompt('Default manager name:',p.defaultName||'Manager');if(name===null)return;
-  socket.emit('profileRename',{code:p.recoveryCode,name},r=>{
-    if(!r?.ok)return showToast(r?.error||'Could not update profile');
-    saveProfile(r.profile);showToast('Default manager name updated');if(!state)home();
-  });
-}
-function ensurePermanentProfile(name,cb){
-  const p=savedProfile();if(p?.recoveryCode)return cb(p);
-  socket.emit('profileCreate',{name},r=>{
-    if(r?.ok&&r.profile){saveProfile(r.profile);firstSessionRecoveryCode=r.profile.recoveryCode;try{localStorage.setItem(PROFILE_ONBOARDING_KEY,r.profile.recoveryCode)}catch{};return cb(r.profile);}
-    // Permanent history must never block the core game if the database is temporarily unavailable.
-    showToast('Permanent Records unavailable · continuing as guest');cb(null);
-  });
-}
+// [peak-window quality, sustained-excellence bonus]
+// Unlisted players use tier-based defaults; notable players are curated here so the model reflects their PL version.
+const QUALITY = {
+  // Goalkeepers
+  'Peter Schmeichel':[95.5,1.0], 'Petr Cech':[95,1.5], 'Edwin van der Sar':[94.5,1.0],
+  'David de Gea':[94,1.0], 'Alisson':[95,1.0], 'Pepe Reina':[89.5,1.0], 'Shay Given':[89,1.0],
+  'Joe Hart':[89.5,1.0], 'Brad Friedel':[88.5,1.25], 'Hugo Lloris':[90,1.0], 'Jens Lehmann':[89.5,0.5],
+  'Tim Howard':[87.5,0.75], 'Emiliano Martinez':[91,0.25], 'David Seaman':[94,1.0], 'Nigel Martyn':[89.5,0.75],
+  'David James':[87.5,0.75], 'Mark Schwarzer':[87.5,1.0], 'Ederson':[93.5,1.0], 'Thibaut Courtois':[93.5,0.5],
+  'Jordan Pickford':[89.5,0.75], 'Wojciech Szczesny':[88.5,0.5],
 
-function showRecoveryOnboardingIfNeeded(){
-  let pending='';try{pending=localStorage.getItem(PROFILE_ONBOARDING_KEY)||''}catch{}
-  const profile=savedProfile();
-  if(!pending||!profile?.recoveryCode||pending!==profile.recoveryCode||document.querySelector('#profileOnboarding'))return;
-  const wrap=document.createElement('div');wrap.id='profileOnboarding';wrap.className='profile-onboarding-backdrop';
-  wrap.innerHTML=`<div class="profile-onboarding-card"><div class="muted small">YOUR PERMANENT PREM DRAFT PROFILE</div><h2>Your profile is ready</h2><p class="muted">This recovery code lets you get your profile, records and history back on another device.</p><div class="recovery-code-large">${esc(profile.recoveryCode)}</div><p class="muted small">This browser remembers you automatically, so you do not need to enter the code every time. Keep the code somewhere you will remember.</p><button class="primary big" id="profileOnboardingContinue">Continue</button></div>`;
-  document.body.appendChild(wrap);
-  document.querySelector('#profileOnboardingContinue').onclick=()=>{try{localStorage.removeItem(PROFILE_ONBOARDING_KEY)}catch{};wrap.remove();};
-}
-function cleanRoomCodeInput(value){return String(value||'').toUpperCase().replace(/\s+/g,'').replace(/[^A-Z0-9]/g,'').slice(0,6);}
-function wireRoomCodeInput(input){
-  if(!input)return;
-  input.setAttribute('autocapitalize','characters');input.setAttribute('autocomplete','off');input.setAttribute('spellcheck','false');
-  input.oninput=()=>{const cleaned=cleanRoomCodeInput(input.value);if(input.value!==cleaned)input.value=cleaned;};
-}
-function managerDot(m){return `<span class="manager-dot" style="--manager-color:${esc(m?.color||'#64748b')}"></span>`;}
-function managerNameHtml(m){return `${managerDot(m)}<span>${esc(m?.name||'Manager')}</span>`;}
+  // Full-backs / wing-backs
+  'Ashley Cole':[95,1.0], 'Patrice Evra':[92.5,1.0], 'Andrew Robertson':[93.5,1.0], 'Leighton Baines':[90.5,1.0],
+  'Gael Clichy':[88.5,0.75], 'John Arne Riise':[89,0.75], 'Cesar Azpilicueta':[90.5,1.25], 'Luke Shaw':[88.5,0.5],
+  'Denis Irwin':[92.5,1.0], 'Graeme Le Saux':[88.5,0.5], 'Aleksandar Kolarov':[88,0.5], 'Marcos Alonso':[88.5,0.5],
+  'Oleksandr Zinchenko':[88.5,0.5], 'Kyle Walker':[93.5,1.0], 'Gary Neville':[90.5,1.0],
+  'Branislav Ivanovic':[90.5,0.75], 'Trent Alexander-Arnold':[93.5,0.75], 'Pablo Zabaleta':[89.5,0.75],
+  'Bacary Sagna':[89,0.75], 'Kieran Trippier':[89,0.5], 'Lauren':[89.5,0.5], 'Lee Dixon':[90,1.0],
+  'Steve Finnan':[88,0.5], 'Glen Johnson':[88.5,0.5], 'Seamus Coleman':[88.5,0.75], 'Antonio Valencia':[89.5,0.75],
+  'Reece James':[91.5,0.25], 'Joao Cancelo':[92,0.25],
 
-let resumeInFlight=false;
-function readSavedSession(){
-  try{return JSON.parse(localStorage.getItem(SESSION_KEY)||'null')}catch{return null}
-}
-function saveSession(room,reconnectToken,managerId){
-  try{localStorage.setItem(SESSION_KEY,JSON.stringify({room,reconnectToken,managerId}))}catch{}
-}
-function clearSavedSession(){try{localStorage.removeItem(SESSION_KEY)}catch{}}
-function resumeSavedRoom(manual=false){
-  if(!socket.connected||resumeInFlight)return;
-  const saved=readSavedSession();if(!saved?.room||!saved?.reconnectToken)return;
-  const requested=q('room');
-  // v8: simply opening the homepage must never drag someone back into an old room.
-  // Auto-resume only when the URL itself is asking for that same room. A homepage
-  // visitor can still choose the explicit Resume button below.
-  if(!manual){
-    if(!requested)return;
-    if(requested.toUpperCase()!==String(saved.room).toUpperCase())return;
+  // Centre-backs
+  'John Terry':[95,1.5], 'Rio Ferdinand':[95,1.5], 'Nemanja Vidic':[94.5,1.0], 'Virgil van Dijk':[96,0.5],
+  'Vincent Kompany':[94,1.0], 'Sol Campbell':[93.5,1.0], 'Jamie Carragher':[90,1.25], 'Ricardo Carvalho':[92.5,0.75],
+  'Ledley King':[91,0.25], 'Kolo Toure':[89.5,0.75], 'Jaap Stam':[94,0.5], 'William Gallas':[90,0.75],
+  'Sami Hyypia':[90.5,1.0], 'Martin Keown':[90,0.75], 'Toby Alderweireld':[91,0.75], 'Jan Vertonghen':[90.5,0.75],
+  'Ruben Dias':[93,0.5], 'Gary Cahill':[89.5,0.75], 'Tony Adams':[94.5,1.0], 'Steve Bruce':[89.5,0.75],
+  'Gary Pallister':[90.5,0.75], 'Laurent Koscielny':[90.5,0.5], 'Per Mertesacker':[89,0.5], 'Daniel Agger':[89.5,0.25],
+  'Aymeric Laporte':[90.5,0.5], 'John Stones':[91.5,0.75], 'Gabriel Magalhaes':[92,0.5], 'William Saliba':[93,0.5],
+  'Lisandro Martinez':[88.5,0.25], 'Rafael Varane':[89,0.25], 'Steve Bould':[90,0.75],
+
+  // Defensive / central midfielders
+  'Claude Makelele':[93.5,0.5], "N'Golo Kante":[94.5,0.5], 'Rodri':[95.5,0.5], 'Michael Carrick':[91.5,1.0],
+  'Gilberto Silva':[90.5,0.75], 'Javier Mascherano':[91.5,0.5], 'Fernandinho':[91.5,1.0], 'Declan Rice':[92.5,0.5],
+  'Steven Gerrard':[96,1.0], 'Frank Lampard':[95,1.5], 'Paul Scholes':[94.5,1.5], 'Patrick Vieira':[95,1.0],
+  'Yaya Toure':[95,0.5], 'Cesc Fabregas':[93.5,1.0], 'David Silva':[93.5,1.0], 'Kevin De Bruyne':[95,1.5],
+  'Roy Keane':[94.5,1.0], 'Xabi Alonso':[92.5,0.5], 'Luka Modric':[90,0.5], 'Mousa Dembele':[89.5,0.5],
+  'Gareth Barry':[88.5,1.25], 'Mikel Arteta':[89,0.5], 'James Milner':[88.5,1.25], 'Tim Cahill':[89,0.75],
+  'Michael Essien':[92.5,0.5], 'Jordan Henderson':[89,1.0], 'Bruno Fernandes':[92.5,0.75], 'Martin Odegaard':[92.5,0.5],
+  'Juan Mata':[91.5,0.5], 'Mesut Ozil':[91.5,0.5], 'Paul Ince':[90.5,0.75], 'Emmanuel Petit':[90,0.5],
+  'Ray Parlour':[88.5,0.75], 'Owen Hargreaves':[88.5,0.25], 'Scott Parker':[88.5,0.5], 'Adam Lallana':[88.5,0.5],
+  'Santi Cazorla':[91.5,0.5], 'Jack Wilshere':[88.5,0.25], 'Aaron Ramsey':[90,0.5], 'Tomas Rosicky':[88.5,0.25],
+  'Samir Nasri':[89.5,0.5], 'Georginio Wijnaldum':[89,0.75], 'Ramires':[88.5,0.5], 'Nemanja Matic':[89.5,0.75],
+  'Jorginho':[89.5,0.5], 'Ilkay Gundogan':[92.5,1.0], 'Bernardo Silva':[93.5,1.0], 'Fabinho':[90.5,0.5],
+  'Thiago Alcantara':[89.5,0.25], 'Casemiro':[87.5,0.25], 'Christian Eriksen':[91.5,0.75], 'Dele Alli':[89.5,0.25],
+  'James Maddison':[89.5,0.5], 'Gary Speed':[89.5,1.0], 'Matt Le Tissier':[92.5,0.75], 'Juninho Paulista':[89.5,0.25],
+  'Jay-Jay Okocha':[89.5,0.25], 'Youri Tielemans':[88.5,0.5], 'Douglas Luiz':[88.5,0.25], 'Moises Caicedo':[91.5,0.25],
+  'Enzo Fernandez':[90,0.25],
+
+  // Wide players / attacking mids
+  'Ryan Giggs':[93,2.0], 'Gareth Bale':[96,0.5], 'Eden Hazard':[96,0.5], 'Robert Pires':[91,1.0],
+  'Sadio Mane':[94,1.0], 'Son Heung-min':[93.5,1.0], 'Raheem Sterling':[92,1.0], 'Damien Duff':[89.5,0.5],
+  'Nani':[89.5,0.5], 'Marc Overmars':[91,0.5], 'David Ginola':[90.5,0.5], 'Steve McManaman':[90,0.75],
+  'Ashley Young':[88.5,0.75], 'Florent Malouda':[88.5,0.5], 'Joe Cole':[89.5,0.5], 'Arjen Robben':[90,0.25],
+  'Alexis Sanchez':[93.5,0.5], 'Leroy Sane':[90.5,0.25], 'Raphinha':[88.5,0.25], 'Jack Grealish':[89,0.25],
+  'Luis Diaz':[90,0.5], 'Mohamed Salah':[97,1.5], 'Cristiano Ronaldo':[98,0.5], 'David Beckham':[93,1.0],
+  'Riyad Mahrez':[93,1.0], 'Freddie Ljungberg':[89.5,0.75], 'Bukayo Saka':[93.5,0.75], 'Theo Walcott':[88,0.5],
+  'Andrei Kanchelskis':[89,0.5], 'Willian':[88.5,0.75], 'Pedro':[88.5,0.5], 'Jarrod Bowen':[89.5,0.5],
+  'Cole Palmer':[93,0.5],
+
+  // Forwards
+  'Thierry Henry':[98,1.5], 'Sergio Aguero':[95,1.5], 'Wayne Rooney':[96,1.5], 'Harry Kane':[96,1.0],
+  'Didier Drogba':[94,1.0], 'Alan Shearer':[95,1.5], 'Ruud van Nistelrooy':[94,0.5], 'Robin van Persie':[94.5,0.5],
+  'Luis Suarez':[97,0.5], 'Erling Haaland':[95.5,0.5], 'Fernando Torres':[94,0.5], 'Andy Cole':[92.5,1.0],
+  'Dwight Yorke':[91.5,0.5], 'Teddy Sheringham':[90.5,1.0], 'Dimitar Berbatov':[91,0.5], 'Jermain Defoe':[89.5,1.0],
+  'Peter Crouch':[87.5,1.0], 'Jamie Vardy':[91.5,1.0], 'Carlos Tevez':[92,0.5], 'Nicolas Anelka':[90,0.75],
+  'Jimmy Floyd Hasselbaink':[90.5,0.5], 'Olivier Giroud':[89,0.75], 'Romelu Lukaku':[90,0.5], 'Emmanuel Adebayor':[89.5,0.5],
+  'Robbie Keane':[90,1.0], 'Eric Cantona':[94,0.75], 'Dennis Bergkamp':[93.5,1.0], 'Ian Wright':[93,1.0],
+  'Les Ferdinand':[90.5,0.75], 'Gianfranco Zola':[92.5,0.5], 'Kevin Phillips':[89.5,0.25], 'Michael Owen':[93.5,0.5],
+  'Robbie Fowler':[92.5,0.75], 'Paolo Di Canio':[89.5,0.5], 'Louis Saha':[88.5,0.25], 'Edin Dzeko':[89,0.5],
+  'Mario Balotelli':[88.5,0.25], 'Javier Hernandez':[88.5,0.5], 'Diego Costa':[91,0.5], 'Pierre-Emerick Aubameyang':[90,0.25],
+  'Marcus Rashford':[89.5,0.5], 'Ivan Toney':[89,0.25], 'Alexander Isak':[92,0.5]
+};
+
+
+// Pack-specific hidden quality versions. Current packs represent 2026/27 level only.
+// All-Time World represents career peak plus a small sustained-excellence lift, following the same philosophy as All-Time Prem.
+const CURRENT_PREM_QUALITY = {
+  "Alisson": 92,
+  "Emiliano Martinez": 91,
+  "Jordan Pickford": 89,
+  "David Raya": 90,
+  "Bart Verbruggen": 87,
+  "Andrew Robertson": 84,
+  "Reece James": 88,
+  "Virgil van Dijk": 91,
+  "Ruben Dias": 92,
+  "Gabriel Magalhaes": 92,
+  "William Saliba": 94,
+  "Lisandro Martinez": 86,
+  "Jurrien Timber": 89,
+  "Ben White": 87,
+  "Riccardo Calafiori": 87,
+  "Piero Hincapie": 87,
+  "Ezri Konsa": 88,
+  "Ian Maatsen": 87,
+  "Antonee Robinson": 88,
+  "Jarrad Branthwaite": 87,
+  "Declan Rice": 94,
+  "Bruno Fernandes": 92,
+  "Martin Odegaard": 91,
+  "Moises Caicedo": 92,
+  "Enzo Fernandez": 91,
+  "Martin Zubimendi": 91,
+  "Bruno Guimaraes": 92,
+  "Mikel Merino": 87,
+  "Eberechi Eze": 91,
+  "Morgan Rogers": 91,
+  "Adam Wharton": 87,
+  "Quinten Timber": 87,
+  "Gustavo Hamer": 86,
+  "Hugo Larsson": 86,
+  "Emile Smith Rowe": 85,
+  "Alex Iwobi": 84,
+  "Bukayo Saka": 95,
+  "Cole Palmer": 95,
+  "Estevao": 93,
+  "Noni Madueke": 87,
+  "Pedro Neto": 88,
+  "Jamie Bynoe-Gittens": 87,
+  "Kaoru Mitoma": 87,
+  "Alejandro Garnacho": 86,
+  "Brennan Johnson": 86,
+  "Jack Grealish": 85,
+  "Christos Tzolis": 86,
+  "Erling Haaland": 97,
+  "Alexander Isak": 93,
+  "Viktor Gyokeres": 92,
+  "Joao Pedro": 91,
+  "Kai Havertz": 87,
+  "Jean-Philippe Mateta": 87,
+  "Jorgen Strand Larsen": 86,
+  "Evanilson": 86,
+  "Nicolas Jackson": 85,
+  "Tammy Abraham": 85,
+  "Pascal Gross": 85,
+  "Georginio Rutter": 86,
+  "Evan Ferguson": 82,
+  "Malo Gusto": 86,
+  "Wesley Fofana": 85,
+  "Levi Colwill": 86,
+  "Jorrel Hato": 87,
+  "Romeo Lavia": 86
+};
+const CURRENT_WORLD_QUALITY = {
+  "Gianluigi Donnarumma": 94,
+  "Thibaut Courtois": 94,
+  "Alisson": 92,
+  "Ederson": 90,
+  "Mike Maignan": 91,
+  "Jan Oblak": 90,
+  "Manuel Neuer": 90,
+  "Emiliano Martinez": 91,
+  "Virgil van Dijk": 91,
+  "William Saliba": 94,
+  "Ruben Dias": 92,
+  "Gabriel Magalhaes": 92,
+  "Alessandro Bastoni": 93,
+  "Antonio Rudiger": 91,
+  "Pau Cubarsi": 91,
+  "Ronald Araujo": 90,
+  "Eder Militao": 91,
+  "Cristian Romero": 91,
+  "Jules Kounde": 92,
+  "Achraf Hakimi": 95,
+  "Nuno Mendes": 94,
+  "Theo Hernandez": 91,
+  "Alphonso Davies": 92,
+  "Trent Alexander-Arnold": 91,
+  "Alejandro Grimaldo": 90,
+  "Rodri": 97,
+  "Jude Bellingham": 96,
+  "Pedri": 95,
+  "Vitinha": 95,
+  "Declan Rice": 94,
+  "Federico Valverde": 94,
+  "Joshua Kimmich": 93,
+  "Frenkie de Jong": 93,
+  "Joao Neves": 93,
+  "Nicolò Barella": 93,
+  "Aurelien Tchouameni": 92,
+  "Eduardo Camavinga": 91,
+  "Martin Zubimendi": 91,
+  "Bruno Guimaraes": 92,
+  "Moises Caicedo": 92,
+  "Kevin De Bruyne": 90,
+  "Bruno Fernandes": 92,
+  "Martin Odegaard": 91,
+  "Hakan Calhanoglu": 91,
+  "Bernardo Silva": 91,
+  "Warren Zaire-Emery": 91,
+  "Kylian Mbappe": 98,
+  "Lamine Yamal": 97,
+  "Erling Haaland": 97,
+  "Harry Kane": 96,
+  "Ousmane Dembele": 96,
+  "Vinicius Junior": 95,
+  "Jamal Musiala": 95,
+  "Raphinha": 94,
+  "Cole Palmer": 95,
+  "Bukayo Saka": 95,
+  "Michael Olise": 93,
+  "Khvicha Kvaratskhelia": 93,
+  "Desire Doue": 93,
+  "Rafael Leao": 92,
+  "Nico Williams": 92,
+  "Lautaro Martinez": 94,
+  "Julian Alvarez": 94,
+  "Victor Osimhen": 93,
+  "Alexander Isak": 93,
+  "Viktor Gyokeres": 92,
+  "Karim Benzema": 89,
+  "Antoine Griezmann": 89,
+  "Lionel Messi": 94,
+  "Cristiano Ronaldo": 84,
+  "Mohamed Salah": 90,
+  "Sadio Mane": 86,
+  "Son Heung-min": 86,
+  "Riyad Mahrez": 85,
+  "Luis Suarez": 82,
+  "Neymar": 82,
+  "Robert Lewandowski": 88,
+  "Estevao": 93,
+  "Morgan Rogers": 91,
+  "Eberechi Eze": 91,
+  "Kenan Yildiz": 92,
+  "Arda Guler": 92,
+  "Joao Pedro": 91,
+  "Florian Wirtz": 94
+};
+const ALL_TIME_WORLD_QUALITY = {
+  "Lionel Messi": 99,
+  "Cristiano Ronaldo": 99,
+  "Pele": 99,
+  "Diego Maradona": 99,
+  "Johan Cruyff": 98.5,
+  "Ronaldo Nazario": 98.5,
+  "Alfredo Di Stefano": 98,
+  "Franz Beckenbauer": 98,
+  "Zinedine Zidane": 98,
+  "Ferenc Puskas": 98,
+  "Eusebio": 97.5,
+  "Gerd Muller": 97.5,
+  "Michel Platini": 97,
+  "Ronaldinho": 97.5,
+  "Marco van Basten": 97,
+  "George Best": 97,
+  "Garrincha": 97,
+  "Zico": 96.5,
+  "Bobby Charlton": 96.5,
+  "Ruud Gullit": 96.5,
+  "Romario": 96.5,
+  "Lev Yashin": 98,
+  "Gianluigi Buffon": 97,
+  "Iker Casillas": 96,
+  "Manuel Neuer": 97,
+  "Dino Zoff": 96,
+  "Peter Schmeichel": 96.5,
+  "Petr Cech": 96,
+  "Oliver Kahn": 96,
+  "Gordon Banks": 96,
+  "Edwin van der Sar": 95,
+  "Paolo Maldini": 98,
+  "Franco Baresi": 97.5,
+  "Bobby Moore": 97,
+  "Alessandro Nesta": 96.5,
+  "Fabio Cannavaro": 96.5,
+  "Sergio Ramos": 97,
+  "Cafu": 96.5,
+  "Dani Alves": 96.5,
+  "Philipp Lahm": 96.5,
+  "Roberto Carlos": 96.5,
+  "Carlos Alberto": 96,
+  "Javier Zanetti": 95.5,
+  "Lilian Thuram": 95.5,
+  "Carles Puyol": 95.5,
+  "Gaetano Scirea": 96,
+  "Ronald Koeman": 95.5,
+  "Marcel Desailly": 95,
+  "Ashley Cole": 95.5,
+  "Virgil van Dijk": 96.5,
+  "John Terry": 96,
+  "Rio Ferdinand": 96,
+  "Nemanja Vidic": 95.5,
+  "Lothar Matthaus": 97,
+  "Xavi": 97.5,
+  "Andres Iniesta": 97.5,
+  "Andrea Pirlo": 96,
+  "Toni Kroos": 96,
+  "Frank Rijkaard": 96,
+  "Clarence Seedorf": 95,
+  "Pavel Nedved": 95,
+  "Kaka": 96,
+  "Luis Figo": 96,
+  "Rivaldo": 96,
+  "Michael Laudrup": 96,
+  "Socrates": 95,
+  "Didi": 95,
+  "Rivelino": 95,
+  "Gerson": 94.5,
+  "Falcao (Brazil)": 95,
+  "Fernando Redondo": 94.5,
+  "Juan Roman Riquelme": 94.5,
+  "Bastian Schweinsteiger": 95,
+  "Michael Ballack": 94.5,
+  "Johan Neeskens": 95,
+  "Patrick Vieira": 96,
+  "Steven Gerrard": 97,
+  "Frank Lampard": 96.5,
+  "Paul Scholes": 96,
+  "Kevin De Bruyne": 96.5,
+  "Rodri": 96.5,
+  "Luka Modric": 97,
+  "Thierry Henry": 98,
+  "Luis Suarez": 97.5,
+  "Wayne Rooney": 97,
+  "Mohamed Salah": 98,
+  "Sergio Aguero": 96.5,
+  "Harry Kane": 96.5,
+  "Alan Shearer": 96,
+  "Didier Drogba": 95,
+  "Eric Cantona": 95,
+  "Dennis Bergkamp": 95.5,
+  "Gareth Bale": 96.5,
+  "Eden Hazard": 96.5,
+  "Ryan Giggs": 95,
+  "Sadio Mane": 95,
+  "Neymar": 97,
+  "Kylian Mbappe": 98,
+  "Robert Lewandowski": 97,
+  "Karim Benzema": 97,
+  "Zlatan Ibrahimovic": 96,
+  "Samuel Eto'o": 96,
+  "Andriy Shevchenko": 96,
+  "Gabriel Batistuta": 95.5,
+  "Raul": 95.5,
+  "David Villa": 95,
+  "Francesco Totti": 96,
+  "Alessandro Del Piero": 95.5,
+  "Roberto Baggio": 97,
+  "George Weah": 96,
+  "Hugo Sanchez": 95,
+  "Diego Forlan": 94,
+  "Edinson Cavani": 94,
+  "Angel Di Maria": 94.5,
+  "Thomas Muller": 95,
+  "Miroslav Klose": 94,
+  "Karl-Heinz Rummenigge": 96,
+  "Giuseppe Meazza": 97,
+  "Kenny Dalglish": 96,
+  "Denis Law": 95.5,
+  "Jimmy Greaves": 95.5,
+  "Ian Rush": 95,
+  "Oleg Blokhin": 95,
+  "Hristo Stoichkov": 95.5,
+  "Henrik Larsson": 93.5,
+  "Lamine Yamal": 96,
+  "Jude Bellingham": 95.5,
+  "Pedri": 95,
+  "Vinicius Junior": 95,
+  "Erling Haaland": 96,
+  "Ousmane Dembele": 94.5,
+  "Luka Modric": 97,
+  "Casemiro": 95.5,
+  "Raphael Varane": 95,
+  "Thibaut Courtois": 95,
+  "Arjen Robben": 96,
+  "Javier Mascherano": 94.5,
+  "Xabi Alonso": 95,
+  "Thiago Alcantara": 94.5,
+  "Mesut Ozil": 94.5,
+  "Gerard Pique": 95.5,
+  "Pepe": 94.5,
+  "Angel Di Maria": 94.5,
+  "Cesc Fabregas": 94.5,
+  "Alexis Sanchez": 94,
+  "Joao Cancelo": 92.5,
+  "Ederson": 94,
+  "Alisson": 95.5,
+  "N'Golo Kante": 95,
+  "Yaya Toure": 95.5,
+  "David Silva": 94.5,
+  "Bernardo Silva": 94,
+  "Ilkay Gundogan": 93.5,
+  "Michael Essien": 93.5
+};
+
+const PACK_TIER_DEFAULTS = {
+  all_time_prem: {1:[91.5,0.5],2:[87.0,0.5],3:[82.0,0.25],4:[77.0,0.25]},
+  current_prem: {1:[90.5,0],2:[84.5,0],3:[77.5,0],4:[70.5,0]},
+  current_world: {1:[91.5,0],2:[85.0,0],3:[78.5,0],4:[72.0,0]},
+  all_time_world: {1:[93.0,0.75],2:[87.0,0.5],3:[81.0,0.25],4:[76.0,0.25]}
+};
+
+const ARCHETYPES = {
+  stopper_cb:{role:[0.80,0.18,0.02], traits:[94,45,20,18,8,38]},
+  ball_playing_cb:{role:[0.72,0.26,0.02], traits:[87,82,46,20,10,42]},
+  covering_cb:{role:[0.76,0.22,0.02], traits:[90,65,30,18,12,66]},
+  defensive_fb:{role:[0.68,0.26,0.06], traits:[88,58,32,22,68,58]},
+  balanced_fb:{role:[0.58,0.30,0.12], traits:[80,70,48,30,84,72]},
+  attacking_fb:{role:[0.46,0.34,0.20], traits:[68,78,62,42,94,84]},
+  creative_fullback:{role:[0.40,0.40,0.20], traits:[62,88,88,40,94,72]},
+  destroyer_dm:{role:[0.58,0.39,0.03], traits:[97,58,28,20,15,48]},
+  anchor_dm:{role:[0.54,0.43,0.03], traits:[94,70,38,22,14,40]},
+  deep_playmaker:{role:[0.34,0.61,0.05], traits:[72,95,66,30,20,42]},
+  box_to_box:{role:[0.28,0.55,0.17], traits:[72,82,68,62,38,76]},
+  controller_cm:{role:[0.20,0.68,0.12], traits:[56,94,84,44,35,50]},
+  attacking_8:{role:[0.13,0.55,0.32], traits:[42,84,82,82,42,72]},
+  creator_10:{role:[0.06,0.44,0.50], traits:[24,78,98,66,50,58]},
+  scorer_10:{role:[0.07,0.40,0.53], traits:[28,76,82,92,42,72]},
+  wide_mid:{role:[0.18,0.49,0.33], traits:[50,72,72,52,94,70]},
+  touchline_winger:{role:[0.07,0.30,0.63], traits:[22,68,76,66,99,86]},
+  inside_forward:{role:[0.06,0.24,0.70], traits:[20,66,72,94,66,92]},
+  wide_creator:{role:[0.07,0.36,0.57], traits:[22,76,96,70,88,68]},
+  poacher:{role:[0.02,0.08,0.90], traits:[12,38,32,99,16,88]},
+  complete_forward:{role:[0.05,0.18,0.77], traits:[24,68,78,94,42,84]},
+  target_forward:{role:[0.09,0.15,0.76], traits:[36,48,58,90,20,66]},
+  second_striker:{role:[0.04,0.29,0.67], traits:[20,70,88,86,42,70]},
+  pressing_forward:{role:[0.10,0.20,0.70], traits:[42,58,58,88,38,94]},
+  goalkeeper_outfield:{role:[0.25,0.40,0.35], traits:[34,22,18,15,10,20]}
+};
+
+// protection, progression, creativity, goalThreat, width, directness
+const TRAIT_NAMES=['protection','progression','creativity','goalThreat','width','directness'];
+
+const ARCHETYPE_OVERRIDE = {
+  // Keepers are handled separately below.
+  'Ashley Cole':'balanced_fb','Patrice Evra':'attacking_fb','Andrew Robertson':'attacking_fb','Leighton Baines':'attacking_fb',
+  'Denis Irwin':'balanced_fb','Kyle Walker':'balanced_fb','Gary Neville':'defensive_fb','Trent Alexander-Arnold':'creative_fullback',
+  'Reece James':'attacking_fb','Joao Cancelo':'creative_fullback','Branislav Ivanovic':'defensive_fb','Antonio Valencia':'attacking_fb',
+  'John Terry':'stopper_cb','Rio Ferdinand':'ball_playing_cb','Nemanja Vidic':'stopper_cb','Virgil van Dijk':'ball_playing_cb',
+  'Vincent Kompany':'ball_playing_cb','Sol Campbell':'covering_cb','Ricardo Carvalho':'covering_cb','Jaap Stam':'covering_cb',
+  'Tony Adams':'stopper_cb','Ruben Dias':'stopper_cb','John Stones':'ball_playing_cb','William Saliba':'ball_playing_cb',
+  'Aymeric Laporte':'ball_playing_cb','Daniel Agger':'ball_playing_cb','Ledley King':'ball_playing_cb',
+  'Claude Makelele':'destroyer_dm',"N'Golo Kante":'destroyer_dm','Rodri':'deep_playmaker','Michael Carrick':'deep_playmaker',
+  'Gilberto Silva':'anchor_dm','Javier Mascherano':'destroyer_dm','Fernandinho':'anchor_dm','Declan Rice':'box_to_box',
+  'Steven Gerrard':'box_to_box','Frank Lampard':'attacking_8','Paul Scholes':'controller_cm','Patrick Vieira':'box_to_box',
+  'Yaya Toure':'attacking_8','Cesc Fabregas':'controller_cm','David Silva':'creator_10','Kevin De Bruyne':'attacking_8',
+  'Roy Keane':'box_to_box','Xabi Alonso':'deep_playmaker','Luka Modric':'controller_cm','Mousa Dembele':'controller_cm',
+  'Michael Essien':'box_to_box','Bruno Fernandes':'scorer_10','Martin Odegaard':'creator_10','Juan Mata':'creator_10',
+  'Mesut Ozil':'creator_10','Santi Cazorla':'controller_cm','Ilkay Gundogan':'attacking_8','Bernardo Silva':'controller_cm',
+  'Thiago Alcantara':'controller_cm','Casemiro':'destroyer_dm','Christian Eriksen':'creator_10','Dele Alli':'scorer_10',
+  'Matt Le Tissier':'scorer_10','Jay-Jay Okocha':'creator_10','Moises Caicedo':'destroyer_dm','Enzo Fernandez':'controller_cm',
+  'Fabinho':'anchor_dm','Nemanja Matic':'anchor_dm','Jorginho':'deep_playmaker','James Milner':'box_to_box',
+  'Ryan Giggs':'touchline_winger','Gareth Bale':'inside_forward','Eden Hazard':'wide_creator','Robert Pires':'inside_forward',
+  'Sadio Mane':'inside_forward','Son Heung-min':'inside_forward','Raheem Sterling':'inside_forward','Marc Overmars':'touchline_winger',
+  'Arjen Robben':'inside_forward','Alexis Sanchez':'inside_forward','Leroy Sane':'touchline_winger','Raphinha':'touchline_winger',
+  'Luis Diaz':'inside_forward','Mohamed Salah':'inside_forward','Cristiano Ronaldo':'inside_forward','David Beckham':'wide_creator',
+  'Riyad Mahrez':'wide_creator','Bukayo Saka':'wide_creator','Cole Palmer':'creator_10','Nani':'touchline_winger',
+  'Thierry Henry':'complete_forward','Sergio Aguero':'complete_forward','Wayne Rooney':'complete_forward','Harry Kane':'complete_forward',
+  'Didier Drogba':'target_forward','Alan Shearer':'complete_forward','Ruud van Nistelrooy':'poacher','Robin van Persie':'complete_forward',
+  'Luis Suarez':'complete_forward','Erling Haaland':'poacher','Fernando Torres':'poacher','Andy Cole':'poacher',
+  'Dimitar Berbatov':'second_striker','Jamie Vardy':'poacher','Carlos Tevez':'pressing_forward','Eric Cantona':'second_striker',
+  'Dennis Bergkamp':'second_striker','Ian Wright':'poacher','Gianfranco Zola':'second_striker','Michael Owen':'poacher',
+  'Robbie Fowler':'poacher','Diego Costa':'target_forward','Pierre-Emerick Aubameyang':'poacher','Peter Crouch':'target_forward'
+};
+
+
+const GLOBAL_ARCHETYPE_EXTRA = {
+  "Lionel Messi": "wide_creator",
+  "Kylian Mbappe": "inside_forward",
+  "Lamine Yamal": "wide_creator",
+  "Ousmane Dembele": "wide_creator",
+  "Vinicius Junior": "inside_forward",
+  "Neymar": "wide_creator",
+  "Ronaldinho": "wide_creator",
+  "Luis Figo": "wide_creator",
+  "Rivaldo": "inside_forward",
+  "George Best": "inside_forward",
+  "Garrincha": "touchline_winger",
+  "Pele": "complete_forward",
+  "Ronaldo Nazario": "complete_forward",
+  "Ferenc Puskas": "inside_forward",
+  "Alfredo Di Stefano": "second_striker",
+  "Gerd Muller": "poacher",
+  "Eusebio": "complete_forward",
+  "Marco van Basten": "complete_forward",
+  "Romario": "poacher",
+  "Robert Lewandowski": "complete_forward",
+  "Karim Benzema": "complete_forward",
+  "Zlatan Ibrahimovic": "complete_forward",
+  "Samuel Eto'o": "complete_forward",
+  "Andriy Shevchenko": "complete_forward",
+  "Gabriel Batistuta": "complete_forward",
+  "Raul": "second_striker",
+  "Francesco Totti": "creator_10",
+  "Roberto Baggio": "creator_10",
+  "George Weah": "complete_forward",
+  "Johan Cruyff": "creator_10",
+  "Diego Maradona": "creator_10",
+  "Zinedine Zidane": "creator_10",
+  "Michel Platini": "scorer_10",
+  "Zico": "scorer_10",
+  "Kaka": "scorer_10",
+  "Michael Laudrup": "creator_10",
+  "Juan Roman Riquelme": "creator_10",
+  "Bobby Charlton": "attacking_8",
+  "Lothar Matthaus": "box_to_box",
+  "Xavi": "controller_cm",
+  "Andres Iniesta": "controller_cm",
+  "Andrea Pirlo": "deep_playmaker",
+  "Toni Kroos": "controller_cm",
+  "Clarence Seedorf": "box_to_box",
+  "Frank Rijkaard": "anchor_dm",
+  "Ruud Gullit": "box_to_box",
+  "Bastian Schweinsteiger": "box_to_box",
+  "Michael Ballack": "attacking_8",
+  "Sergio Busquets": "anchor_dm",
+  "Pedri": "controller_cm",
+  "Jude Bellingham": "box_to_box",
+  "Federico Valverde": "box_to_box",
+  "Frenkie de Jong": "controller_cm",
+  "Vitinha": "controller_cm",
+  "Joshua Kimmich": "deep_playmaker",
+  "Aurelien Tchouameni": "anchor_dm",
+  "Joao Neves": "box_to_box",
+  "Paolo Maldini": "covering_cb",
+  "Franco Baresi": "ball_playing_cb",
+  "Bobby Moore": "ball_playing_cb",
+  "Alessandro Nesta": "covering_cb",
+  "Fabio Cannavaro": "covering_cb",
+  "Carles Puyol": "stopper_cb",
+  "Gaetano Scirea": "ball_playing_cb",
+  "Franz Beckenbauer": "ball_playing_cb",
+  "Sergio Ramos": "stopper_cb",
+  "Gerard Pique": "ball_playing_cb",
+  "Alessandro Bastoni": "ball_playing_cb",
+  "Antonio Rudiger": "covering_cb",
+  "Achraf Hakimi": "attacking_fb",
+  "Nuno Mendes": "attacking_fb",
+  "Theo Hernandez": "attacking_fb",
+  "Alphonso Davies": "attacking_fb",
+  "Philipp Lahm": "balanced_fb",
+  "Cafu": "attacking_fb",
+  "Dani Alves": "creative_fullback",
+  "Roberto Carlos": "attacking_fb",
+  "Javier Zanetti": "balanced_fb"
+};
+const PACK_ARCHETYPE_OVERRIDE = {
+  "current_world": {
+    "Cristiano Ronaldo": "poacher",
+    "Lionel Messi": "creator_10",
+    "Sadio Mane": "inside_forward",
+    "Son Heung-min": "inside_forward",
+    "Mohamed Salah": "inside_forward",
+    "Karim Benzema": "complete_forward",
+    "Neymar": "creator_10"
+  },
+  "all_time_world": {
+    "Cristiano Ronaldo": "inside_forward",
+    "Lionel Messi": "wide_creator"
+  },
+  "chaos": {}
+};
+
+const GK_STYLE = {
+  traditional:{shot:4,command:4,distribution:-10},
+  shot_stopper:{shot:6,command:-1,distribution:-9},
+  balanced:{shot:3,command:2,distribution:0},
+  sweeper:{shot:1,command:1,distribution:7},
+  distributor:{shot:0,command:-1,distribution:10}
+};
+const GK_OVERRIDE = {
+  'Peter Schmeichel':'traditional','Petr Cech':'traditional','Edwin van der Sar':'balanced','David de Gea':'shot_stopper',
+  'Alisson':'sweeper','Pepe Reina':'sweeper','Shay Given':'shot_stopper','Joe Hart':'traditional','Brad Friedel':'shot_stopper',
+  'Hugo Lloris':'sweeper','Jens Lehmann':'sweeper','Tim Howard':'shot_stopper','Emiliano Martinez':'traditional','David Seaman':'traditional',
+  'Nigel Martyn':'traditional','Ederson':'distributor','Thibaut Courtois':'shot_stopper','Jordan Pickford':'distributor','Nick Pope':'traditional'
+};
+
+function qualityFor(player,pack='all_time_prem'){
+  if(pack==='chaos'){
+    const candidates=(player.packs||[]).map(p=>({pack:p,...qualityFor(player,p)}));
+    if(!candidates.length) candidates.push({pack:'all_time_world',...qualityFor(player,'all_time_world')});
+    return candidates.sort((a,b)=>b.quality-a.quality)[0];
   }
-  resumeInFlight=true;
-  socket.emit('resumeSession',{code:saved.room,token:saved.reconnectToken},r=>{
-    resumeInFlight=false;
-    if(!r?.ok){
-      clearSavedSession();
-      if(manual)showToast('That previous room is no longer available.');
-      if(!state)home();
-      return;
+  let pair;
+  if(pack==='all_time_prem') pair=QUALITY[player.name];
+  else if(pack==='current_prem' && CURRENT_PREM_QUALITY[player.name]!=null) pair=[CURRENT_PREM_QUALITY[player.name],0];
+  else if(pack==='current_world' && CURRENT_WORLD_QUALITY[player.name]!=null) pair=[CURRENT_WORLD_QUALITY[player.name],0];
+  else if(pack==='current_world' && CURRENT_PREM_QUALITY[player.name]!=null) pair=[CURRENT_PREM_QUALITY[player.name],0];
+  else if(pack==='all_time_world' && ALL_TIME_WORLD_QUALITY[player.name]!=null) pair=[ALL_TIME_WORLD_QUALITY[player.name],0];
+  else if(pack==='all_time_world' && player.packs?.includes('all_time_prem')) pair=QUALITY[player.name] || PACK_TIER_DEFAULTS.all_time_prem[player.tier];
+  pair = pair || PACK_TIER_DEFAULTS[pack]?.[player.tier] || PACK_TIER_DEFAULTS.all_time_world[player.tier] || [81,0.25];
+  const [peak,bonus]=pair;
+  return {pack,peak,bonus,quality:round1(clamp(peak+bonus,60,99))};
+}
+
+const GLOBAL_GK_OVERRIDE_EXTRA = {
+  "Gianluigi Buffon": "traditional",
+  "Iker Casillas": "shot_stopper",
+  "Manuel Neuer": "sweeper",
+  "Lev Yashin": "traditional",
+  "Dino Zoff": "traditional",
+  "Oliver Kahn": "traditional",
+  "Gordon Banks": "traditional",
+  "Gianluigi Donnarumma": "shot_stopper",
+  "Mike Maignan": "sweeper",
+  "Jan Oblak": "shot_stopper"
+};
+
+function defaultArchetype(player){
+  const p=player.positions[0];
+  if(p==='CB') return 'stopper_cb';
+  if(p==='LB'||p==='RB') return 'balanced_fb';
+  if(p==='DM') return 'anchor_dm';
+  if(p==='CM') return 'controller_cm';
+  if(p==='AM') return 'creator_10';
+  if(p==='LM'||p==='RM') return 'wide_mid';
+  if(p==='LW'||p==='RW') return 'inside_forward';
+  if(p==='ST') return 'complete_forward';
+  return 'controller_cm';
+}
+
+function goalkeeperSkills(player,quality,pack){
+  if(player.positions[0]!=='GK'){
+    // Outfielders in goal are intentionally disastrous. Better ball players may distribute a little better,
+    // but shot-stopping and command remain extremely poor.
+    const profile=outfieldProfile(player,quality,pack);
+    return {shotStopping:18,command:16,distribution:clamp(18+profile.traits.progression*0.25,18,42)};
+  }
+  const style=GK_OVERRIDE[player.name]||GLOBAL_GK_OVERRIDE_EXTRA[player.name]||'balanced';
+  const mod=GK_STYLE[style];
+  return {
+    shotStopping:round1(clamp(quality+mod.shot,55,99)),
+    command:round1(clamp(quality+mod.command,55,99)),
+    distribution:round1(clamp(quality+mod.distribution,45,99))
+  };
+}
+
+function outfieldProfile(player,quality,pack){
+  if(player.positions[0]==='GK'){
+    const t=ARCHETYPES.goalkeeper_outfield;
+    const traits=Object.fromEntries(TRAIT_NAMES.map((n,i)=>[n,t.traits[i]]));
+    return {archetype:'goalkeeper_outfield',role:{defence:t.role[0],midfield:t.role[1],attack:t.role[2]},traits};
+  }
+  const archetype=PACK_ARCHETYPE_OVERRIDE[pack]?.[player.name] || ARCHETYPE_OVERRIDE[player.name] || GLOBAL_ARCHETYPE_EXTRA[player.name] || defaultArchetype(player);
+  const tpl=ARCHETYPES[archetype]||ARCHETYPES.controller_cm;
+  const traits={}; TRAIT_NAMES.forEach((n,i)=>traits[n]=tpl.traits[i]);
+  return {archetype,role:{defence:tpl.role[0],midfield:tpl.role[1],attack:tpl.role[2]},traits};
+}
+
+function getProfile(player,pack='all_time_prem'){
+  const q=qualityFor(player,pack);
+  const effectivePack=pack==='chaos' ? q.pack : pack;
+  const out=outfieldProfile(player,q.quality,effectivePack);
+  return {
+    sourcePack:effectivePack, peak:q.peak, sustainedBonus:q.bonus, quality:q.quality,
+    archetype:out.archetype, role:out.role, traits:out.traits,
+    goalkeeper:goalkeeperSkills(player,q.quality,effectivePack)
+  };
+}
+
+// Generic positional relationship fallback. Listed secondary positions are handled before this table at 97%.
+const FIT = {
+  'RB>LB':0.82,'LB>RB':0.82,
+  'RB>CB':0.84,'LB>CB':0.84,'CB>RB':0.80,'CB>LB':0.80,
+  'DM>CB':0.90,'CB>DM':0.87,
+  'CM>DM':0.91,'DM>CM':0.91,'CM>AM':0.91,'AM>CM':0.87,
+  'DM>AM':0.78,'AM>DM':0.74,
+  'RW>LW':0.90,'LW>RW':0.90,
+  'RW>RM':0.94,'RM>RW':0.94,'LW>LM':0.94,'LM>LW':0.94,
+  'RM>LM':0.88,'LM>RM':0.88,
+  'ST>RW':0.84,'ST>LW':0.84,'RW>ST':0.87,'LW>ST':0.87,
+  'AM>RW':0.88,'AM>LW':0.88,'RW>AM':0.86,'LW>AM':0.86,
+  'CM>RM':0.85,'CM>LM':0.85,'RM>CM':0.84,'LM>CM':0.84,
+  'RB>RM':0.80,'LB>LM':0.80,'RM>RB':0.73,'LM>LB':0.73,
+  'DM>RB':0.78,'DM>LB':0.78,'RB>DM':0.80,'LB>DM':0.80,
+  'CB>CM':0.73,'CM>CB':0.79,
+  'ST>AM':0.82,'AM>ST':0.86,
+  'ST>CM':0.69,'RW>CM':0.72,'LW>CM':0.72,'CM>RW':0.78,'CM>LW':0.78,
+  'RW>RM':0.94,'LW>LM':0.94,'RM>LW':0.82,'LM>RW':0.82,
+  'RB>RW':0.68,'LB>LW':0.68,'RW>RB':0.64,'LW>LB':0.64,
+  'CB>ST':0.56,'CB>RW':0.55,'CB>LW':0.55,
+  'ST>CB':0.54,'RW>CB':0.55,'LW>CB':0.55,
+  'ST>LB':0.58,'ST>RB':0.58,'LW>RB':0.60,'RW>LB':0.60,
+  'LB>ST':0.58,'RB>ST':0.58,
+  'DM>ST':0.66,'ST>DM':0.60,'AM>CB':0.58,'CB>AM':0.60
+};
+
+function broadFallback(from,to){
+  if(from==='GK'||to==='GK') return 0.25;
+  const def=new Set(['LB','RB','CB','DM']);
+  const mid=new Set(['DM','CM','AM','LM','RM']);
+  const att=new Set(['AM','LM','RM','LW','RW','ST']);
+  if(def.has(from)&&def.has(to)) return 0.74;
+  if(mid.has(from)&&mid.has(to)) return 0.78;
+  if(att.has(from)&&att.has(to)) return 0.76;
+  if((def.has(from)&&mid.has(to))||(mid.has(from)&&def.has(to))) return 0.66;
+  if((mid.has(from)&&att.has(to))||(att.has(from)&&mid.has(to))) return 0.70;
+  return 0.56;
+}
+
+function positionalFit(player,slot){
+  if(player.positions[0]===slot) return 1.0;
+  if(player.positions.slice(1).includes(slot)) return 0.97;
+  let best=0;
+  for(const natural of player.positions){
+    best=Math.max(best,FIT[`${natural}>${slot}`] ?? broadFallback(natural,slot));
+  }
+  return clamp(best,0.25,0.94);
+}
+
+const SLOT_REQUIREMENTS={
+  GK:{gk:{shotStopping:0.48,command:0.30,distribution:0.22}},
+  CB:{protection:0.58,progression:0.25,directness:0.07,creativity:0.10},
+  LB:{protection:0.38,progression:0.20,width:0.27,directness:0.15},
+  RB:{protection:0.38,progression:0.20,width:0.27,directness:0.15},
+  DM:{protection:0.42,progression:0.32,creativity:0.18,directness:0.08},
+  CM:{protection:0.18,progression:0.34,creativity:0.30,goalThreat:0.10,directness:0.08},
+  AM:{progression:0.16,creativity:0.42,goalThreat:0.30,directness:0.12},
+  LM:{progression:0.16,creativity:0.22,goalThreat:0.14,width:0.30,directness:0.18},
+  RM:{progression:0.16,creativity:0.22,goalThreat:0.14,width:0.30,directness:0.18},
+  LW:{creativity:0.20,goalThreat:0.32,width:0.22,directness:0.26},
+  RW:{creativity:0.20,goalThreat:0.32,width:0.22,directness:0.26},
+  ST:{creativity:0.14,goalThreat:0.58,directness:0.28}
+};
+
+function traitSuitability(profile,slot){
+  const req=SLOT_REQUIREMENTS[slot]||SLOT_REQUIREMENTS.CM;
+  if(req.gk){
+    const g=profile.goalkeeper;
+    return Object.entries(req.gk).reduce((s,[k,w])=>s+(g[k]||0)*w,0);
+  }
+  return Object.entries(req).reduce((s,[k,w])=>s+(profile.traits[k]||0)*w,0);
+}
+
+function slotUnitWeights(slot){
+  if(slot==='GK'||slot==='CB') return {defence:1,midfield:0,attack:0};
+  if(slot==='LB'||slot==='RB') return {defence:0.85,midfield:0.15,attack:0};
+  if(slot==='DM') return {defence:0.20,midfield:0.80,attack:0};
+  if(slot==='CM') return {defence:0,midfield:1,attack:0};
+  if(slot==='LM'||slot==='RM') return {defence:0,midfield:0.75,attack:0.25};
+  if(slot==='AM') return {defence:0,midfield:0.65,attack:0.35};
+  return {defence:0,midfield:0,attack:1};
+}
+
+function playerUnitValue(player,slot,profile,fit){
+  if(slot==='GK'){
+    const g=profile.goalkeeper;
+    const gkComposite=g.shotStopping*0.52+g.command*0.30+g.distribution*0.18;
+    const qualityFactor=player.positions[0]==='GK' ? (0.80*fit+0.20*gkComposite/100) : (0.55*fit+0.45*gkComposite/100);
+    return profile.quality*qualityFactor;
+  }
+  const trait=traitSuitability(profile,slot)/100;
+  return profile.quality*(0.82*fit+0.18*trait);
+}
+
+function avg(arr){return arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:0;}
+function shortageScore(value,target){return clamp(value/target*100,0,100);}
+function rangeScore(value,min,max){
+  if(value>=min&&value<=max) return 100;
+  const dist=value<min?min-value:value-max;
+  return clamp(100-dist*18,25,100);
+}
+
+// v11 universal unit balances. The All-Time archetype database remains unchanged.
+// Unit scoring is intentionally independent of the tactical slot-share matrices used by v10.
+const V11_TRAIT_PROVIDER_WEIGHTS=[1,0.35,0.20,0.10,0.05,0.03];
+const V11_UNIT_TARGETS={
+  attack:{1:[110,95,105],2:[140,125,135],3:[157,142,152],4:[162,147,157]},
+  midfield:{2:[112,135,123,105,113],3:[128,151,139,121,129],
+    4:[133,156,144,126,134],5:[137,160,148,130,138],
+    // The only six-midfielder formation is 3-4-2-1. Provisional +3 rule, accepted as build default.
+    6:[140,163,151,133,141]},
+  defence:{3:[160,140],4:[163,145],5:[168,155]}
+};
+const V11_UNIT_REQUIREMENTS={
+  attack:[['goalThreat',0.45],['creativity',0.35],['directness',0.20]],
+  midfield:[['protection',0.30],['progression',0.30],['creativity',0.20],['goalThreat',0.10],['directness',0.10]],
+  defence:[['protection',0.70],['progression',0.30]]
+};
+const V11_UNIT_BY_SLOT={GK:'defence',CB:'defence',LB:'defence',RB:'defence',DM:'midfield',CM:'midfield',AM:'midfield',LM:'midfield',RM:'midfield',LW:'attack',RW:'attack',ST:'attack'};
+function v11TraitCoverage(members,trait,weights=V11_TRAIT_PROVIDER_WEIGHTS){
+  return members.map(d=>d.profile.traits[trait]||0).sort((a,b)=>b-a)
+    .reduce((acc,v,index)=>acc+v*(weights[index]||0),0);
+}
+function v11WidthSide(details,side){
+  const allowed=side==='left'?['LW','LM','LB']:['RW','RM','RB'];
+  const widths=details.filter(d=>allowed.includes(d.slot)).map(d=>({
+    name:d.player.name,slot:d.slot,effectiveWidth:(d.profile.traits.width||0)*(d.slot==='LB'||d.slot==='RB'?0.85:1)
+  })).sort((a,b)=>b.effectiveWidth-a.effectiveWidth);
+  const strongest=widths[0]?.effectiveWidth||0;
+  const coverage=strongest+0.15*(widths[1]?.effectiveWidth||0);
+  const ordinary=clamp(100*coverage/85,0,100);
+  const providerFloorCap=strongest<80?strongest/80*100:100;
+  return {score:Math.min(ordinary,providerFloorCap),strongest,coverage,providers:widths};
+}
+function assessLineup(entries,pack='all_time_prem'){
+  if(!Array.isArray(entries)||entries.length!==11) throw new Error('Simulation needs exactly 11 lineup entries.');
+  const details=entries.map(({player,slot})=>{
+    if(!V11_UNIT_BY_SLOT[slot]) throw new Error(`Unsupported position ${slot}`);
+    const profile=getProfile(player,pack);
+    const fit=positionalFit(player,slot);
+    // Hard exception: any outfield player at GK always contributes exactly 0 quality.
+    const value=slot==='GK' && player.positions?.[0]!=='GK' ? 0 : profile.quality*(0.20+0.80*fit);
+    return {player,slot,profile,fit,value,unit:V11_UNIT_BY_SLOT[slot]};
+  });
+  const grouped={attack:[],midfield:[],defence:[]};
+  for(const d of details) grouped[d.unit].push(d);
+  const outfieldDefenders=grouped.defence.filter(d=>d.slot!=='GK');
+  const unitBalance={},unitRaw={},unitTraitScores={};
+  const unitsToScore={attack:grouped.attack,midfield:grouped.midfield,defence:outfieldDefenders};
+  for(const unit of ['attack','midfield','defence']){
+    const eligible=unitsToScore[unit];
+    const all=grouped[unit]; // GK contributes to raw Defence quality only.
+    const targets=V11_UNIT_TARGETS[unit][eligible.length];
+    if(!targets) throw new Error(`Missing v11 ${unit} targets for ${eligible.length} players.`);
+    unitRaw[unit]=avg(all.map(d=>d.value));
+    const traitScores={};
+    let balance=0;
+    for(const [i,[trait,weight]] of V11_UNIT_REQUIREMENTS[unit].entries()){
+      const coverage=v11TraitCoverage(eligible,trait);
+      const score=clamp(100*coverage/targets[i],0,100);
+      traitScores[trait]={score,coverage,target:targets[i]};
+      balance+=weight*score;
     }
-    meId=r.managerId||r.state?.viewerId||saved.managerId;state=r.state;
-    history.replaceState({},'',`?room=${state.code}`);render();
+    unitBalance[unit]=balance;
+    unitTraitScores[unit]=traitScores;
+  }
+  const attack=unitRaw.attack*(0.65+0.35*unitBalance.attack/100);
+  const midfield=unitRaw.midfield*(0.65+0.35*unitBalance.midfield/100);
+  const defence=unitRaw.defence*(0.65+0.35*unitBalance.defence/100);
+  const left=v11WidthSide(details,'left'),right=v11WidthSide(details,'right');
+  const width=0.25*(left.score+right.score)+0.50*Math.min(left.score,right.score);
+  const connect=(from,fromTrait,fromTarget,to,toTrait,toTarget)=>{
+    // Cross-unit connections use 100% best + 25% second only.
+    const source=clamp(100*v11TraitCoverage(unitsToScore[from],fromTrait,[1,0.25])/fromTarget,0,100);
+    const destination=clamp(100*v11TraitCoverage(unitsToScore[to],toTrait,[1,0.25])/toTarget,0,100);
+    return {score:Math.sqrt(source*destination),source,destination};
+  };
+  const buildup=connect('defence','progression',108,'midfield','progression',115);
+  const creation=connect('midfield','creativity',115,'attack','goalThreat',115);
+  const shielding=connect('midfield','protection',95,'defence','protection',125);
+  const teamBalance=0.25*buildup.score+0.30*creation.score+0.25*shielding.score+0.20*width;
+  const overall=0.90*(0.34*attack+0.33*midfield+0.33*defence)+0.10*teamBalance;
+  // Informational only: fit is already reflected in adjusted player quality.
+  const fitScore=avg(details.map(d=>d.fit))*100;
+  return {overall,attack,midfield,defence,positionalFit:fitScore,teamBalance,
+    attackBalance:unitBalance.attack,midfieldBalance:unitBalance.midfield,
+    defenceBalance:unitBalance.defence,width,
+    unitRaw,unitTraitScores,
+    teamLinks:{buildup,creation,shielding,left,right},details};
+}
+function publicAssessment(a){
+  const round=x=>Math.round(clamp(x,0,100));
+  return {overall:round(a.overall),attack:round(a.attack),midfield:round(a.midfield),
+    defence:round(a.defence),positionalFit:round(a.positionalFit),
+    teamBalance:round(a.teamBalance),attackBalance:round(a.attackBalance),
+    midfieldBalance:round(a.midfieldBalance),defenceBalance:round(a.defenceBalance),
+    width:round(a.width)};
+}
+
+function poisson(lambda){
+  const L=Math.exp(-lambda); let k=0,p=1;
+  do{k++;p*=Math.random();}while(p>L&&k<18);
+  return k-1;
+}
+function scorerSlotMultiplier(slot){
+  if(slot==='ST')return 1.45;if(slot==='LW'||slot==='RW')return 1.28;if(slot==='AM')return 1.10;
+  if(slot==='LM'||slot==='RM')return 0.72;if(slot==='CM')return 0.60;if(slot==='DM')return 0.34;
+  if(slot==='LB'||slot==='RB')return 0.26;if(slot==='CB')return 0.22;return 0.01;
+}
+function assisterSlotMultiplier(slot){
+  if(slot==='AM')return 1.35;if(slot==='LW'||slot==='RW')return 1.25;if(slot==='LM'||slot==='RM')return 1.18;
+  if(slot==='CM')return 1.12;if(slot==='ST')return 0.92;if(slot==='DM')return 0.78;
+  if(slot==='LB'||slot==='RB')return 0.86;if(slot==='CB')return 0.42;return 0.01;
+}
+function chooseWeighted(items,weightFn){
+  const weighted=items.map(x=>({x,w:Math.max(0.001,weightFn(x))}));
+  const total=weighted.reduce((s,v)=>s+v.w,0); let roll=Math.random()*total;
+  for(const v of weighted){roll-=v.w;if(roll<=0)return v.x;} return weighted[weighted.length-1].x;
+}
+function chooseScorer(assessment){
+  return chooseWeighted(assessment.details,d=>{
+    const threat=d.profile.traits.goalThreat/100;
+    return Math.pow(threat,1.7)*Math.pow(d.profile.quality/90,1.5)*d.fit*scorerSlotMultiplier(d.slot);
   });
 }
-function attemptResume(){resumeSavedRoom(false)}
-
-const VISUAL_THEME_KEY='premDraftVisualTheme';
-let visualTheme='classic';
-try{
-  visualTheme=localStorage.getItem(VISUAL_THEME_KEY)==='immersive'?'immersive':'classic';
-}catch{}
-function applyVisualTheme(){
-  document.body.dataset.theme=visualTheme;
-  document.body.dataset.pack=state?.pack||'home';
+function chooseAssister(assessment,scorer){
+  const candidates=assessment.details.filter(d=>d.player.id!==scorer.player.id && d.slot!=='GK');
+  if(!candidates.length) return null;
+  return chooseWeighted(candidates,d=>{
+    const t=d.profile.traits;
+    const creation=(0.48*t.creativity+0.32*t.progression+0.20*t.width)/100;
+    return Math.pow(Math.max(0.08,creation),1.45)*Math.pow(d.profile.quality/90,0.7)*d.fit*assisterSlotMultiplier(d.slot);
+  });
 }
-function themeButtonLabel(){return visualTheme==='immersive'?'✨ Immersive':'◻ Classic'}
-function setVisualTheme(next){
-  visualTheme=next==='immersive'?'immersive':'classic';
-  try{localStorage.setItem(VISUAL_THEME_KEY,visualTheme)}catch{}
-  applyVisualTheme();
-  const button=document.querySelector('#themeToggle');
-  if(button){
-    button.textContent=themeButtonLabel();
-    button.setAttribute('aria-label',`Visual theme: ${visualTheme}. Tap to switch.`);
+function goalMinute(extra=false){
+  if(extra) return 91+Math.floor(Math.pow(Math.random(),0.88)*30);
+  return 1+Math.floor(Math.pow(Math.random(),0.82)*90);
+}
+function makeGoals(count,assessment,extra=false){
+  const goals=[];
+  for(let i=0;i<count;i++){
+    const scorer=chooseScorer(assessment);
+    const assisted=Math.random()<0.78;
+    const assister=assisted?chooseAssister(assessment,scorer):null;
+    goals.push({
+      player:scorer.player.name,playerId:scorer.player.id,minute:goalMinute(extra),
+      assist:assister?.player?.name||null,assistId:assister?.player?.id??null
+    });
   }
+  return goals.sort((a,b)=>a.minute-b.minute);
 }
-function wireThemeToggle(){
-  const button=document.querySelector('#themeToggle');
-  if(button)button.onclick=()=>setVisualTheme(visualTheme==='classic'?'immersive':'classic');
+function hasNaturalKeeper(assessment){
+  const keeper=assessment.details.find(d=>d.slot==='GK');
+  return !!keeper && keeper.player.positions?.[0]==='GK';
+}
+function expectedGoals(a,b,homeAdvantage){
+  const attackEdge=a.attack-b.defence;
+  const midfieldEdge=a.midfield-b.midfield;
+  const overallEdge=a.overall-b.overall;
+  // v5D calibration: matchups are more balanced, meaningful rating gaps matter more,
+  // and equal teams receive a modern-football-sized home advantage (~44/24/31 H/D/A).
+  let log=Math.log(1.32)+0.021*attackEdge+0.016*midfieldEdge+0.023*overallEdge+(homeAdvantage?0.20:0);
+  // A non-goalkeeper in goal is already punished in the ratings, but remains an exceptional match-day weakness.
+  if(!hasNaturalKeeper(b)) log+=Math.log(1.20);
+  return clamp(Math.exp(log),0.10,5.5);
+}
+function simulateShotsOnTarget(goals,xg){
+  const extra=poisson(clamp(0.9+xg*1.45,0.8,7.0));
+  return goals+extra;
+}
+function ratingNoise(){
+  return ((Math.random()+Math.random()+Math.random())-1.5)*0.36;
+}
+function performanceRatings(team,opponent,{goalsFor,goalsAgainst,goalEvents,saves,xgFor}){
+  const scorerCounts=new Map(),assistCounts=new Map();
+  for(const g of goalEvents){
+    scorerCounts.set(g.playerId,(scorerCounts.get(g.playerId)||0)+1);
+    if(g.assistId!==null&&g.assistId!==undefined) assistCounts.set(g.assistId,(assistCounts.get(g.assistId)||0)+1);
+  }
+  const won=goalsFor>goalsAgainst,draw=goalsFor===goalsAgainst;
+  const resultBase=won?0.36:(draw?0.06:-0.28);
+  const margin=clamp((goalsFor-goalsAgainst)*0.07,-0.25,0.25);
+  const avgValue=avg(team.assessment.details.map(d=>d.value));
+  const keeper=team.assessment.details.find(d=>d.slot==='GK');
+  return team.assessment.details.map(d=>{
+    const goals=scorerCounts.get(d.player.id)||0;
+    const assists=assistCounts.get(d.player.id)||0;
+    let unitEdge=0;
+    if(['ST','LW','RW','AM'].includes(d.slot)) unitEdge=team.assessment.attack-opponent.assessment.defence;
+    else if(['DM','CM','LM','RM'].includes(d.slot)) unitEdge=team.assessment.midfield-opponent.assessment.midfield;
+    else unitEdge=team.assessment.defence-opponent.assessment.attack;
+    unitEdge=clamp(unitEdge*0.012,-0.22,0.22);
+    const underlying=clamp((d.value-avgValue)/32,-0.16,0.16);
+    let rating=6.32+resultBase+margin+unitEdge+underlying+ratingNoise();
+    rating+=goals*0.88+assists*0.48;
+    if(d.slot==='GK'){
+      rating+=Math.min(0.90,saves*0.12);
+      if(goalsAgainst===0) rating+=0.58;
+      rating-=Math.min(0.82,goalsAgainst*0.16);
+      if(d.player.positions?.[0]!=='GK') rating-=0.22;
+    } else if(['CB','LB','RB','DM'].includes(d.slot)){
+      if(goalsAgainst===0) rating+=d.slot==='DM'?0.20:0.40;
+      rating-=Math.min(0.42,goalsAgainst*(d.slot==='DM'?0.05:0.075));
+    } else if(['CM','LM','RM'].includes(d.slot) && goalsAgainst===0){
+      rating+=0.08;
+    }
+    if(['ST','LW','RW','AM','LM','RM'].includes(d.slot)) rating+=Math.min(0.20,goalsFor*0.045);
+    // Slightly reward producing more than the team's xG expectation, without dominating event stats.
+    rating+=clamp((goalsFor-xgFor)*0.045,-0.12,0.12);
+    return {playerId:d.player.id,player:d.player.name,slot:d.slot,rating:round1(clamp(rating,4.0,9.9)),goals,assists,saves:d.player.id===keeper?.player?.id?saves:0};
+  });
+}
+function playerOfMatch(homeRatings,awayRatings){
+  const all=[...homeRatings,...awayRatings];
+  all.sort((a,b)=>b.rating-a.rating||b.goals-a.goals||b.assists-a.assists||b.saves-a.saves||a.player.localeCompare(b.player));
+  return all[0]?{playerId:all[0].playerId,player:all[0].player,rating:all[0].rating}:null;
 }
 
-const HARD_FORMATIONS=['4-4-2','4-3-3','4-2-3-1','3-5-2','3-4-3','5-3-2'];
-const HARD_SLOTS={
-  '4-4-2':['GK','LB','CB','CB','RB','LM','CM','CM','RM','ST','ST'],
+function simulateMatch(home,away,{neutral=false,knockout=false}={}){
+  const homeXg=expectedGoals(home.assessment,away.assessment,!neutral);
+  const awayXg=expectedGoals(away.assessment,home.assessment,false);
+  let hg=poisson(homeXg), ag=poisson(awayXg);
+  let homeGoals=makeGoals(hg,home.assessment,false), awayGoals=makeGoals(ag,away.assessment,false);
+  let wentExtraTime=false, penalties=null;
+  if(knockout&&hg===ag){
+    wentExtraTime=true;
+    const eh=poisson(homeXg/3.1), ea=poisson(awayXg/3.1);
+    hg+=eh;ag+=ea;
+    homeGoals=homeGoals.concat(makeGoals(eh,home.assessment,true)).sort((a,b)=>a.minute-b.minute);
+    awayGoals=awayGoals.concat(makeGoals(ea,away.assessment,true)).sort((a,b)=>a.minute-b.minute);
+    if(hg===ag){
+      let hp=0,ap=0;
+      const homeChance=clamp(0.75+(home.assessment.overall-away.assessment.overall)*0.002,0.65,0.85);
+      const awayChance=clamp(0.75+(away.assessment.overall-home.assessment.overall)*0.002,0.65,0.85);
+      for(let i=0;i<5;i++){if(Math.random()<homeChance)hp++;if(Math.random()<awayChance)ap++;}
+      while(hp===ap){if(Math.random()<homeChance)hp++;if(Math.random()<awayChance)ap++;}
+      penalties={home:hp,away:ap};
+    }
+  }
+  const homeSot=simulateShotsOnTarget(hg,homeXg),awaySot=simulateShotsOnTarget(ag,awayXg);
+  const homeSaves=Math.max(0,awaySot-ag),awaySaves=Math.max(0,homeSot-hg);
+  const homeRatings=performanceRatings(home,away,{goalsFor:hg,goalsAgainst:ag,goalEvents:homeGoals,saves:homeSaves,xgFor:homeXg});
+  const awayRatings=performanceRatings(away,home,{goalsFor:ag,goalsAgainst:hg,goalEvents:awayGoals,saves:awaySaves,xgFor:awayXg});
+  const pom=playerOfMatch(homeRatings,awayRatings);
+  return {
+    homeId:home.id,awayId:away.id,homeName:home.name,awayName:away.name,
+    homeGoals:hg,awayGoals:ag,homeScorers:homeGoals,awayScorers:awayGoals,
+    homeShotsOnTarget:homeSot,awayShotsOnTarget:awaySot,homeSaves,awaySaves,
+    homePlayerRatings:homeRatings,awayPlayerRatings:awayRatings,playerOfMatch:pom,
+    wentExtraTime,penalties,
+    winnerId: penalties ? (penalties.home>penalties.away?home.id:away.id) : (hg===ag?null:(hg>ag?home.id:away.id))
+  };
+}
+
+function scheduleFor(teams){
+  const shuffle=(items)=>{
+    const out=[...items];
+    for(let i=out.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[out[i],out[j]]=[out[j],out[i]];}
+    return out;
+  };
+  const setsByManagers={2:9,3:5,4:3,5:2,6:2};
+  const homeAwaySets=setsByManagers[teams.length]||1;
+  const gameweeks=[];
+  let gw=1;
+  const makeLeg=(ordered)=>{
+    const arr=[...ordered];
+    if(arr.length%2===1)arr.push(null);
+    const rounds=[];
+    const total=arr.length;
+    for(let r=0;r<total-1;r++){
+      const fixtures=[];const byeIds=[];
+      for(let i=0;i<total/2;i++){
+        const a=arr[i],b=arr[total-1-i];
+        if(!a||!b){const team=a||b;if(team)byeIds.push(team.id);continue;}
+        // Alternating the first-leg orientation avoids one team always opening at home.
+        const flip=((r+i)%2)===1;
+        fixtures.push(flip?[b,a]:[a,b]);
+      }
+      rounds.push({fixtures,byeIds});
+      const fixed=arr[0],rest=arr.slice(1);
+      rest.unshift(rest.pop());
+      arr.splice(0,arr.length,fixed,...rest);
+    }
+    return rounds;
+  };
+  for(let set=0;set<homeAwaySets;set++){
+    const firstLeg=makeLeg(shuffle(teams));
+    for(const round of firstLeg)gameweeks.push({number:gw++,fixtures:round.fixtures,byeIds:round.byeIds});
+    for(const round of firstLeg)gameweeks.push({
+      number:gw++,
+      fixtures:round.fixtures.map(([h,a])=>[a,h]),
+      byeIds:[...round.byeIds]
+    });
+  }
+  return gameweeks;
+}
+
+function blankRow(t){return {id:t.id,name:t.name,p:0,w:0,d:0,l:0,gf:0,ga:0,gd:0,pts:0};}
+function tableFromResults(teams,matches){
+  const map=new Map(teams.map(t=>[t.id,blankRow(t)]));
+  for(const m of matches){
+    const h=map.get(m.homeId),a=map.get(m.awayId); if(!h||!a)continue;
+    h.p++;a.p++;h.gf+=m.homeGoals;h.ga+=m.awayGoals;a.gf+=m.awayGoals;a.ga+=m.homeGoals;
+    if(m.homeGoals>m.awayGoals){h.w++;a.l++;h.pts+=3;}else if(m.homeGoals<m.awayGoals){a.w++;h.l++;a.pts+=3;}else{h.d++;a.d++;h.pts++;a.pts++;}
+  }
+  for(const r of map.values()) r.gd=r.gf-r.ga;
+  const rows=[...map.values()];
+  rows.sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf||a.name.localeCompare(b.name));
+
+  // Apply head-to-head mini-table only to groups still tied on points, GD and GF.
+  let i=0;
+  while(i<rows.length){
+    let j=i+1;while(j<rows.length&&rows[j].pts===rows[i].pts&&rows[j].gd===rows[i].gd&&rows[j].gf===rows[i].gf)j++;
+    if(j-i>1){
+      const ids=new Set(rows.slice(i,j).map(r=>r.id));
+      const mini=tableFromResultsNoH2H(rows.slice(i,j).map(r=>({id:r.id,name:r.name})),matches.filter(m=>ids.has(m.homeId)&&ids.has(m.awayId)));
+      const order=new Map(mini.map((r,k)=>[r.id,k]));
+      const part=rows.slice(i,j).sort((a,b)=>(order.get(a.id)??99)-(order.get(b.id)??99));
+      rows.splice(i,j-i,...part);
+    }
+    i=j;
+  }
+  return rows;
+}
+function tableFromResultsNoH2H(teams,matches){
+  const map=new Map(teams.map(t=>[t.id,blankRow(t)]));
+  for(const m of matches){
+    const h=map.get(m.homeId),a=map.get(m.awayId);if(!h||!a)continue;
+    h.p++;a.p++;h.gf+=m.homeGoals;h.ga+=m.awayGoals;a.gf+=m.awayGoals;a.ga+=m.homeGoals;
+    if(m.homeGoals>m.awayGoals){h.w++;a.l++;h.pts+=3;}else if(m.homeGoals<m.awayGoals){a.w++;h.l++;a.pts+=3;}else{h.d++;a.d++;h.pts++;a.pts++;}
+  }
+  for(const r of map.values())r.gd=r.gf-r.ga;
+  return [...map.values()].sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf||a.name.localeCompare(b.name));
+}
+
+function tiedAtTopAfterAllCriteria(table,matches){
+  if(table.length<2)return [table[0]?.id].filter(Boolean);
+  const top=table[0];
+  const candidates=table.filter(r=>r.pts===top.pts&&r.gd===top.gd&&r.gf===top.gf);
+  if(candidates.length<=1)return [top.id];
+  const ids=new Set(candidates.map(x=>x.id));
+  const mini=tableFromResultsNoH2H(candidates.map(r=>({id:r.id,name:r.name})),matches.filter(m=>ids.has(m.homeId)&&ids.has(m.awayId)));
+  const mtop=mini[0];
+  return mini.filter(r=>r.pts===mtop.pts&&r.gd===mtop.gd&&r.gf===mtop.gf).map(r=>r.id);
+}
+
+function aggregatePlayerStats(teams,matches){
+  const stats=new Map();
+  for(const t of teams){
+    for(const d of t.assessment.details){
+      const key=`${t.id}:${d.player.id}`;
+      stats.set(key,{playerId:d.player.id,player:d.player.name,managerId:t.id,managerName:t.name,deployedSlot:d.slot,apps:0,goals:0,assists:0,saves:0,cleanSheets:0,totalRating:0});
+    }
+  }
+  for(const m of matches){
+    const process=(teamId,ratings,events,saves,conceded)=>{
+      for(const r of ratings||[]){
+        const st=stats.get(`${teamId}:${r.playerId}`); if(!st)continue;
+        st.apps++;st.totalRating+=r.rating;st.saves+=r.saves||0;
+        if(conceded===0 && ['GK','CB','LB','RB','DM'].includes(st.deployedSlot)) st.cleanSheets++;
+      }
+      for(const g of events||[]){
+        const scorer=stats.get(`${teamId}:${g.playerId}`);if(scorer)scorer.goals++;
+        if(g.assistId!==null&&g.assistId!==undefined){const assister=stats.get(`${teamId}:${g.assistId}`);if(assister)assister.assists++;}
+      }
+    };
+    process(m.homeId,m.homePlayerRatings,m.homeScorers,m.homeSaves,m.awayGoals);
+    process(m.awayId,m.awayPlayerRatings,m.awayScorers,m.awaySaves,m.homeGoals);
+  }
+  return [...stats.values()].map(s=>({
+    playerId:s.playerId,player:s.player,managerId:s.managerId,managerName:s.managerName,deployedSlot:s.deployedSlot,
+    apps:s.apps,goals:s.goals,assists:s.assists,saves:s.saves,cleanSheets:s.cleanSheets,
+    avgRating:s.apps?Math.round((s.totalRating/s.apps)*100)/100:0
+  }));
+}
+
+const TOTS_FORMATIONS={
   '4-3-3':['GK','LB','CB','CB','RB','CM','CM','CM','LW','ST','RW'],
+  '4-4-2':['GK','LB','CB','CB','RB','LM','CM','CM','RM','ST','ST'],
   '4-2-3-1':['GK','LB','CB','CB','RB','DM','DM','LW','AM','RW','ST'],
+  '4-1-4-1':['GK','LB','CB','CB','RB','DM','LM','CM','CM','RM','ST'],
   '3-5-2':['GK','CB','CB','CB','LM','CM','CM','AM','RM','ST','ST'],
   '3-4-3':['GK','CB','CB','CB','LM','CM','CM','RM','LW','ST','RW'],
   '5-3-2':['GK','LB','CB','CB','CB','RB','CM','CM','CM','ST','ST']
 };
-
-// Slot arrays use the same order as the server. Rows control how the XI is drawn on screen.
-const FF_LAYOUTS={
-  '3-1-4-2':{slots:['GK','CB','CB','CB','DM','LM','CM','CM','RM','ST','ST'],rows:[[9,10],[5,6,7,8],[4],[1,2,3],[0]]},
-  '3-4-1-2':{slots:['GK','CB','CB','CB','LM','CM','CM','RM','AM','ST','ST'],rows:[[9,10],[8],[4,5,6,7],[1,2,3],[0]]},
-  '3-4-2-1':{slots:['GK','CB','CB','CB','LM','CM','CM','RM','AM','AM','ST'],rows:[[10],[8,9],[4,5,6,7],[1,2,3],[0]]},
-  '3-4-3':{slots:['GK','CB','CB','CB','LM','CM','CM','RM','LW','ST','RW'],rows:[[8,9,10],[4,5,6,7],[1,2,3],[0]]},
-  '3-5-2':{slots:['GK','CB','CB','CB','LM','CM','CM','AM','RM','ST','ST'],rows:[[9,10],[7],[4,5,6,8],[1,2,3],[0]]},
-  '4-1-2-1-2 Narrow':{slots:['GK','LB','CB','CB','RB','DM','CM','CM','AM','ST','ST'],rows:[[9,10],[8],[6,7],[5],[1,2,3,4],[0]]},
-  '4-1-2-1-2 Wide':{slots:['GK','LB','CB','CB','RB','DM','LM','RM','AM','ST','ST'],rows:[[9,10],[8],[6,7],[5],[1,2,3,4],[0]]},
-  '4-1-3-2':{slots:['GK','LB','CB','CB','RB','DM','LM','CM','RM','ST','ST'],rows:[[9,10],[6,7,8],[5],[1,2,3,4],[0]]},
-  '4-1-4-1':{slots:['GK','LB','CB','CB','RB','DM','LM','CM','CM','RM','ST'],rows:[[10],[6,7,8,9],[5],[1,2,3,4],[0]]},
-  '4-2-1-3':{slots:['GK','LB','CB','CB','RB','DM','DM','AM','LW','ST','RW'],rows:[[8,9,10],[7],[5,6],[1,2,3,4],[0]]},
-  '4-2-2-2':{slots:['GK','LB','CB','CB','RB','DM','DM','AM','AM','ST','ST'],rows:[[9,10],[7,8],[5,6],[1,2,3,4],[0]]},
-  '4-2-3-1 Wide':{slots:['GK','LB','CB','CB','RB','DM','DM','LM','AM','RM','ST'],rows:[[10],[7,8,9],[5,6],[1,2,3,4],[0]]},
-  '4-2-3-1 Narrow':{slots:['GK','LB','CB','CB','RB','DM','DM','AM','AM','AM','ST'],rows:[[10],[7,8,9],[5,6],[1,2,3,4],[0]]},
-  '4-2-4':{slots:['GK','LB','CB','CB','RB','CM','CM','LW','ST','ST','RW'],rows:[[7,8,9,10],[5,6],[1,2,3,4],[0]]},
-  '4-3-1-2':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','AM','ST','ST'],rows:[[9,10],[8],[5,6,7],[1,2,3,4],[0]]},
-  '4-3-2-1':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','AM','AM','ST'],rows:[[10],[8,9],[5,6,7],[1,2,3,4],[0]]},
-  '4-3-3 Wide':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','LW','ST','RW'],rows:[[8,9,10],[5,6,7],[1,2,3,4],[0]]},
-  '4-3-3 Holding':{slots:['GK','LB','CB','CB','RB','DM','CM','CM','LW','ST','RW'],rows:[[8,9,10],[6,7],[5],[1,2,3,4],[0]]},
-  '4-3-3 Attack':{slots:['GK','LB','CB','CB','RB','CM','CM','AM','LW','ST','RW'],rows:[[8,9,10],[7],[5,6],[1,2,3,4],[0]]},
-  '4-3-3 Balanced':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','LW','ST','RW'],rows:[[8,9,10],[5,6,7],[1,2,3,4],[0]]},
-  '4-4-1-1':{slots:['GK','LB','CB','CB','RB','LM','CM','CM','RM','AM','ST'],rows:[[10],[9],[5,6,7,8],[1,2,3,4],[0]]},
-  '4-4-2':{slots:['GK','LB','CB','CB','RB','LM','CM','CM','RM','ST','ST'],rows:[[9,10],[5,6,7,8],[1,2,3,4],[0]]},
-  '4-4-2 Holding':{slots:['GK','LB','CB','CB','RB','LM','DM','DM','RM','ST','ST'],rows:[[9,10],[5,6,7,8],[1,2,3,4],[0]]},
-  '4-5-1':{slots:['GK','LB','CB','CB','RB','LM','CM','CM','CM','RM','ST'],rows:[[10],[5,6,7,8,9],[1,2,3,4],[0]]},
-  '4-5-1 Attack':{slots:['GK','LB','CB','CB','RB','LM','DM','AM','DM','RM','ST'],rows:[[10],[7],[5,6,8,9],[1,2,3,4],[0]]},
-  '5-2-1-2':{slots:['GK','LB','CB','CB','CB','RB','CM','CM','AM','ST','ST'],rows:[[9,10],[8],[6,7],[1,2,3,4,5],[0]]},
-  '5-2-3':{slots:['GK','LB','CB','CB','CB','RB','CM','CM','LW','ST','RW'],rows:[[8,9,10],[6,7],[1,2,3,4,5],[0]]},
-  '5-3-2':{slots:['GK','LB','CB','CB','CB','RB','CM','CM','CM','ST','ST'],rows:[[9,10],[6,7,8],[1,2,3,4,5],[0]]},
-  '5-4-1':{slots:['GK','LB','CB','CB','CB','RB','LM','CM','CM','RM','ST'],rows:[[10],[6,7,8,9],[1,2,3,4,5],[0]]}
-};
-// Hidden legacy aliases keep old saved drafts viewable without putting old formations back in the selector.
-Object.assign(FF_LAYOUTS,{
-  '4-3-3':FF_LAYOUTS['4-3-3 Wide'],
-  '4-2-3-1':FF_LAYOUTS['4-2-3-1 Wide'],
-  '4-1-2-1-2':FF_LAYOUTS['4-1-2-1-2 Narrow']
-});
-
-function showToast(msg){
-  toast.textContent=msg;
-  toast.classList.add('show');
-  setTimeout(()=>toast.classList.remove('show'),2600);
+function totsEligible(deployed,target){
+  if(target==='GK') return deployed==='GK';
+  if(target==='CB') return deployed==='CB';
+  if(target==='LB') return ['LB','LWB'].includes(deployed);
+  if(target==='RB') return ['RB','RWB'].includes(deployed);
+  if(target==='DM') return ['DM','CM'].includes(deployed);
+  if(target==='CM') return ['DM','CM','AM'].includes(deployed);
+  if(target==='AM') return ['AM','CM'].includes(deployed);
+  if(target==='LM') return ['LM','LW','LWB'].includes(deployed);
+  if(target==='RM') return ['RM','RW','RWB'].includes(deployed);
+  if(target==='LW') return ['LW','LM'].includes(deployed);
+  if(target==='RW') return ['RW','RM'].includes(deployed);
+  if(target==='ST') return ['ST','CF'].includes(deployed);
+  return deployed===target;
 }
-function q(name){return new URLSearchParams(location.search).get(name)}
-function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
-function me(){return state?.managers.find(m=>m.id===meId)}
-function managerName(id){return state?.managers.find(m=>m.id===id)?.name||'—'}
-function packName(){return state?.packLabels?.[state.pack]||'Player Pack'}
-function modeName(){return state?.modeLabels?.[state.mode]||'Game Mode'}
-function isFreeformLike(){return ['freeform','nomination','blind','priority'].includes(state?.mode)}
-function commissionerMarkup(){
-  const host=state?.hostId===meId;
-  const show=host&&['draft','team_build'].includes(state?.phase);
-  if(!show)return '';
-  const priority=state?.mode==='priority';
-  const canAuction=state.phase==='draft'&&!!state.current&&state.current?.priorityStage!=='result';
-  return `<div class="commission-modal" id="commissionModal" hidden><div class="commission-sheet"><div class="budget"><div><h2>Commissioner controls</h2><p class="muted no-margin">Failsafe controls for the host.</p></div><button class="icon-button" id="closeCommission">×</button></div>${state.phase==='draft'?`<button class="secondary big" id="pauseDraft">${state.paused?'Resume draft':'Pause draft'}</button><div class="spacer9"></div><button class="secondary big" id="restartAuction" ${canAuction?'':'disabled'}>Restart current ${priority?'round':'auction'}</button>${priority?'':`<div class="spacer9"></div><button class="secondary big danger-soft" id="skipCurrent" ${canAuction?'':'disabled'}>Skip current player</button>`}<div class="spacer14"></div>`:''}<button class="danger big" id="abandonDraft">Abandon draft & return to lobby</button></div></div>`;
-}
-function wireCommissioner(){
-  const open=document.querySelector('#commissionerBtn'),modal=document.querySelector('#commissionModal');
-  if(!open||!modal)return;
-  open.onclick=()=>{modal.hidden=false};
-  const close=document.querySelector('#closeCommission');if(close)close.onclick=()=>{modal.hidden=true};
-  modal.onclick=e=>{if(e.target===modal)modal.hidden=true};
-  const pause=document.querySelector('#pauseDraft');if(pause)pause.onclick=()=>socket.emit('commissionPause',{paused:!state.paused},r=>{if(r&&!r.ok)showToast(r.error)});
-  const restart=document.querySelector('#restartAuction');if(restart)restart.onclick=()=>{if(confirm(state?.mode==='priority'?'Restart this Priority Bid round from the beginning?':'Restart this auction from the beginning?'))socket.emit('commissionRestartAuction',{},r=>{if(r&&!r.ok)showToast(r.error)});};
-  const skip=document.querySelector('#skipCurrent');if(skip)skip.onclick=()=>{if(confirm('Skip this player? This cannot be undone.'))socket.emit('commissionSkipCurrent',{},r=>{if(r&&!r.ok)showToast(r.error)});};
-  const abandon=document.querySelector('#abandonDraft');if(abandon)abandon.onclick=()=>{if(confirm('Abandon this draft and return everyone to the lobby?'))socket.emit('commissionAbandonDraft',{},r=>{if(r&&!r.ok)showToast(r.error)});};
-}
-function shell(content){
-  applyVisualTheme();
-  const commissioner=(state?.hostId===meId&&['draft','team_build'].includes(state?.phase))?'<button class="theme-toggle commissioner-button" id="commissionerBtn" aria-label="Commissioner controls">⚙</button>':'';
-  const practice=(state&&state.phase!=='lobby'&&state.saveToHistory===false)?'<span class="practice-badge">PRACTICE</span>':'';
-  app.innerHTML=`<div class="wrap"><div class="topbar"><div class="brand">⚽ Prem Draft ${practice}</div><div class="top-actions">${commissioner}<button class="theme-toggle" id="themeToggle" aria-label="Visual theme: ${visualTheme}. Tap to switch.">${themeButtonLabel()}</button></div></div>${content}${commissionerMarkup()}</div>`;
-  wireThemeToggle();wireCommissioner();
-}
-
-function assignedSlots(m){
-  const slots=(HARD_SLOTS[m.formation]||[]).map((pos,i)=>({pos,i,player:null}));
-  for(const p of m.squad){
-    const assigned=p.assignedPosition||p.positions?.[0];
-    let s=slots.find(x=>!x.player&&x.pos===assigned);
-    if(!s)s=slots.find(x=>!x.player&&p.positions.includes(x.pos));
-    if(s)s.player=p;
-  }
-  return slots;
-}
-function hardSquadHtml(m){
-  return assignedSlots(m).map(s=>`<div class="slot"><b>${s.pos}</b><div>${s.player?esc(s.player.name):'—'}</div></div><div class="slot slot-price">${s.player?`£${s.player.price}m`:''}</div>`).join('');
-}
-function freeformDraftSquadHtml(m){
-  return m.squad.length ? m.squad.map((p,i)=>`<div class="simple-player"><div><b>${i+1}. ${esc(p.name)}</b><div class="muted small">${p.positions.join(' / ')}</div></div><b>£${p.price}m</b></div>`).join('') : '<div class="muted">No players yet.</div>';
-}
-
-function recordsConnectionHtml(){
-  const connected=recordsConnectionStatus===true,unavailable=recordsConnectionStatus===false;
-  const label=connected?'Records connected':unavailable?'Records unavailable':'Checking records…';
-  const cls=connected?'connected':unavailable?'unavailable':'checking';
-  return `<div class="records-connection ${cls}" id="recordsConnectionStatus"><span>●</span> ${label}</div>`;
-}
-function updateRecordsConnectionIndicator(){
-  const el=document.querySelector('#recordsConnectionStatus');if(!el)return;
-  const connected=recordsConnectionStatus===true,unavailable=recordsConnectionStatus===false;
-  el.className=`records-connection ${connected?'connected':unavailable?'unavailable':'checking'}`;
-  el.innerHTML=`<span>●</span> ${connected?'Records connected':unavailable?'Records unavailable':'Checking records…'}`;
-}
-function refreshRecordsStatus(){
-  socket.emit('recordsStatus',{},r=>{
-    recordsConnectionStatus=!!r?.connected;
-    recordsAdminConfigured=!!r?.adminConfigured;
-    updateRecordsConnectionIndicator();
-  });
-}
-
-function home(){
-  viewingRecords=false;
-  const code=q('room')||'';
-  const profile=savedProfile();
-  const savedRoom=readSavedSession();
-  const resumeCard=!code&&savedRoom?.room?`<div class="resume-room-card"><div><b>Previous room ${esc(savedRoom.room)}</b><div class="muted small">Resume it only if you want to return to that still-active room.</div></div><button class="secondary small-button" id="resumePreviousRoom">Resume</button></div><div class="spacer10"></div>`:'';
-  const profileCard=profile?.recoveryCode
-    ? `<div class="profile-strip"><div><div class="muted small">PERMANENT MANAGER</div><b>${esc(profile.defaultName)}</b><div class="muted small">Recovery code: <strong>${esc(profile.recoveryCode)}</strong></div></div><div class="profile-actions"><button class="secondary small-button" id="editProfile">Edit default</button><button class="secondary small-button" id="recoverProfile">Switch / recover</button></div></div>`
-    : `<div class="profile-strip"><div><b>Permanent records</b><div class="muted small">Your first room will create a short recovery code so your all-time stats follow you across rooms and days.</div></div><button class="secondary small-button" id="recoverProfile">I have a code</button></div>`;
-  shell(`<div class="card"><h1>Football Auction Draft</h1><p class="muted">Build your XI with a £100m budget.</p>${profileCard}${recordsConnectionHtml()}<div class="spacer14"></div><label>Name for this room</label><input id="name" maxlength="20" value="${esc(profile?.defaultName||'')}" placeholder="Your name"><p class="muted small">Changing this only changes how you appear in this room; it does not create a new all-time identity.</p><div class="spacer10"></div>${code?`<div class="row mobile-stack"><input id="code" value="${esc(code)}"><button class="primary" id="join">Join room</button></div>`:`<button class="primary big" id="create">Create game</button><div class="spacer10"></div><div class="row mobile-stack"><input id="code" placeholder="Room code"><button class="secondary" id="join">Join</button></div>`}<div class="spacer14"></div>${resumeCard}<button class="secondary big" id="records">🏆 All-Time Records</button></div>`);
-  refreshRecordsStatus();
-  const recover=document.querySelector('#recoverProfile');if(recover)recover.onclick=()=>recoverProfileFlow();
-  const edit=document.querySelector('#editProfile');if(edit)edit.onclick=editDefaultProfileName;
-  document.querySelector('#records').onclick=openRecords;
-  const resumeButton=document.querySelector('#resumePreviousRoom');if(resumeButton)resumeButton.onclick=()=>resumeSavedRoom(true);
-  const launch=(kind)=>{
-    const name=document.querySelector('#name').value;
-    ensurePermanentProfile(name||'Manager',profileNow=>{
-      const payload={name,profileCode:profileNow?.recoveryCode||null};
-      if(kind==='create')socket.emit('createRoom',payload,r=>{
-        if(!r?.ok)return showToast(r?.error||'Could not create room');
-        meId=r.managerId||r.state?.viewerId;saveSession(r.code,r.reconnectToken,meId);history.replaceState({},'',`?room=${r.code}`);state=r.state;render();showRecoveryOnboardingIfNeeded();
-      });
-      else{
-        payload.code=cleanRoomCodeInput(document.querySelector('#code').value);
-        socket.emit('joinRoom',payload,r=>{
-          if(!r?.ok)return showToast(r?.error||'Could not join room');
-          meId=r.managerId||r.state?.viewerId;saveSession(r.state.code,r.reconnectToken,meId);state=r.state;history.replaceState({},'',`?room=${state.code}`);render();showRecoveryOnboardingIfNeeded();
-        });
+// Hungarian assignment: 11 formation slots to unique players, maximizing average match rating.
+function bestTotsForFormation(playerStats,formation,slots){
+  const players=playerStats;
+  const n=slots.length,m=players.length;
+  if(m<n)return null;
+  const cost=Array.from({length:n},(_,i)=>players.map(p=>{
+    if(!totsEligible(p.deployedSlot,slots[i])) return 1e6;
+    const tie=(p.goals*3+p.assists*2+p.cleanSheets*0.35+p.saves*0.08)/1000;
+    return -(p.avgRating+tie);
+  }));
+  const u=new Array(n+1).fill(0),v=new Array(m+1).fill(0),p=new Array(m+1).fill(0),way=new Array(m+1).fill(0);
+  for(let i=1;i<=n;i++){
+    p[0]=i;let j0=0;const minv=new Array(m+1).fill(Infinity),used=new Array(m+1).fill(false);
+    do{
+      used[j0]=true;const i0=p[j0];let delta=Infinity,j1=0;
+      for(let j=1;j<=m;j++)if(!used[j]){
+        const cur=cost[i0-1][j-1]-u[i0]-v[j];
+        if(cur<minv[j]){minv[j]=cur;way[j]=j0;}
+        if(minv[j]<delta){delta=minv[j];j1=j;}
       }
-    });
+      for(let j=0;j<=m;j++)if(used[j]){u[p[j]]+=delta;v[j]-=delta;}else minv[j]-=delta;
+      j0=j1;
+    }while(p[j0]!==0);
+    do{const j1=way[j0];p[j0]=p[j1];j0=j1;}while(j0!==0);
+  }
+  const assignment=new Array(n).fill(-1);
+  for(let j=1;j<=m;j++)if(p[j]>0&&p[j]<=n)assignment[p[j]-1]=j-1;
+  if(assignment.some((pi,si)=>pi<0||cost[si][pi]>=1e5))return null;
+  const selected=assignment.map((pi,i)=>({...players[pi],slot:slots[i]}));
+  const score=selected.reduce((sum,x)=>sum+x.avgRating,0);
+  return {formation,score,players:selected};
+}
+function teamOfSeason(playerStats){
+  let best=null;
+  for(const [formation,slots] of Object.entries(TOTS_FORMATIONS)){
+    const candidate=bestTotsForFormation(playerStats,formation,slots);
+    if(candidate&&(!best||candidate.score>best.score+1e-9))best=candidate;
+  }
+  if(!best)return {formation:'XI',players:[]};
+  return {formation:best.formation,players:best.players.map(({slot,playerId,player,managerId,managerName,deployedSlot,avgRating,goals,assists,saves})=>({slot,playerId,player,managerId,managerName,deployedSlot,avgRating,goals,assists,saves}))};
+}
+function leaderboards(playerStats){
+  const take=fn=>[...playerStats].sort(fn).slice(0,10);
+  return {
+    goals:take((a,b)=>b.goals-a.goals||b.assists-a.assists||b.avgRating-a.avgRating||a.player.localeCompare(b.player)),
+    assists:take((a,b)=>b.assists-a.assists||b.goals-a.goals||b.avgRating-a.avgRating||a.player.localeCompare(b.player)),
+    saves:[...playerStats].filter(p=>p.deployedSlot==='GK').sort((a,b)=>b.saves-a.saves||b.avgRating-a.avgRating||a.player.localeCompare(b.player)).slice(0,10),
+    rating:take((a,b)=>b.avgRating-a.avgRating||b.goals+b.assists-(a.goals+a.assists)||a.player.localeCompare(b.player))
   };
-  wireRoomCodeInput(document.querySelector('#code'));
-  const create=document.querySelector('#create');if(create)create.onclick=()=>launch('create');
-  document.querySelector('#join').onclick=()=>launch('join');
 }
 
-function historyTableHtml(rows){
-  return `<div class="table-wrap"><table class="history-table"><thead><tr><th>#</th><th>Manager</th><th>Drafts</th><th>Titles</th><th>PPG</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(rows||[]).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.name)}</b></td><td>${r.drafts}</td><td><b>${r.titles}</b></td><td><b>${Number(r.ppg||0).toFixed(2)}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td><b>${r.pts}</b></td></tr>`).join('')}</tbody></table></div>`;
-}
-
-function readSavedRecordFilters(modeLabels,packLabels){
-  try{
-    const raw=JSON.parse(localStorage.getItem(RECORD_FILTERS_KEY)||'null');
-    if(!raw)return null;
-    const modes=(raw.modes||[]).filter(x=>Object.prototype.hasOwnProperty.call(modeLabels||{},x));
-    const packs=(raw.packs||[]).filter(x=>Object.prototype.hasOwnProperty.call(packLabels||{},x));
-    if(!modes.length||!packs.length)return null;
-    return {modes:new Set(modes),packs:new Set(packs)};
-  }catch{return null}
-}
-function saveRecordFilters(){
-  try{localStorage.setItem(RECORD_FILTERS_KEY,JSON.stringify({modes:[...selectedRecordModes],packs:[...selectedRecordPacks]}))}catch{}
-}
-function recordFilterCount(){
-  const allModes=Object.keys(recordsSummaryData?.modeLabels||{}).length,allPacks=Object.keys(recordsSummaryData?.packLabels||{}).length;
-  return Math.max(0,allModes-selectedRecordModes.size)+Math.max(0,allPacks-selectedRecordPacks.size);
-}
-function recordFilterSummary(){
-  const modes=recordsSummaryData?.modeLabels||{},packs=recordsSummaryData?.packLabels||{};
-  const active=[];
-  if(selectedRecordModes.size!==Object.keys(modes).length)active.push(...[...selectedRecordModes].map(k=>modes[k]).filter(Boolean));
-  if(selectedRecordPacks.size!==Object.keys(packs).length)active.push(...[...selectedRecordPacks].map(k=>packs[k]).filter(Boolean));
-  return active.length?`<div class="active-filter-chips">${active.map(x=>`<span>${esc(x)}</span>`).join('')}</div>`:'';
-}
-function loadAllRecords(){
-  recordsAllData=null;recordsScreen();
-  socket.emit('recordsAll',{modes:[...selectedRecordModes],packs:[...selectedRecordPacks]},r=>{
-    if(!r?.ok){showToast(r?.error||'Could not load All-Time Records');return;}
-    recordsAllData=r;if(viewingRecords&&!historicalCompetition)recordsScreen();
-  });
-}
-
-function openRecords(){
-  viewingRecords=true;recordsSummaryData=null;recordsGroupData=null;recordsAllData=null;recordsAdminMode=false;recordsAdminData=null;recordsAdminProfilesData=null;historicalCompetition=null;
-  shell('<div class="card"><h1>All-Time Records</h1><p class="muted">Loading permanent history…</p></div>');
-  socket.emit('recordsSummary',{},r=>{
-    if(!r?.ok){shell(`<div class="card"><h1>All-Time Records</h1><p class="muted">${esc(r?.error||'Could not load records.')}</p><button class="secondary big" id="recordsBack">Back</button></div>`);document.querySelector('#recordsBack').onclick=closeRecords;return;}
-    recordsSummaryData=r;recordsConnectionStatus=r.recordsConnected!==false;recordsAdminConfigured=!!r.adminConfigured;
-    const profile=savedProfile();
-    const preferred=(r.groups||[]).find(g=>profile?.profileId&&g.profileIds?.includes(profile.profileId))||(r.groups||[])[0];
-    selectedRivalryKey=preferred?.key||'';
-    const saved=readSavedRecordFilters(r.modeLabels||{},r.packLabels||{});
-    selectedRecordModes=saved?.modes||new Set(Object.keys(r.modeLabels||{}));
-    selectedRecordPacks=saved?.packs||new Set(Object.keys(r.packLabels||{}));
-    if(recordsSection==='all')loadAllRecords();
-    else if(selectedRivalryKey)loadRivalryGroup();
-    else recordsScreen();
-  });
-}
-function closeRecords(){
-  viewingRecords=false;recordsSummaryData=null;recordsGroupData=null;recordsAllData=null;recordsAdminMode=false;recordsAdminData=null;recordsAdminProfilesData=null;historicalCompetition=null;
-  if(state)render();else home();
-}
-function loadRivalryGroup(){
-  if(!selectedRivalryKey){recordsGroupData=null;return recordsScreen();}
-  recordsGroupData=null;recordsScreen();
-  socket.emit('recordsGroup',{key:selectedRivalryKey,modes:[...selectedRecordModes],packs:[...selectedRecordPacks]},r=>{
-    if(!r?.ok){showToast(r?.error||'Could not load rivalry group');return;}
-    recordsGroupData=r;if(viewingRecords&&!historicalCompetition)recordsScreen();
-  });
-}
-function recordsFiltersHtml(){
-  const modes=recordsSummaryData?.modeLabels||{},packs=recordsSummaryData?.packLabels||{};
-  return `<div class="records-filter-panel" id="recordsFilterPanel" hidden><div class="filter-columns"><div><b>Draft modes</b>${Object.entries(modes).map(([k,v])=>`<label class="filter-check"><input type="checkbox" data-filter-mode="${esc(k)}" ${selectedRecordModes.has(k)?'checked':''}> ${esc(v)}</label>`).join('')}</div><div><b>Player packs</b>${Object.entries(packs).map(([k,v])=>`<label class="filter-check"><input type="checkbox" data-filter-pack="${esc(k)}" ${selectedRecordPacks.has(k)?'checked':''}> ${esc(v)}</label>`).join('')}</div></div><div class="row mobile-stack"><button class="secondary grow" id="recordsAllFilters">Select all</button><button class="secondary grow" id="recordsClearFilters">Reset</button><button class="primary grow" id="recordsApplyFilters">Apply</button></div></div>`;
-}
-function adminDate(v){
-  try{return new Date(v).toLocaleString()}catch{return String(v||'')}
-}
-function draftHistoryCardsHtml(drafts){
-  if(!drafts?.length)return '<div class="muted">No drafts match the current filters.</div>';
-  return `<div class="saved-draft-list">${drafts.map(d=>{
-    const places=(d.participants||[]).filter(p=>p.rank).sort((a,b)=>a.rank-b.rank).map(p=>`${p.rank}. ${esc(p.name)}`).join(' · ');
-    return `<div class="saved-draft-card"><div class="saved-draft-main"><b>${esc(adminDate(d.completedAt))}</b><div class="muted small">${esc(recordsSummaryData?.modeLabels?.[d.mode]||d.mode)} · ${esc(recordsSummaryData?.packLabels?.[d.pack]||d.pack)}</div><div class="small"><strong>Champion: ${esc(d.champion||'—')}</strong>${places?`<span class="draft-places">${places}</span>`:''}</div></div><button class="secondary saved-draft-open" data-historical-comp="${esc(d.competitionId)}">View draft ›</button></div>`;
-  }).join('')}</div>`;
-}
-function openHistoricalCompetition(competitionId){
-  historicalReturnSection=recordsSection;
-  historicalCompetition={loading:true,competitionId};historicalView='results';historicalResultTab='season';historicalStatsMetric='goals';historicalTeamId=null;recordsScreen();
-  socket.emit('recordsCompetition',{competitionId},r=>{
-    if(!r?.ok){historicalCompetition=null;showToast(r?.error||'Could not load saved draft');return recordsScreen();}
-    historicalCompetition=r.competition;
-    const profile=savedProfile(),participants=r.competition?.data?.participants||[];
-    const preferred=participants.find(p=>profile?.profileId&&p.profileId===profile.profileId)||[...participants].sort((a,b)=>(a.rank||999)-(b.rank||999))[0];
-    historicalTeamId=preferred?.profileId||preferred?.managerId||null;
-    recordsScreen();
-  });
-}
-function priorityBidHistoryHtml(rows,title='Priority Bid history'){
-  if(!rows?.length)return '';
-  return `<div class="card"><h2>${esc(title)}</h2><p class="muted">Full bid sheets are revealed only after the teams are complete.</p><div class="priority-history-list">${rows.map(r=>{
-    const board=r.board||[],allocs=r.allocations||[];
-    const summary=allocs.map(a=>`<span class="pill"><b>${esc(a.player?.name||board.find(p=>p.id===a.playerId)?.name||'Player')}</b> → ${esc(a.managerName||'Manager')} · £${a.price}m</span>`).join('');
-    const matrix=`<div class="table-wrap"><table class="priority-matrix"><thead><tr><th>Manager</th>${board.map(p=>`<th>${esc(p.name)}</th>`).join('')}</tr></thead><tbody>${(r.bids||[]).map(row=>`<tr><td><b>${esc(row.managerName||'Manager')}</b></td>${board.map(p=>{const b=(row.bids||[]).find(x=>Number(x.playerId)===Number(p.id));return `<td>£${b?.amount??1}m</td>`}).join('')}</tr>`).join('')}</tbody></table></div>`;
-    const ties=(r.tiebreaks||[]).length?`<div class="priority-tie-history"><b>Tiebreaks</b>${r.tiebreaks.map(t=>{const p=board.find(x=>Number(x.id)===Number(t.playerId));return `<div>${esc(p?.name||'Player')}: ${(t.bids||[]).map(b=>`${esc((r.bids||[]).find(x=>x.managerId===b.managerId)?.managerName||'Manager')} £${b.amount}m`).join(' · ')}${t.randomSecondTie?' · second tie decided randomly':''}</div>`}).join('')}</div>`:'';
-    return `<details class="priority-history-round"><summary>Round ${r.round||'—'} <span>${allocs.length} signings</span></summary><div class="priority-history-summary">${summary}</div>${matrix}${ties}</details>`;
-  }).join('')}</div></div>`;
-}
-function simpleDraftHistoryHtml(rows,title='Draft / auction history'){
-  if(!rows?.length)return '';
-  return `<div class="card"><h2>${esc(title)}</h2><div class="table-wrap"><table class="draft-history-table"><thead><tr><th>#</th><th>Player</th><th>Manager</th><th>Price</th></tr></thead><tbody>${rows.map((h,i)=>`<tr><td>${i+1}</td><td><b>${esc(h.player?.name||'—')}</b></td><td>${h.noSale?'No sale':esc(h.winnerName||'—')}${h.forced?' <span class="forced-tag">forced</span>':''}</td><td>${h.noSale?'—':`£${h.price}m`}</td></tr>`).join('')}</tbody></table></div></div>`;
-}
-function historicalDraftHistoryHtml(data){
-  const rows=data?.draftHistory||[];if(!rows.length)return '';
-  return rows.some(r=>r.type==='priorityRound')?priorityBidHistoryHtml(rows.filter(r=>r.type==='priorityRound'),'Priority Bid history'):simpleDraftHistoryHtml(rows);
-}
-function historicalCompetitionScreen(){
-  if(historicalCompetition?.loading){shell('<div class="card"><h1>Saved Draft</h1><p class="muted">Loading the completed season…</p></div>');return;}
-  const c=historicalCompetition,d=c?.data||{},participants=[...(d.participants||[])].sort((a,b)=>(a.rank||999)-(b.rank||999));
-  const champion=participants.find(p=>p.profileId===d.championProfileId)||participants.find(p=>p.rank===1);
-  const mode=recordsSummaryData?.modeLabels?.[c.mode]||c.mode,pack=recordsSummaryData?.packLabels?.[c.pack]||c.pack;
-  const viewToggle=`<div class="post-view-toggle"><button class="result-tab ${historicalView==='results'?'active':''}" data-historical-view="results">Results</button><button class="result-tab ${historicalView==='teams'?'active':''}" data-historical-view="teams">Teams</button></div>`;
-  let body='';
-  if(historicalView==='teams'){
-    body=teamReviewHtml(participants,d.playerStats||[],historicalTeamId,true,d.matches||[]);
-  }else{
-    const nav=`<div class="result-tabs"><button class="result-tab ${historicalResultTab==='season'?'active':''}" data-historical-tab="season">Season</button><button class="result-tab ${historicalResultTab==='players'?'active':''}" data-historical-tab="players">Player stats</button><button class="result-tab ${historicalResultTab==='tots'?'active':''}" data-historical-tab="tots">Team of Season</button></div>`;
-    if(historicalResultTab==='season'){
-      const playoffs=(d.playoffs||[]).length?`<div class="card"><h2>Title tiebreak</h2>${d.playoffs.map(m=>matchHtml(m,'Tiebreak playoff')).join('')}</div>`:'';
-      body=`${nav}<div class="card"><h2>Final table</h2>${standingsHtml(d.finalTable||[])}</div>${playoffs}<div class="card"><h2>${(d.matches||[]).some(m=>m.gameweekNumber)?'Gameweek results':'Match results'}</h2><div class="matches">${gameweekResultsHtml(d.matches||[])}</div></div>${historicalDraftHistoryHtml(d)}`;
-    }else if(historicalResultTab==='players'){
-      body=`${nav}<div class="card"><h2>League player stats</h2><p class="muted">Top 10 performers from this saved season.</p>${historicalLeaderboardHtml(d.playerStats||[],historicalStatsMetric)}</div>`;
-    }else{
-      body=`${nav}<div class="card"><div class="budget"><div><h2>Team of the Season</h2><p class="muted no-margin">The Team of the Season generated when this draft was played.</p></div><b>${esc(d.teamOfSeason?.formation||'XI')}</b></div><div class="spacer14"></div>${totsPitchHtml(d.teamOfSeason)}</div>`;
-    }
+function simulateCompetition(teamInputs){
+  const teams=teamInputs.map(t=>({...t,assessment:t.assessment}));
+  const schedule=scheduleFor(teams);
+  const matches=[];
+  const gameweeks=[];
+  const progressTables=[];
+  let matchNumber=1;
+  for(const gw of schedule){
+    const gwMatches=gw.fixtures.map(([h,a])=>({...simulateMatch(h,a),matchNumber:matchNumber++,gameweekNumber:gw.number}));
+    matches.push(...gwMatches);
+    gameweeks.push({number:gw.number,matches:gwMatches,byeIds:[...(gw.byeIds||[])]});
+    progressTables.push(tableFromResults(teams,matches));
   }
-  shell(`<div class="card records-header"><div><div class="muted small">SAVED OFFICIAL DRAFT · ${esc(adminDate(c.completedAt))}</div><h1>🏆 ${esc(champion?.displayName||'Completed draft')}</h1><p class="muted no-margin">${esc(pack)} · ${esc(mode)}</p></div><button class="secondary" id="historicalBack">${historicalReturnSection==='all'?'Back to All-Time':'Back to rivalry'}</button></div>${viewToggle}${body}`);
-  document.querySelector('#historicalBack').onclick=()=>{historicalCompetition=null;recordsScreen();};
-  document.querySelectorAll('[data-historical-view]').forEach(b=>b.onclick=()=>{historicalView=b.dataset.historicalView;recordsScreen();});
-  document.querySelectorAll('[data-historical-tab]').forEach(b=>b.onclick=()=>{historicalResultTab=b.dataset.historicalTab;recordsScreen();});
-  document.querySelectorAll('[data-historical-stat]').forEach(b=>b.onclick=()=>{historicalStatsMetric=b.dataset.historicalStat;recordsScreen();});
-  document.querySelectorAll('[data-team-review]').forEach(b=>b.onclick=()=>{historicalTeamId=b.dataset.teamReview;recordsScreen();});
-}
-function adminGamesHtml(){
-  if(!recordsAdminData)return '<div class="card"><h2>Saved games</h2><p class="muted">Loading saved games…</p></div>';
-  const rows=recordsAdminData.competitions||[];
-  return `<div class="card"><h2>Saved games</h2><p class="muted">Excluded games stay in the database but do not count toward any leaderboard or Rivalry Group.</p>${rows.length?`<div class="admin-record-list">${rows.map(c=>`<div class="admin-record ${c.excluded?'excluded':''}"><div class="admin-record-main"><b>${esc((c.managers||[]).join(' / ')||'Unknown managers')}</b><div class="muted small">${esc(adminDate(c.completedAt))} · ${esc(recordsAdminData.modeLabels?.[c.mode]||c.mode)} · ${esc(recordsAdminData.packLabels?.[c.pack]||c.pack)}</div><div class="muted small">Champion: ${esc(c.champion||'—')} · ${c.excluded?'EXCLUDED':'Counting in records'}</div></div><button class="${c.excluded?'secondary':'danger-soft'} admin-record-toggle" data-comp="${esc(c.competitionId)}" data-excluded="${c.excluded?'1':'0'}">${c.excluded?'Restore':'Exclude'}</button></div>`).join('')}</div>`:'<p class="muted">No saved official games yet.</p>'}</div>`;
-}
-function adminProfilesHtml(){
-  if(!recordsAdminProfilesData)return '<div class="card"><h2>Manage Profiles</h2><p class="muted">Loading permanent manager profiles…</p></div>';
-  const profiles=recordsAdminProfilesData.profiles||[];
-  const options=profiles.map(p=>`<option value="${esc(p.profileId)}">${esc(p.defaultName)} · ${esc(p.recoveryCode)}</option>`).join('');
-  return `<div class="card"><h2>Manage Profiles</h2><p class="muted">Recovery codes are private admin information. Renaming keeps the same identity and all history.</p>${profiles.length?`<div class="admin-profile-list">${profiles.map(p=>`<div class="admin-profile"><div><b>${esc(p.defaultName)}</b><div class="profile-code">${esc(p.recoveryCode)}</div><div class="muted small">${p.drafts} saved draft${p.drafts===1?'':'s'}${p.aliases?.length?` · old code${p.aliases.length===1?'':'s'}: ${esc(p.aliases.join(', '))}`:''}</div></div><button class="secondary small-button admin-profile-rename" data-profile="${esc(p.profileId)}" data-name="${esc(p.defaultName)}">Rename</button></div>`).join('')}</div><div class="profile-merge-box"><h3>Merge duplicate profiles</h3><p class="muted small">Choose the real profile to keep, then the accidental duplicate. The duplicate's old recovery code will continue to recover the surviving profile.</p><label>Keep this profile</label><select id="mergeSurvivor"><option value="">Choose profile</option>${options}</select><label>Merge this duplicate into it</label><select id="mergeDuplicate"><option value="">Choose duplicate</option>${options}</select><button class="danger-soft big" id="mergeProfiles">Merge duplicate profiles</button><p class="muted small">Safety rule: if both profiles appeared in the same completed official draft, Prem Draft will refuse the merge so standings cannot be corrupted.</p></div>`:'<p class="muted">No permanent profiles yet.</p>'}</div>`;
-}
-function adminRecordsHtml(){
-  const nav=`<div class="record-tabs"><button class="result-tab ${recordsAdminSection==='games'?'active':''}" data-admin-section="games">Saved Games</button><button class="result-tab ${recordsAdminSection==='profiles'?'active':''}" data-admin-section="profiles">Manage Profiles</button></div>`;
-  return `<div class="card"><div class="budget"><div><h2>Records Admin</h2><p class="muted no-margin">Private controls for correcting permanent history.</p></div><button class="secondary" id="adminBack">Back to records</button></div></div>${nav}${recordsAdminSection==='profiles'?adminProfilesHtml():adminGamesHtml()}`;
-}
-function loadAdminSection(section='games'){
-  recordsAdminMode=true;recordsAdminSection=section;recordsScreen();
-  if(section==='profiles'){
-    recordsAdminProfilesData=null;recordsScreen();
-    socket.emit('recordsAdminProfiles',{},r=>{if(!r?.ok){if(String(r?.error||'').includes('Admin access'))recordsAdminUnlocked=false;showToast(r?.error||'Could not load profiles');return;}recordsAdminProfilesData=r;if(viewingRecords)recordsScreen();});
-  }else{
-    recordsAdminData=null;recordsScreen();
-    socket.emit('recordsAdminList',{},r=>{if(!r?.ok){if(String(r?.error||'').includes('Admin access'))recordsAdminUnlocked=false;showToast(r?.error||'Could not load admin records');return;}recordsAdminData=r;if(viewingRecords)recordsScreen();});
-  }
-}
-function openAdminRecords(){
-  if(recordsAdminUnlocked)return loadAdminSection(recordsAdminSection||'games');
-  const code=prompt('Enter admin code:','');if(code===null)return;
-  socket.emit('recordsAdminLogin',{code},r=>{
-    if(!r?.ok)return showToast(r?.error||'Admin access denied');
-    recordsAdminUnlocked=true;loadAdminSection('games');
-  });
-}
-function wireAdminControls(){
-  const back=document.querySelector('#adminBack');if(back)back.onclick=()=>openRecords();
-  document.querySelectorAll('[data-admin-section]').forEach(b=>b.onclick=()=>loadAdminSection(b.dataset.adminSection));
-  document.querySelectorAll('.admin-record-toggle').forEach(b=>b.onclick=()=>{
-    const excluded=b.dataset.excluded==='1',competitionId=b.dataset.comp;
-    if(!excluded&&!confirm('Exclude this completed game from all permanent leaderboards? You can restore it later.'))return;
-    socket.emit('recordsAdminSetExcluded',{competitionId,excluded:!excluded},r=>{if(!r?.ok)return showToast(r?.error||'Could not update saved game');showToast(excluded?'Game restored':'Game excluded');loadAdminSection('games');});
-  });
-  document.querySelectorAll('.admin-profile-rename').forEach(b=>b.onclick=()=>{
-    const name=prompt('Permanent manager name:',b.dataset.name||'Manager');if(name===null)return;
-    socket.emit('recordsAdminRenameProfile',{profileId:b.dataset.profile,name},r=>{if(!r?.ok)return showToast(r?.error||'Could not rename profile');showToast('Permanent manager renamed');loadAdminSection('profiles');});
-  });
-  const merge=document.querySelector('#mergeProfiles');if(merge)merge.onclick=()=>{
-    const survivorId=document.querySelector('#mergeSurvivor')?.value,duplicateId=document.querySelector('#mergeDuplicate')?.value;
-    if(!survivorId||!duplicateId)return showToast('Choose both profiles first.');
-    if(survivorId===duplicateId)return showToast('Choose two different profiles.');
-    const profiles=recordsAdminProfilesData?.profiles||[],keep=profiles.find(p=>p.profileId===survivorId),dup=profiles.find(p=>p.profileId===duplicateId);
-    if(!confirm(`Merge ${dup?.defaultName||'duplicate'} (${dup?.recoveryCode||''}) into ${keep?.defaultName||'surviving profile'} (${keep?.recoveryCode||''})?\n\nThis moves the duplicate's historical drafts to the surviving identity. The old recovery code will become an alias.`))return;
-    socket.emit('recordsAdminMergeProfiles',{survivorId,duplicateId},r=>{
-      if(!r?.ok){
-        if(r?.conflict){const dates=(r.conflicts||[]).map(x=>adminDate(x.completedAt)).join('\n');alert(`${r.error}\n\nConflicting saved draft${(r.conflicts||[]).length===1?'':'s'}:\n${dates}`);return;}
-        return showToast(r?.error||'Could not merge profiles');
+  const table=tableFromResults(teams,matches);
+  let tied=tiedAtTopAfterAllCriteria(table,matches);
+  const playoffs=[];
+  let championId=table[0]?.id||null;
+  if(tied.length>1){
+    // Rare final tiebreak: neutral knockout. If 3+ somehow remain identical, a small playoff bracket decides it on the pitch.
+    let pool=tied.map(id=>teams.find(t=>t.id===id)).filter(Boolean);
+    while(pool.length>1){
+      const next=[];
+      for(let i=0;i<pool.length;i+=2){
+        if(i===pool.length-1){next.push(pool[i]);continue;}
+        const match=simulateMatch(pool[i],pool[i+1],{neutral:true,knockout:true});
+        match.tiebreak=true;playoffs.push(match);
+        next.push(teams.find(t=>t.id===match.winnerId));
       }
-      showToast(`Profiles merged · ${r.affectedDrafts||0} draft${r.affectedDrafts===1?'':'s'} moved`);loadAdminSection('profiles');
-    });
-  };
-}
-function recordsScreen(){
-  if(!viewingRecords)return;
-  if(historicalCompetition)return historicalCompetitionScreen();
-  if(!recordsSummaryData)return;
-  if(recordsAdminMode){
-    shell(`<div class="card records-header"><div><div class="muted small">PERMANENT HISTORY</div><h1>🏆 All-Time Records</h1></div><button class="secondary" id="recordsBack">Close</button></div>${adminRecordsHtml()}`);
-    document.querySelector('#recordsBack').onclick=closeRecords;wireAdminControls();return;
-  }
-  const groups=recordsSummaryData.groups||[];
-  const nav=`<div class="record-tabs"><button class="result-tab ${recordsSection==='rivalry'?'active':''}" data-record-section="rivalry">Rivalry Groups</button><button class="result-tab ${recordsSection==='all'?'active':''}" data-record-section="all">All Managers</button></div>`;
-  const filterCount=recordFilterCount();
-  const filterButton=`<button class="secondary" id="recordsFilterButton">Filters${filterCount?` (${filterCount})`:''} ⚙</button>${recordsFiltersHtml()}${recordFilterSummary()}`;
-  let body='';
-  if(recordsSection==='all'){
-    const meta=recordsAllData?`${recordsAllData.matchingDrafts} matching draft${recordsAllData.matchingDrafts===1?'':'s'} · ${recordsAllData.matchingMatches} matches`:'Loading filtered records…';
-    body=`<div class="card"><h2>All-Time leaderboard</h2><p class="muted">Every completed official season stored across every room and rivalry group. Ranked by PPG, with Titles as the first tiebreak.</p>${filterButton}<p class="muted small records-match-count">${esc(meta)}</p>${recordsAllData?historyTableHtml(recordsAllData.table||[]):'<div class="muted">Loading…</div>'}</div>${recordsAllData?`<div class="card"><h2>Draft History</h2><p class="muted">Every official saved draft matching the filters, newest first.</p>${draftHistoryCardsHtml(recordsAllData.drafts||[])}</div>`:''}`;
-  }else if(!groups.length){
-    body=`<div class="card"><h2>Rivalry Groups</h2><p class="muted">No completed official seasons have been saved yet.</p>${filterButton}</div>`;
-  }else{
-    const options=groups.map(g=>`<option value="${esc(g.key)}" ${g.key===selectedRivalryKey?'selected':''}>${esc(g.names.join(' / '))} · ${g.drafts} draft${g.drafts===1?'':'s'}</option>`).join('');
-    const meta=recordsGroupData?`${recordsGroupData.matchingDrafts} matching draft${recordsGroupData.matchingDrafts===1?'':'s'} · ${recordsGroupData.matchingMatches} matches`:'Loading filtered table…';
-    body=`<div class="card"><div class="budget"><div><h2>Rivalry Group</h2><p class="muted no-margin">Only drafts containing exactly this combination of managers count.</p></div></div><div class="spacer10"></div><select id="rivalryGroupSelect">${options}</select><div class="spacer10"></div>${filterButton}<p class="muted small records-match-count">${esc(meta)}</p>${recordsGroupData?historyTableHtml(recordsGroupData.table||[]):'<div class="muted">Loading…</div>'}</div>${recordsGroupData?`<div class="card"><h2>Draft History</h2><p class="muted">Open any saved official draft and revisit its final results and teams.</p>${draftHistoryCardsHtml(recordsGroupData.drafts||[])}</div>`:''}`;
-  }
-  shell(`<div class="card records-header"><div><div class="muted small">PERMANENT HISTORY</div><h1>🏆 All-Time Records</h1>${recordsConnectionHtml()}</div><div class="profile-actions">${recordsAdminConfigured?'<button class="secondary small-button" id="recordsAdmin">Admin</button>':''}<button class="secondary" id="recordsBack">Back</button></div></div>${nav}${body}`);
-  document.querySelector('#recordsBack').onclick=closeRecords;
-  const adminButton=document.querySelector('#recordsAdmin');if(adminButton)adminButton.onclick=openAdminRecords;
-  document.querySelectorAll('[data-record-section]').forEach(b=>b.onclick=()=>{
-    recordsSection=b.dataset.recordSection;
-    if(recordsSection==='all')loadAllRecords();else if(selectedRivalryKey)loadRivalryGroup();else recordsScreen();
-  });
-  document.querySelectorAll('[data-historical-comp]').forEach(b=>b.onclick=()=>openHistoricalCompetition(b.dataset.historicalComp));
-  const sel=document.querySelector('#rivalryGroupSelect');if(sel)sel.onchange=e=>{selectedRivalryKey=e.target.value;loadRivalryGroup();};
-  const filterBtn=document.querySelector('#recordsFilterButton'),panel=document.querySelector('#recordsFilterPanel');if(filterBtn&&panel)filterBtn.onclick=()=>{panel.hidden=!panel.hidden};
-  const all=document.querySelector('#recordsAllFilters');if(all)all.onclick=()=>{document.querySelectorAll('[data-filter-mode],[data-filter-pack]').forEach(x=>{x.checked=true});};
-  const reset=document.querySelector('#recordsClearFilters');if(reset)reset.onclick=()=>{document.querySelectorAll('[data-filter-mode],[data-filter-pack]').forEach(x=>{x.checked=true});};
-  const apply=document.querySelector('#recordsApplyFilters');if(apply)apply.onclick=()=>{
-    const modes=[...document.querySelectorAll('[data-filter-mode]:checked')].map(x=>x.dataset.filterMode);
-    const packs=[...document.querySelectorAll('[data-filter-pack]:checked')].map(x=>x.dataset.filterPack);
-    if(!modes.length||!packs.length)return showToast('Choose at least one mode and one player pack.');
-    selectedRecordModes=new Set(modes);selectedRecordPacks=new Set(packs);saveRecordFilters();
-    if(recordsSection==='all')loadAllRecords();else loadRivalryGroup();
-  };
-}
-
-function lobby(){
-  const m=me(),host=state.hostId===meId;
-  const packOptions=Object.entries(state.packLabels||{}).map(([key,label])=>`<option value="${key}" ${state.pack===key?'selected':''}>${esc(label)} (${state.packCounts?.[key]||0} players)</option>`).join('');
-  const mainModeEntries=Object.entries(state.modeLabels||{}).filter(([key])=>key!=='hard');
-  const modeOptions=`${state.mode==='hard'?'<option value="hard" selected disabled>Hard Mode (Legacy)</option>':''}${mainModeEntries.map(([key,label])=>`<option value="${key}" ${state.mode===key?'selected':''}>${esc(label)}</option>`).join('')}`;
-  const descriptions={
-    freeform:'Draft any 11 players in the normal open auction. Choose and arrange your formation after the draft.',
-    nomination:'Managers take turns choosing who enters the auction. The pool is larger (18 per manager), and every nomination starts with a real £1m+ opening bid.',
-    blind:'Every player is a sealed bid. Opponent budgets, squads, bids and winners stay secret until all teams are set.',
-    priority:'Every round shows one player per manager. Bid blindly on all of them; the highest remaining bids resolve first until everyone gets one player.',
-    hard:'Legacy mode. Choose your formation now; every signing must fit an open position and stays in its assigned slot.'
-  };
-  const legacyControl=host?`<details class="legacy-mode-box"><summary>Legacy modes</summary><p class="muted small">Hard Mode is retired from the main mode list while we decide whether to redesign it.</p><button class="secondary big" id="legacyHard">Use Hard Mode (Legacy)</button></details>`:(state.mode==='hard'?'<div class="legacy-badge">Legacy mode</div>':'');
-  const prioritySettings=state.mode==='priority'?`<div class="card"><h2>Priority Bid visibility</h2><p class="muted small">The rules are identical; this only changes what managers can see during the draft.</p><div class="priority-visibility-row"><button class="${state.priorityVisibility==='visible'?'primary':'secondary'} grow priority-visibility" data-visibility="visible" ${host?'':'disabled'}>Visible</button><button class="${state.priorityVisibility==='hidden'?'primary':'secondary'} grow priority-visibility" data-visibility="hidden" ${host?'':'disabled'}>Hidden</button></div><p class="muted small">${state.priorityVisibility==='hidden'?'Hidden: opponent squads, budgets, winners, prices and remaining-position counts stay secret until the final team reveal.':'Visible: opponent squads/budgets stay visible; each round reveals only winning allocations and prices, plus remaining positional supply.'}</p></div>`:'';
-  const formationCard=state.mode==='hard'
-    ? `<div class="card"><h2>Your formation</h2><select id="formation"><option value="">Choose formation</option>${HARD_FORMATIONS.map(f=>`<option ${m.formation===f?'selected':''}>${f}</option>`).join('')}</select><div class="spacer10"></div><button class="${m.ready?'secondary':'primary'} big" id="ready" ${!m.formation?'disabled':''}>${m.ready?'Not ready':'Ready'}</button></div>`
-    : `<div class="card"><h2>Your draft</h2><p class="muted">No formation yet. Draft any 11 players; you will build your XI afterwards.</p><button class="${m.ready?'secondary':'primary'} big" id="ready">${m.ready?'Not ready':'Ready'}</button></div>`;
-  const firstProfileReminder=firstSessionRecoveryCode&&savedProfile()?.recoveryCode===firstSessionRecoveryCode?`<div class="card first-profile-reminder"><div class="muted small">NEW PERMANENT PROFILE</div><b>Recovery code: ${esc(firstSessionRecoveryCode)}</b><div class="muted small">Keep this code if you want to recover your records on another device.</div></div>`:'';
-  const managersHtml=state.managers.map(x=>`<div class="manager manager-colour-row" style="--manager-color:${esc(x.color||'#64748b')}"><div class="manager-main"><b class="manager-name-with-dot">${managerNameHtml(x)}</b><div class="muted">${state.mode==='hard'?(x.formation||'No formation'):'Formation after draft'}${x.connected===false?' · disconnected':''}</div></div><div class="manager-actions"><div class="${x.ready?'ready':'notready'}">${x.ready?'READY':'WAITING'}</div>${host&&x.id!==meId?`<button class="secondary small-button remove-manager" data-manager="${esc(x.id)}">Remove</button>`:''}</div></div>`).join('');
-  shell(`<div class="card"><div class="budget"><div><div class="muted">ROOM CODE</div><div class="code">${state.code}</div></div><div class="lobby-top-actions"><button class="secondary small-button" id="copy">Copy link</button><button class="secondary small-button" id="lobbyRecords">Records</button><button class="secondary small-button" id="leaveLobby">Back to Home</button></div></div></div>
-  ${firstProfileReminder}
-  <div class="card"><h2>Game mode</h2>${host?`<select id="mode">${modeOptions}</select>`:`<div class="pack-display"><b>${esc(modeName())}</b></div>`}<p class="muted small">${esc(descriptions[state.mode]||'')}</p>${legacyControl}</div>
-  ${prioritySettings}
-  <div class="card"><h2>Player pack</h2>${host?`<select id="pack">${packOptions}</select><p class="muted small">Changing the pack makes everyone ready up again.</p>`:`<div class="pack-display"><b>${esc(packName())}</b><span class="muted">${state.packCounts?.[state.pack]||0} players</span></div>`}</div>
-  <div class="card record-save-card"><label class="record-save-toggle"><input id="saveToHistory" type="checkbox" ${state.saveToHistory!==false?'checked':''} ${host?'':'disabled'}><span><b>Save this game to All-Time Records</b><small>${state.saveToHistory!==false?'Official game · completed simulation will count permanently.':'Practice / unranked · permanent leaderboards will not change.'}</small></span></label>${host?'':'<div class="muted small">Only the host can change this before the draft starts.</div>'}</div>
-  ${formationCard}
-  <div class="card"><h2>Managers</h2>${managersHtml}</div>
-  ${host?`<button class="primary big" id="start">Start draft</button>`:''}`);
-  document.querySelector('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(location.href);showToast('Invite link copied')}catch{showToast('Copy the page address from your browser')}};
-  document.querySelector('#lobbyRecords').onclick=openRecords;
-  document.querySelector('#leaveLobby').onclick=()=>{
-    socket.emit('leaveLobby',{},r=>{
-      if(!r?.ok)return showToast(r?.error||'Could not leave the lobby');
-      clearSavedSession();state=null;meId=null;firstSessionRecoveryCode=null;history.replaceState({},'',location.pathname);home();
-    });
-  };
-  document.querySelectorAll('.remove-manager').forEach(b=>b.onclick=()=>{
-    const target=state.managers.find(x=>x.id===b.dataset.manager);
-    if(!confirm(`Remove ${target?.name||'this manager'} from the lobby? They can rejoin later with the room code.`))return;
-    socket.emit('removeLobbyManager',{managerId:b.dataset.manager},r=>{if(!r?.ok)showToast(r?.error||'Could not remove manager')});
-  });
-  if(host){
-    document.querySelector('#mode').onchange=e=>socket.emit('setMode',{mode:e.target.value});
-    document.querySelector('#pack').onchange=e=>socket.emit('setPack',{pack:e.target.value});
-    const save=document.querySelector('#saveToHistory');if(save)save.onchange=e=>socket.emit('setSaveToHistory',{save:e.target.checked},r=>{if(r&&!r.ok)showToast(r.error)});
-    const legacy=document.querySelector('#legacyHard');if(legacy)legacy.onclick=()=>socket.emit('setMode',{mode:'hard'});
-    document.querySelectorAll('.priority-visibility').forEach(b=>b.onclick=()=>socket.emit('setPriorityVisibility',{visibility:b.dataset.visibility},r=>{if(r&&!r.ok)showToast(r.error)}));
-  }
-  if(state.mode==='hard')document.querySelector('#formation').onchange=e=>socket.emit('setFormation',{formation:e.target.value});
-  document.querySelector('#ready').onclick=()=>socket.emit('setReady',{ready:!m.ready});
-  if(host)document.querySelector('#start').onclick=()=>{firstSessionRecoveryCode=null;socket.emit('startDraft',{},r=>{if(r&&!r.ok)showToast(r.error)})};
-}
-
-function scarcityHtml(c){
-  const warnings=c?.scarcityWarnings||[];
-  return warnings.map(w=>{
-    const managerText=w.managersLacking===1?'1 manager still has no natural':'Managers still without a natural';
-    const lackingText=w.managersLacking===1?`${managerText} ${w.position}.`:`${w.managersLacking} managers still have no natural ${w.position}.`;
-    const afterText=w.remainingAfter===1?`If this player is skipped, only 1 eligible ${w.position} will remain.`:`If this player is skipped, only ${w.remainingAfter} eligible ${w.position}s will remain.`;
-    return `<div class="scarcity"><b>${w.position} scarcity warning</b><div>${esc(lackingText)} ${esc(afterText)}</div></div>`;
-  }).join('');
-}
-
-const NOMINATION_POSITION_ORDER=['GK','LB','CB','RB','DM','CM','AM','LM','RM','LW','RW','ST'];
-function nominationPlayersHtml(selectMode=null){
-  const players=state.nomination?.availablePlayers||[];
-  const term=nominationSearch.trim().toLowerCase();
-  const searched=players.filter(p=>!term||p.name.toLowerCase().includes(term));
-  const row=p=>`<div class="nomination-player"><div><b>${esc(p.name)}</b><div class="muted small">${esc(p.positions.join(' / '))}</div></div>${selectMode?`<button class="${selectMode==='final'?'primary':'secondary'} nominate-player" data-player="${p.id}" data-action="${selectMode}">${selectMode==='final'?'Pick £1m':'Nominate'}</button>`:''}</div>`;
-  if(nominationPosition!=='ALL'){
-    const matching=searched.filter(p=>p.positions?.includes(nominationPosition));
-    if(!matching.length)return '<div class="muted">No available players match that search.</div>';
-    const primary=matching.filter(p=>p.positions?.[0]===nominationPosition).sort((a,b)=>a.name.localeCompare(b.name));
-    const alternate=matching.filter(p=>p.positions?.[0]!==nominationPosition).sort((a,b)=>a.name.localeCompare(b.name));
-    return `${primary.length?`<div class="nomination-group"><div class="nomination-heading">${nominationPosition} · PRIMARY</div>${primary.map(row).join('')}</div>`:''}${alternate.length?`<div class="nomination-group"><div class="nomination-heading">${nominationPosition} · ALTERNATE</div>${alternate.map(row).join('')}</div>`:''}`;
-  }
-  if(!searched.length)return '<div class="muted">No available players match that search.</div>';
-  return NOMINATION_POSITION_ORDER.map(pos=>{
-    const group=searched.filter(p=>p.positions?.[0]===pos);if(!group.length)return '';
-    return `<div class="nomination-group"><div class="nomination-heading">${pos}</div>${group.map(row).join('')}</div>`;
-  }).join('');
-}
-function nominationPoolCard(selectMode=null){
-  return `<div class="card"><div class="budget"><div><h2>${selectMode==='final'?'Final picks':'Nomination pool'}</h2><p class="muted no-margin">Main list: primary position then alphabetical. Position filters also include alternate positions, with primary matches first. No quality or rating order is used.</p></div><b>${state.nomination?.availablePlayers?.length||0} available</b></div><div class="nomination-filters"><input id="nomSearch" value="${esc(nominationSearch)}" placeholder="Search players"><select id="nomPos"><option value="ALL">All positions</option>${NOMINATION_POSITION_ORDER.map(pos=>`<option value="${pos}" ${nominationPosition===pos?'selected':''}>${pos}</option>`).join('')}</select></div><div id="nominationList">${nominationPlayersHtml(selectMode)}</div></div>`;
-}
-function wireNominationPool(selectMode=null){
-  const search=document.querySelector('#nomSearch'),pos=document.querySelector('#nomPos'),list=document.querySelector('#nominationList');
-  const redraw=()=>{if(list){list.innerHTML=nominationPlayersHtml(selectMode);wireNominationButtons(selectMode)}};
-  if(search)search.oninput=e=>{nominationSearch=e.target.value;redraw()};
-  if(pos)pos.onchange=e=>{nominationPosition=e.target.value;redraw()};
-  wireNominationButtons(selectMode);
-}
-function wireNominationButtons(selectMode){
-  if(!selectMode)return;
-  document.querySelectorAll('.nominate-player').forEach(b=>b.onclick=()=>{
-    const playerId=Number(b.dataset.player);
-    if(selectMode==='final')socket.emit('nominationFinalPick',{playerId},r=>{if(r&&!r.ok)showToast(r.error)});
-    else{
-      const v=prompt('Opening bid in £m (minimum £1m)','1');if(v===null)return;
-      socket.emit('nominatePlayer',{playerId,openingBid:Number(v)},r=>{if(r&&!r.ok)showToast(r.error)});
+      pool=next;
     }
-  });
-}
-function managerTabHtml(){
-  if(state.managers.some(x=>x.hidden))return state.managers.map(x=>x.id===meId
-    ? `<div class="card manager-accent-card" style="--manager-color:${esc(x.color||'#64748b')}"><div class="budget"><h3 class="manager-name-with-dot">${managerNameHtml(x)} (you)</h3><b>£${x.budget}m · ${x.squad.length}/11</b></div><div>${x.squad.map(p=>`<span class="pill">${esc(p.name)} · ${esc(p.positions.join('/'))} · £${p.price}m</span>`).join('')||'<span class="muted">No players yet</span>'}</div></div>`
-    : `<div class="card blind-hidden manager-accent-card" style="--manager-color:${esc(x.color||'#64748b')}"><h3 class="manager-name-with-dot">${managerNameHtml(x)}</h3><p class="muted">Squad and budget hidden until the team reveal.</p></div>`).join('');
-  return state.managers.map(x=>`<div class="card manager-accent-card" style="--manager-color:${esc(x.color||'#64748b')}"><div class="budget"><h3 class="manager-name-with-dot">${managerNameHtml(x)}</h3><b>£${x.budget}m · ${x.squad.length}/11</b></div><div>${x.squad.map(p=>`<span class="pill">${esc(p.name)} · ${state.mode==='hard'?esc(p.assignedPosition||'—'):esc(p.positions.join('/'))} · £${p.price}m</span>`).join('')||'<span class="muted">No players yet</span>'}</div></div>`).join('');
+    championId=pool[0]?.id||championId;
+  }
+  const playerStats=aggregatePlayerStats(teams,matches);
+  return {matches,gameweeks,progressTables,table,playoffs,championId,playerStats,leaderboards:leaderboards(playerStats),teamOfSeason:teamOfSeason(playerStats)};
 }
 
-function priorityPositionCounterHtml(counts){
-  if(!counts)return '';
-  const labels={GK:'GK',CB:'CB',FB:'FB',MID:'MID',WING:'WING',ST:'ST'};
-  return `<div class="priority-position-counter"><div class="muted small">ELIGIBLE PLAYERS REMAINING AFTER THIS ROUND</div><div class="priority-position-grid">${Object.entries(labels).map(([k,label])=>`<div><span>${label}</span><b>${counts[k]??0}</b></div>`).join('')}</div><div class="muted tiny">Players can count in more than one category through alternate positions.</div></div>`;
-}
-function priorityDraftPanel(m,c){
-  if(!c)return '<div class="card">Loading next Priority Bid board…</div>';
-  if(c.priorityStage==='result'){
-    const rows=c.priorityAllocations||[];
-    const hidden=c.priorityVisibility==='hidden';
-    return `<div class="card priority-resolution"><div class="player-counter">ROUND ${c.priorityRound} OF 11</div><h2>${hidden?'Your result':'Round resolved'}</h2>${rows.length?rows.map(a=>`<div class="priority-result-row"><div><b>${esc(a.player?.name||'Player')}</b><div class="muted small">${esc(a.player?.positions?.join(' / ')||'')}</div></div><div class="right"><b>${hidden?'You':esc(a.managerName||'Manager')}</b><div>£${a.price}m</div></div></div>`).join(''):'<p class="muted">Other allocations remain hidden until the final team reveal.</p>'}<p class="muted small">Next board loading…</p></div>`;
-  }
-  if(c.priorityStage==='tiebreak'){
-    const eligible=!!c.priorityTiebreakEligible,locked=!!c.myPriorityLocked,min=Number(c.priorityTieMin||1),max=Number(c.priorityMaxBid||min),bid=Number(c.myPriorityTieBid||min);
-    if(!eligible)return `<div class="card"><div class="player-counter">ROUND ${c.priorityRound} OF 11 · TIEBREAK</div><div id="timer" class="timer ${Number(c.timeLeft)<=5?'warn':''}">${c.timeLeft}</div><h2>Tiebreak in progress</h2><p class="muted">The round will continue as soon as the tied managers settle it.</p>${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}</div>`;
-    return `<div class="card priority-tiebreak"><div class="player-counter">ROUND ${c.priorityRound} OF 11 · TIEBREAK</div><div id="timer" class="timer ${Number(c.timeLeft)<=5?'warn':''}">${c.timeLeft}</div><h2>${esc(c.priorityTiePlayer?.name||'Tied player')}</h2><p class="muted">Your original £${min}m bid carries forward. Keep it or increase it; you cannot lower it.</p><div class="priority-tie-control"><button class="secondary priority-tie-step" data-step="-1" ${locked||state.paused?'disabled':''}>−</button><input id="priorityTieInput" inputmode="numeric" type="number" min="${min}" max="${max}" value="${bid}" ${locked||state.paused?'disabled':''}><span>m</span><button class="secondary priority-tie-step" data-step="1" ${locked||state.paused?'disabled':''}>+</button></div><button class="${locked?'secondary':'primary'} big" id="priorityLock" ${state.paused?'disabled':''}>${locked?'Unlock Decision':'Lock Decision'}</button>${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}</div>`;
-  }
-  const locked=!!c.myPriorityLocked,bids=c.myPriorityBids||{},max=Number(c.priorityMaxBid||1);
-  const rows=(c.priorityBoard||[]).map(p=>{
-    const bid=Number(bids[p.id]||1);
-    return `<div class="priority-bid-row" data-priority-player="${p.id}"><div class="priority-player-info"><b>${esc(p.name)}</b><span>${esc(p.positions.join(' / '))}</span></div><div class="priority-bid-control"><button class="secondary priority-step" data-player="${p.id}" data-step="-1" ${locked||state.paused?'disabled':''}>−</button><div class="priority-bid-input-wrap"><span>£</span><input class="priority-bid-input" data-player="${p.id}" inputmode="numeric" type="number" min="1" max="${max}" value="${bid}" ${locked||state.paused?'disabled':''}><span>m</span></div><button class="secondary priority-step" data-player="${p.id}" data-step="1" ${locked||state.paused?'disabled':''}>+</button></div></div>`;
-  }).join('');
-  return `<div class="card priority-board"><div class="priority-board-head"><div><div class="player-counter">ROUND ${c.priorityRound} OF 11</div><h2>Bid on every player</h2><p class="muted no-margin">Bids above £1m must be unique. £1m can be repeated.</p></div><div id="timer" class="timer ${Number(c.timeLeft)<=5?'warn':''}">${c.timeLeft}</div></div>${priorityPositionCounterHtml(c.priorityRemainingPositions)}<div class="priority-bid-list">${rows}</div><div class="priority-sticky"><div><span class="muted small">BUDGET</span><b>£${m.budget}m</b><span class="muted small">MAX SAFE BID £${max}m</span></div><button class="${locked?'secondary':'primary'}" id="priorityLock" ${state.paused?'disabled':''}>${locked?'Unlock Decision':'Lock Decision'}</button></div>${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}</div>`;
-}
-function priorityUsedAmounts(c,exceptPlayerId){
-  const used=new Set();for(const [pid,v] of Object.entries(c.myPriorityBids||{})){if(Number(pid)!==Number(exceptPlayerId)&&Number(v)>1)used.add(Number(v));}return used;
-}
-function nextPriorityAmount(c,playerId,current,step){
-  const used=priorityUsedAmounts(c,playerId),max=Number(c.priorityMaxBid||1);let next=Math.max(1,Math.min(max,Number(current)+Number(step)));
-  if(step>0){while(next<=max&&next>1&&used.has(next))next++;if(next>max)return Number(current);}
-  else{while(next>1&&used.has(next))next--;}
-  return Math.max(1,Math.min(max,next));
-}
-function wirePriorityControls(){
-  const c=state.current;if(!c||state.mode!=='priority')return;
-  const lock=document.querySelector('#priorityLock');if(lock)lock.onclick=()=>socket.emit('setPriorityLock',{locked:!c.myPriorityLocked},r=>{if(r&&!r.ok)showToast(r.error)});
-  if(c.priorityStage==='tiebreak'){
-    const input=document.querySelector('#priorityTieInput');
-    const submit=v=>socket.emit('setPriorityTieBid',{amount:Number(v)},r=>{if(!r?.ok){showToast(r?.error||'Could not set tiebreak bid');if(input)input.value=String(c.myPriorityTieBid||c.priorityTieMin||1);return;}c.myPriorityTieBid=Number(r.amount);if(input)input.value=String(r.amount)});
-    document.querySelectorAll('.priority-tie-step').forEach(b=>b.onclick=()=>{const min=Number(c.priorityTieMin||1),max=Number(c.priorityMaxBid||min),cur=Number(input?.value||min);submit(Math.max(min,Math.min(max,cur+Number(b.dataset.step))))});
-    if(input)input.oninput=()=>{const v=Math.floor(Number(input.value));if(Number.isFinite(v))submit(v)};
-    return;
-  }
-  if(c.priorityStage!=='bidding')return;
-  const submit=(playerId,amount,input)=>socket.emit('setPriorityBid',{playerId:Number(playerId),amount:Number(amount)},r=>{
-    if(!r?.ok){showToast(r?.error||'Could not set bid');if(input)input.value=String(c.myPriorityBids?.[playerId]||1);return;}
-    c.myPriorityBids[playerId]=Number(r.amount);if(input)input.value=String(r.amount);
-  });
-  document.querySelectorAll('.priority-step').forEach(b=>b.onclick=()=>{
-    const playerId=b.dataset.player,input=document.querySelector(`.priority-bid-input[data-player="${playerId}"]`),cur=Number(c.myPriorityBids?.[playerId]||1);
-    const next=nextPriorityAmount(c,playerId,cur,Number(b.dataset.step));if(next!==cur)submit(playerId,next,input);
-  });
-  document.querySelectorAll('.priority-bid-input').forEach(input=>input.oninput=()=>{
-    const playerId=input.dataset.player,amount=Math.floor(Number(input.value));
-    if(amount>1&&priorityUsedAmounts(c,playerId).has(amount)){showToast(`£${amount}m is already used`);input.value=String(c.myPriorityBids?.[playerId]||1);return;}
-    submit(playerId,amount,input);
-  });
-}
-
-function blindDraftPanel(m,c){
-  if(!c)return '<div class="card">Loading next player…</div>';
-  const complete=m.squad.length>=11;
-  const tieStage=c.blindStage===2;
-  const eligible=!tieStage||c.blindTiebreakEligible;
-  const locked=!!c.myBlindLocked;
-  const min=Number(c.blindMinBid||0);
-  const max=Math.max(0,m.budget-Math.max(0,11-m.squad.length-1));
-  const bid=Number(c.myBlindBid||0);
-  let controls='';
-  if(complete)controls='<button class="secondary big" disabled>Squad complete · no decision needed</button>';
-  else if(tieStage&&!eligible)controls='<div class="blind-wait"><b>Tiebreak in progress</b><div class="muted small">You are no longer involved in this auction.</div></div>';
-  else{
-    controls=`<div class="blind-controls"><label>${tieStage?'Tiebreak bid':'Your sealed bid'}</label><div class="blind-bid-row"><span>£</span><input id="blindBidInput" type="number" min="${min}" max="${max}" step="1" value="${bid}" ${locked||state.paused?'disabled':''}><span>m</span></div><div class="row"><button class="secondary grow blind-add" data-add="1" ${locked||state.paused?'disabled':''}>+£1m</button><button class="secondary grow blind-add" data-add="2" ${locked||state.paused?'disabled':''}>+£2m</button><button class="secondary grow blind-add" data-add="5" ${locked||state.paused?'disabled':''}>+£5m</button></div>${!tieStage?`<div class="spacer9"></div><button class="secondary big" id="blindNoBid" ${locked||state.paused?'disabled':''}>No bid (£0)</button>`:''}<div class="blind-decision">${bid>0?`Current decision: <b>£${bid}m bid</b>`:'Current decision: <b>No bid</b>'}${locked?' · LOCKED':''}</div><button class="${locked?'secondary':'primary'} big" id="blindLock" ${state.paused?'disabled':''}>${locked?'Unlock Decision':'Lock Decision'}</button></div>`;
-  }
-  const counter=tieStage?'TIEBREAK · 10 SECOND ROUND':`PLAYER ${state.shownCount||1} OF ${state.poolSize||'—'}`;
-  return `<div class="card budget"><div><div class="muted">YOUR BUDGET</div><strong>£${m.budget}m</strong></div><div class="right"><div class="muted">YOUR SQUAD</div><strong>${m.squad.length}/11</strong></div></div><div class="card auction blind-auction"><div class="player-counter">${counter}</div><div id="timer" class="timer ${c.timeLeft<=5?'warn':''}">${c.timeLeft}</div><div class="player">${esc(c.player.name)}</div><div class="positions">${esc(c.player.positions.join(' / '))}</div>${c.blindEndgame?'<div class="required blind-endgame"><b>ENDGAME</b><div>Remaining players are compulsory. If nobody bids, this player will be assigned for £1m to an eligible manager with the most open squad slots; exact ties are completely random.</div></div>':''}${tieStage?'<div class="required">Only managers tied for the highest first-round bid can bid in this round. The original tied bid is your minimum.</div>':'<div class="blind-note">Nobody can see your bid, lock status, squad or remaining budget.</div>'}${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}<div class="spacer14"></div>${controls}</div>`;
-}
-function wireBlindControls(){
-  const c=state.current;if(!c||state.mode!=='blind')return;
-  const input=document.querySelector('#blindBidInput');
-  const submit=value=>{let v=Math.floor(Number(value));if(!Number.isFinite(v))v=0;socket.emit('setBlindBid',{amount:v},r=>{if(r&&!r.ok)showToast(r.error);else if(state.current)state.current.myBlindBid=v})};
-  if(input)input.oninput=e=>submit(e.target.value);
-  document.querySelectorAll('.blind-add').forEach(b=>b.onclick=()=>{const base=Number(document.querySelector('#blindBidInput')?.value||0);const next=base+Number(b.dataset.add);if(input)input.value=next;submit(next)});
-  const zero=document.querySelector('#blindNoBid');if(zero)zero.onclick=()=>{if(input)input.value=0;submit(0)};
-  const lock=document.querySelector('#blindLock');if(lock)lock.onclick=()=>socket.emit('setBlindLock',{locked:!c.myBlindLocked},r=>{if(r&&!r.ok)showToast(r.error)});
-}
-function openAuctionPanel(m,c){
-  const currentBid=c?.bid||0,next=currentBid+1,mandatory=c?.mandatoryIds?.includes(meId),complete=m.squad.length>=11;
-  const isOut=!!c?.outIds?.includes(meId),leading=c?.bidderId===meId,eligible=!!c?.eligibleIds?.includes(meId);
-  if(c?.player?.id!==openCustomBidDraft.playerId)openCustomBidDraft={playerId:c?.player?.id||null,value:next};
-  const safeMax=Math.max(1,Number(m.budget||0)-Math.max(0,(11-(m.squad?.length||0))-1));
-  const customValue=Math.max(1,Number(openCustomBidDraft.value||next));
-  let controls='';
-  if(complete)controls='<button class="secondary big" disabled>Squad complete · automatically out</button>';
-  else if(c){
-    const bidControls=(eligible||leading)?`<button class="primary big" id="bid">BID £${next}m</button><div class="spacer9"></div><div class="row"><button class="secondary grow jump" data-jump="2">+£2m</button><button class="secondary grow jump" data-jump="5">+£5m</button></div><div class="custom-bid-row"><div class="custom-bid-input"><span>£</span><input id="customBidInput" inputmode="numeric" type="number" min="${next}" max="${safeMax}" value="${customValue}"><span>m</span></div><button class="secondary" id="customBidSubmit">Submit custom</button></div><div id="customBidHint" class="muted tiny"></div>`:'<button class="secondary big" disabled>Automatically out for this player</button>';
-    const outControl=leading?'<button class="secondary out-button" disabled>You are currently leading</button>':eligible?`<button class="${isOut?'out-button active':'out-button'}" id="auctionOut">${isOut?'I’m Out ✓ · tap to re-enter':'I’m Out'}</button>`:'';
-    controls=`${bidControls}${outControl?`<div class="spacer9"></div>${outControl}`:''}`;
-  }
-  const counter=state.mode==='nomination'?`AUCTION ${state.shownCount||1} · ${state.nomination?.availablePlayers?.length||0} STILL AVAILABLE`:`PLAYER ${state.shownCount||1} OF ${state.poolSize||'—'}`;
-  const compulsory=mandatory?`<div class="required">${state.mode==='freeform'?'The draft has reached its compulsory endgame. If nobody bids, this player will go for £1m to an eligible manager with the most open squad slots; exact ties are completely random.':'This player cannot safely be skipped. If nobody bids, they will be randomly assigned for £1m to one eligible manager.'}</div>`:'';
-  return `<div class="card budget"><div><div class="muted">YOUR BUDGET</div><strong>£${m.budget}m</strong></div><div class="right"><div class="muted">SQUAD</div><strong>${m.squad.length}/11</strong></div></div>${c?`<div class="card auction"><div class="player-counter">${counter}</div><div id="timer" class="timer ${c.timeLeft<=5?'warn':''}">${c.timeLeft}</div><div class="player">${esc(c.player.name)}</div><div class="positions">${c.player.positions.join(' / ')}</div>${state.mode==='freeform'?scarcityHtml(c):''}${compulsory}<div class="bidvalue" id="currentBidValue">£${currentBid}m</div><div class="leader" id="currentBidLeader">${c.bidderId?esc(managerName(c.bidderId))+' leads':'No bids yet'}</div>${isOut?'<div class="out-status">You are out of the bidding for this player. Place a bid or tap again to re-enter.</div>':''}${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}<div class="spacer14"></div>${controls}</div>`:'<div class="card">Loading next player…</div>'}`;
-}
-function updateCustomBidValidity(){
-  const input=document.querySelector('#customBidInput'),hint=document.querySelector('#customBidHint'),submit=document.querySelector('#customBidSubmit');
-  if(!input||!state?.current)return;
-  const min=Number(state.current.bid||0)+1,value=Math.floor(Number(input.value));
-  input.min=String(min);openCustomBidDraft={playerId:state.current.player?.id||null,value:input.value};
-  const valid=Number.isFinite(value)&&value>=min&&value<=Math.max(1,Number(me()?.budget||0)-Math.max(0,(11-(me()?.squad?.length||0))-1));
-  if(hint)hint.textContent=valid?'':value<min?`Current minimum is £${min}m.`:`Maximum safe bid is £${Math.max(1,Number(me()?.budget||0)-Math.max(0,(11-(me()?.squad?.length||0))-1))}m.`;
-  if(submit)submit.disabled=!valid;
-}
-function wireOpenAuction(c){
-  const m=me();if(!c||m.squad.length>=11)return;
-  const currentBid=c.bid||0,next=currentBid+1,eligible=!!c.eligibleIds?.includes(meId)||c.bidderId===meId;
-  if(eligible){
-    const send=amt=>socket.emit('bid',{amount:amt},r=>{if(r&&!r.ok)showToast(r.error)});
-    const bidBtn=document.querySelector('#bid');if(bidBtn)bidBtn.onclick=()=>send(next);
-    document.querySelectorAll('.jump').forEach(b=>b.onclick=()=>send(currentBid+Number(b.dataset.jump)));
-    const custom=document.querySelector('#customBidInput'),submit=document.querySelector('#customBidSubmit');
-    if(custom){custom.oninput=()=>{openCustomBidDraft={playerId:c.player?.id||null,value:custom.value};updateCustomBidValidity();};updateCustomBidValidity();}
-    if(submit)submit.onclick=()=>{const v=Math.floor(Number(custom?.value));if(Number.isFinite(v))send(v);};
-  }
-  const outBtn=document.querySelector('#auctionOut');if(outBtn)outBtn.onclick=()=>socket.emit('setAuctionOut',{out:!c.outIds?.includes(meId)},r=>{if(r&&!r.ok)showToast(r.error)});
-}
-function nominationTurnPanel(){
-  const nom=state.nomination||{},mine=nom.nominatorId===meId,finalMine=nom.finalPickManagerId===meId;
-  if(nom.finalPickManagerId){
-    const who=managerName(nom.finalPickManagerId);
-    return `${finalMine?`<div class="card nomination-turn"><div class="muted">FINAL PICKS</div><h1>Your remaining players</h1><p class="muted">Everyone else is complete. Choose your remaining players from the pool for £1m each.</p></div>${nominationPoolCard('final')}`:`<div class="card nomination-turn"><div class="muted">FINAL PICKS</div><h2>${esc(who)} is completing their squad</h2><p class="muted">Remaining selections cost £1m each.</p></div>${nominationPoolCard(null)}`}`;
-  }
-  const who=managerName(nom.nominatorId);
-  return `<div class="card nomination-turn"><div class="player-counter">NOMINATION TURN</div><div id="nominationTimer" class="timer ${Number(nom.timeLeft)<=5?'warn':''}">${nom.timeLeft??20}</div><h2>${mine?'Your turn to nominate':`${esc(who)} is choosing a player`}</h2><p class="muted">${mine?'Choose anyone from the available pool and set a real opening bid of at least £1m.':'You can browse the pool while you wait.'}</p>${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}</div>${nominationPoolCard(mine?'nominate':null)}`;
-}
-function draft(){
-  const m=me(),c=state.current;
-  const tabs=[['draft','Draft'],...(state.mode==='nomination'?[['pool','Pool']]:[]),['team','My Team'],['managers','Managers']];
-  shell(`<div class="mode-strip">${esc(modeName())} · ${esc(packName())}</div><div class="tabs">${tabs.map(([key,label])=>`<button class="tab ${tab===key?'active':''}" data-tab="${key}">${label}</button>`).join('')}</div><div id="panel"></div>`);
-  document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;draft()});
-  const panel=document.querySelector('#panel');
-  if(tab==='draft'){
-    if(state.mode==='priority')panel.innerHTML=priorityDraftPanel(m,c);
-    else if(state.mode==='blind')panel.innerHTML=blindDraftPanel(m,c);
-    else if(state.mode==='nomination'&&!c)panel.innerHTML=nominationTurnPanel();
-    else panel.innerHTML=openAuctionPanel(m,c);
-  }else if(tab==='pool'&&state.mode==='nomination')panel.innerHTML=nominationPoolCard(null);
-  else if(tab==='team')panel.innerHTML=state.mode==='hard'?`<div class="card"><h2>${m.formation} · £${m.budget}m left</h2><div class="squad">${hardSquadHtml(m)}</div></div>`:`<div class="card"><div class="budget"><h2>Your 11</h2><b>£${m.budget}m left</b></div>${freeformDraftSquadHtml(m)}</div>`;
-  else if(tab==='managers')panel.innerHTML=managerTabHtml();
-  if(state.mode==='priority'&&tab==='draft')wirePriorityControls();
-  if(state.mode==='blind'&&tab==='draft')wireBlindControls();
-  if(!['blind','priority'].includes(state.mode)&&tab==='draft'&&c)wireOpenAuction(c);
-  if(state.mode==='nomination'&&((tab==='draft'&&!c)||tab==='pool'))wireNominationPool(tab==='draft'&&!c?(state.nomination?.finalPickManagerId===meId?'final':state.nomination?.nominatorId===meId?'nominate':null):null);
-}
-
-function playerForLineup(m,slotIndex){
-  const id=m.lineup?.[slotIndex];
-  return m.squad.find(p=>p.id===id)||null;
-}
-function pitchHtml(m,editable=false){
-  const layout=FF_LAYOUTS[m.finalFormation];
-  if(!layout) return '<div class="muted">Choose a formation to start arranging your XI.</div>';
-  return `<div class="pitch">${layout.rows.map(row=>`<div class="pitch-row cols-${row.length}">${row.map(idx=>{
-    const p=playerForLineup(m,idx);
-    const cls=editable&&selectedLineupSlot===idx?'pitch-slot selected':'pitch-slot';
-    return `<button type="button" class="${cls}" ${editable?`data-slot="${idx}"`: 'disabled'}><span class="slot-label">${layout.slots[idx]}</span><span class="slot-name">${p?esc(p.name):'Empty'}</span></button>`;
-  }).join('')}</div>`).join('')}</div>`;
-}
-
-
-function formationOptionsHtml(selected){
-  const available=state.freeformFormations||Object.keys(FF_LAYOUTS).filter(k=>!['4-3-3','4-2-3-1','4-1-2-1-2'].includes(k));
-  const groups=[
-    ['3 at the back',available.filter(f=>f.startsWith('3-'))],
-    ['4 at the back',available.filter(f=>f.startsWith('4-'))],
-    ['5 at the back',available.filter(f=>f.startsWith('5-'))]
-  ];
-  return groups.filter(([,items])=>items.length).map(([label,items])=>`<optgroup label="${label}">${items.map(f=>`<option value="${esc(f)}" ${selected===f?'selected':''}>${esc(f)}</option>`).join('')}</optgroup>`).join('');
-}
-
-function teamBuild(){
-  const m=me();
-  const formationOptions=formationOptionsHtml(m.finalFormation);
-  const readyCount=state.managers.filter(x=>x.teamReady).length;
-  shell(`<div class="mode-strip">${esc(modeName())} team builder · ${esc(packName())}</div>
-    <div class="card"><div class="budget"><div><h1>Build your XI</h1><p class="muted no-margin">Positions are completely unrestricted.</p></div><b id="teamReadyCount">${readyCount}/${state.managers.length} set</b></div></div>
-    <div class="card"><label>Formation</label><select id="finalFormation"><option value="">Choose formation</option>${formationOptions}</select></div>
-    <div class="card"><div class="builder-hint">${m.finalFormation?'The game has suggested the best positional fit for this formation. Tap a position, then a player, to change it. Players swap automatically.':'Choose a formation first.'}</div>${pitchHtml(m,true)}</div>
-    <div class="card"><h2>Your players</h2><div class="player-picker">${m.squad.map(p=>{
-      const idx=m.lineup?.indexOf(p.id);
-      const slotLabel=m.finalFormation&&idx>=0?FF_LAYOUTS[m.finalFormation]?.slots[idx]:'';
-      return `<button type="button" class="picker-player" data-player="${p.id}" ${selectedLineupSlot===null?'disabled':''}><span><b>${esc(p.name)}</b><small>${esc(p.positions.join(' / '))}</small></span><span class="picker-position">${slotLabel||'—'}</span></button>`;
-    }).join('')}</div></div>
-    <div class="card"><h2>Managers</h2>${state.managers.map(x=>`<div class="manager manager-colour-row" style="--manager-color:${esc(x.color||'#64748b')}"><b class="manager-name-with-dot">${managerNameHtml(x)}</b><div data-team-status="${esc(x.id)}" class="${x.teamReady?'ready':'notready'}">${x.teamReady?'TEAM SET':'ARRANGING'}</div></div>`).join('')}</div>
-    <button class="${m.teamReady?'secondary':'primary'} big" id="teamReady" ${!m.finalFormation?'disabled':''}>${m.teamReady?'Unset team':'Set team'}</button>`);
-
-  document.querySelector('#finalFormation').onchange=e=>{
-    selectedLineupSlot=null;
-    socket.emit('setFinalFormation',{formation:e.target.value});
-  };
-  document.querySelectorAll('[data-slot]').forEach(b=>b.onclick=()=>{
-    selectedLineupSlot=Number(b.dataset.slot);
-    teamBuild();
-  });
-  document.querySelectorAll('[data-player]').forEach(b=>b.onclick=()=>{
-    if(selectedLineupSlot===null)return;
-    socket.emit('setLineupSlot',{slotIndex:selectedLineupSlot,playerId:Number(b.dataset.player)});
-    selectedLineupSlot=null;
-  });
-  document.querySelector('#teamReady').onclick=()=>socket.emit('setTeamReady',{ready:!m.teamReady},r=>{if(r&&!r.ok)showToast(r.error)});
-}
-
-
-function ratingPanelHtml(r){
-  if(!r)return '<div class="muted small">Pre-simulation team ratings unavailable for this saved team.</div>';
-  return `<div class="ratings"><div class="overall-rating"><span>OVERALL</span><strong>${r.overall}</strong></div><div class="rating-grid"><div><span>Attack</span><b>${r.attack}</b></div><div><span>Midfield</span><b>${r.midfield}</b></div><div><span>Defence</span><b>${r.defence}</b></div><div><span>Positional Fit</span><b>${r.positionalFit}</b></div><div><span>Team Balance</span><b>${r.teamBalance}</b></div>${r.attackBalance!==undefined?`<div><span>Attack Balance</span><b>${r.attackBalance}</b></div><div><span>Midfield Balance</span><b>${r.midfieldBalance}</b></div><div><span>Defence Balance</span><b>${r.defenceBalance}</b></div><div><span>Wide Partnerships</span><b>${r.width}</b></div>`:`<div><span>Formation Fit (legacy)</span><b>${r.formationSuitability??'—'}</b></div>`}</div></div>`;
-}
-function ratingsHtml(m){return ratingPanelHtml(state.teamRatings?.[m.id]);}
-function reviewManagerKey(m){return String(m.profileId||m.id||m.managerId||'')}
-function reviewManagerName(m){return m.displayName||m.name||'Manager'}
-function reviewFormation(m){return m.finalFormation||m.formation||'XI'}
-function reviewTeamStats(m,playerStats){
-  return (playerStats||[]).filter(p=>{
-    if(m.profileId&&p.profileId)return p.profileId===m.profileId;
-    const id=m.id||m.managerId;return id&&p.managerId===id;
-  });
-}
-function reviewSlotPlayers(m){
-  const formation=reviewFormation(m),layout=FF_LAYOUTS[formation];if(!layout)return [];
-  if(Array.isArray(m.lineup)&&m.lineup.length===11)return layout.slots.map((slot,i)=>({slot,player:(m.squad||[]).find(p=>p.id===m.lineup[i])||null}));
-  const remaining=[...(m.squad||[])];
-  return layout.slots.map(slot=>{
-    let idx=remaining.findIndex(p=>(p.assignedPosition||p.positions?.[0])===slot);
-    if(idx<0)idx=remaining.findIndex(p=>p.positions?.includes(slot));
-    const player=idx>=0?remaining.splice(idx,1)[0]:null;return {slot,player};
-  });
-}
-function playerPotmCount(playerId,matches){return (matches||[]).filter(m=>m.playerOfMatch?.playerId===playerId).length}
-function performancePitchHtml(m,playerStats){
-  const formation=reviewFormation(m),layout=FF_LAYOUTS[formation];if(!layout)return '<div class="muted">No pitch layout is available for this formation.</div>';
-  const byId=new Map(reviewTeamStats(m,playerStats).map(x=>[x.playerId,x]));
-  const slotPlayers=reviewSlotPlayers(m);
-  return `<div class="pitch performance-pitch">${layout.rows.map(row=>`<div class="pitch-row cols-${row.length}">${row.map(idx=>{
-    const entry=slotPlayers[idx],p=entry?.player,st=p?byId.get(p.id):null;
-    const output=entry?.slot==='GK'?`${st?.saves||0} saves · ${st?.cleanSheets||0} CS`:`${st?.goals||0}G · ${st?.assists||0}A`;
-    return `<div class="pitch-slot performance-slot"><span class="slot-label">${esc(entry?.slot||layout.slots[idx])}</span><span class="slot-name">${p?esc(p.name):'—'}</span>${p&&st?`<span class="performance-output">${output}</span><span class="performance-rating">${Number(st.avgRating||0).toFixed(2)} avg</span>`:''}</div>`;
-  }).join('')}</div>`).join('')}</div>`;
-}
-function teamPerformanceTableHtml(m,playerStats,matches){
-  const rows=reviewTeamStats(m,playerStats);if(!rows.length)return '<p class="muted small">No individual player stats are available.</p>';
-  const ordered=reviewSlotPlayers(m).map(x=>rows.find(r=>r.playerId===x.player?.id)).filter(Boolean);
-  const rest=rows.filter(r=>!ordered.includes(r));
-  return `<div class="table-wrap"><table class="player-stats-table full-team-stats"><thead><tr><th>Player</th><th>Pos</th><th>Apps</th><th>G</th><th>A</th><th>Saves</th><th>CS</th><th>POTM</th><th>Avg</th></tr></thead><tbody>${[...ordered,...rest].map(p=>`<tr><td><b>${esc(p.player)}</b></td><td>${esc(p.deployedSlot||'—')}</td><td>${p.apps??0}</td><td>${p.goals??0}</td><td>${p.assists??0}</td><td>${p.saves??0}</td><td>${p.cleanSheets??0}</td><td>${playerPotmCount(p.playerId,matches)}</td><td><b>${Number(p.avgRating||0).toFixed(2)}</b></td></tr>`).join('')}</tbody></table></div>`;
-}
-function teamReviewHtml(managers,playerStats,selectedId,historical=false,matches=[]){
-  if(!managers?.length)return '<div class="card muted">No saved teams available.</div>';
-  const chosen=managers.find(m=>reviewManagerKey(m)===String(selectedId||''))||managers[0];
-  const idx=managers.indexOf(chosen),prev=managers[(idx-1+managers.length)%managers.length],next=managers[(idx+1)%managers.length];
-  const rating=historical?chosen.teamRating:state.teamRatings?.[chosen.id];
-  return `<div class="team-review-sticky"><button class="secondary small-button" data-team-review="${esc(reviewManagerKey(prev))}">← ${esc(reviewManagerName(prev))}</button><div class="team-review-current">${managerDot(chosen)}<b>${esc(reviewManagerName(chosen))}</b></div><button class="secondary small-button" data-team-review="${esc(reviewManagerKey(next))}">${esc(reviewManagerName(next))} →</button></div><div class="team-review-switch">${managers.map(m=>`<button class="result-tab ${reviewManagerKey(m)===reviewManagerKey(chosen)?'active':''}" data-team-review="${esc(reviewManagerKey(m))}" style="--manager-color:${esc(m.color||'#64748b')}">${managerDot(m)}${esc(reviewManagerName(m))}</button>`).join('')}</div><div class="card team-performance-card" style="--manager-color:${esc(chosen.color||'#64748b')}"><div class="budget"><div><h2 class="manager-name-with-dot">${managerNameHtml(chosen)}</h2><div class="muted">${esc(reviewFormation(chosen))}</div></div><b>£${chosen.budget??'—'}m left</b></div>${ratingPanelHtml(rating)}<div class="spacer14"></div>${performancePitchHtml(chosen,playerStats)}<div class="spacer14"></div><h3>Full XI performance</h3>${teamPerformanceTableHtml(chosen,playerStats,matches)}</div>`;
-}
-function historicalLeaderboardHtml(stats,metric){
-  const labels={goals:'Goals',assists:'Assists',saves:'Saves',rating:'Avg rating'};
-  let rows=[...(stats||[])];
-  if(metric==='goals')rows.sort((a,b)=>b.goals-a.goals||b.assists-a.assists||b.avgRating-a.avgRating||a.player.localeCompare(b.player));
-  else if(metric==='assists')rows.sort((a,b)=>b.assists-a.assists||b.goals-a.goals||b.avgRating-a.avgRating||a.player.localeCompare(b.player));
-  else if(metric==='saves')rows=rows.filter(p=>p.deployedSlot==='GK').sort((a,b)=>b.saves-a.saves||b.avgRating-a.avgRating||a.player.localeCompare(b.player));
-  else rows.sort((a,b)=>b.avgRating-a.avgRating||(b.goals+b.assists)-(a.goals+a.assists)||a.player.localeCompare(b.player));
-  rows=rows.slice(0,10);const value=p=>metric==='rating'?Number(p.avgRating||0).toFixed(2):(p[metric]??0);
-  return `<div class="stat-switch">${Object.entries(labels).map(([key,label])=>`<button class="stat-chip ${historicalStatsMetric===key?'active':''}" data-historical-stat="${key}">${label}</button>`).join('')}</div><div class="table-wrap"><table class="player-stats-table"><thead><tr><th>#</th><th>Player</th><th>Manager</th><th>Pos</th><th>${labels[metric]}</th></tr></thead><tbody>${rows.map((p,i)=>`<tr><td>${i+1}</td><td><b>${esc(p.player)}</b></td><td>${esc(p.managerName||'—')}</td><td>${esc(p.deployedSlot||'—')}</td><td><b>${value(p)}</b></td></tr>`).join('')}</tbody></table></div>`;
-}
-function revealedTeamHtml(m){
-  if(isFreeformLike()){
-    return `<div class="card team-reveal manager-accent-card" style="--manager-color:${esc(m.color||'#64748b')}"><div class="budget"><div><h2 class="manager-name-with-dot">${managerNameHtml(m)}</h2><div class="muted">${esc(m.finalFormation||'XI')}</div></div><b>£${m.budget}m left</b></div>${ratingsHtml(m)}${pitchHtml(m,false)}</div>`;
-  }
-  return `<div class="card team-reveal manager-accent-card" style="--manager-color:${esc(m.color||'#64748b')}"><div class="budget"><div><h2 class="manager-name-with-dot">${managerNameHtml(m)}</h2><div class="muted">${esc(m.formation||'XI')}</div></div><b>£${m.budget}m left</b></div>${ratingsHtml(m)}<div class="squad">${hardSquadHtml(m)}</div></div>`;
-}
-
-function draftHistoryHtml(){
-  if(!state.draftHistory?.length)return '';
-  if(state.mode==='priority')return priorityBidHistoryHtml(state.draftHistory.filter(r=>r.type==='priorityRound'),'Priority Bid reveal');
-  if(state.mode==='blind')return simpleDraftHistoryHtml(state.draftHistory,'Blind auction reveal');
-  return '';
-}
-function reveal(){
-  const host=state.hostId===meId;
-  shell(`<div class="card"><h1>Teams revealed</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p><p class="muted small">Individual player ratings remain hidden. These team scores judge the XI as deployed.</p></div>${state.managers.map(revealedTeamHtml).join('')}${draftHistoryHtml()}<div class="card"><h2>Season simulation</h2><p class="muted">Every opponent pairing is perfectly balanced home and away. Seasons are longer and revealed by Gameweek, with every fixture in that Gameweek shown together.</p></div>${host?'<button class="primary big" id="simulate">Simulate season</button>':'<div class="card muted">Waiting for the host to start the simulation.</div>'}`);
-  if(host)document.querySelector('#simulate').onclick=()=>socket.emit('startSimulation',{},r=>{if(r&&!r.ok)showToast(r.error)});
-}
-function scorerList(goals){
-  return (goals||[]).length ? goals.map(g=>`${esc(g.player)} ${g.minute}'${g.assist?` <span class="assist">(assist: ${esc(g.assist)})</span>`:''}`).join(' · ') : '—';
-}
-
-function managerColourById(id){
-  return state?.managers?.find(x=>x.id===id)?.color||null;
-}
-function gameweeksFromMatches(matches){
-  const rows=[...(matches||[])];
-  if(!rows.length)return [];
-  if(!rows.some(m=>m.gameweekNumber))return rows.map((m,i)=>({number:i+1,matches:[m],byeIds:[]}));
-  const map=new Map();
-  for(const m of rows){
-    const n=Number(m.gameweekNumber)||1;
-    if(!map.has(n))map.set(n,{number:n,matches:[],byeIds:[]});
-    map.get(n).matches.push(m);
-  }
-  return [...map.values()].sort((a,b)=>a.number-b.number);
-}
-function gameweekCardHtml(gw,{showByes=true}={}){
-  const byeNames=(gw.byeIds||[]).map(id=>state?.managers?.find(m=>m.id===id)?.name).filter(Boolean);
-  return `<div class="gameweek-card"><div class="gameweek-heading"><b>Gameweek ${gw.number}</b>${showByes&&byeNames.length?`<span class="muted small">BYE: ${esc(byeNames.join(', '))}</span>`:''}</div><div class="gameweek-fixtures">${(gw.matches||[]).map(m=>matchHtml(m,'')).join('')}</div></div>`;
-}
-function gameweekResultsHtml(matches,gameweeks=null){
-  const rows=gameweeks?.length?gameweeks:gameweeksFromMatches(matches);
-  return rows.map(g=>gameweekCardHtml(g,{showByes:!!gameweeks?.length})).join('');
-}
-
-function matchHtml(m,label='League match'){
-  const pen=m.penalties?` <span class="pens">(${m.penalties.home}–${m.penalties.away} pens)</span>`:'';
-  const et=m.wentExtraTime?' · AET':'';
-  const pom=m.playerOfMatch?`<div class="potm">⭐ Player of the Match: <b>${esc(m.playerOfMatch.player)}</b> · ${Number(m.playerOfMatch.rating).toFixed(1)}</div>`:'';
-  const shotLine=(Number.isFinite(m.homeShotsOnTarget)&&Number.isFinite(m.awayShotsOnTarget))?`<div class="match-meta"><span>Shots on target ${m.homeShotsOnTarget}–${m.awayShotsOnTarget}</span><span>GK saves ${m.homeSaves??0}–${m.awaySaves??0}</span></div>`:'';
-  const homeColour=managerColourById(m.homeId),awayColour=managerColourById(m.awayId);
-  return `<div class="match-card">${label?`<div class="match-label">${esc(label)}${et}</div>`:''}<div class="scoreline"><div>${homeColour?`<span class="manager-dot" style="--manager-color:${esc(homeColour)}"></span>`:''}<b>${esc(m.homeName)}</b><span>HOME</span></div><strong>${m.homeGoals}–${m.awayGoals}${pen}</strong><div class="right-team">${awayColour?`<span class="manager-dot" style="--manager-color:${esc(awayColour)}"></span>`:''}<b>${esc(m.awayName)}</b><span>AWAY</span></div></div><div class="scorers"><div><b>${esc(m.homeName)}:</b> ${scorerList(m.homeScorers)}</div><div><b>${esc(m.awayName)}:</b> ${scorerList(m.awayScorers)}</div></div>${shotLine}${pom}</div>`;
-}
-function standingsHtml(rows){
-  return `<div class="table-wrap"><table class="standings"><thead><tr><th>#</th><th>Manager</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(rows||[]).map((r,i)=>{const c=managerColourById(r.id);return `<tr><td>${i+1}</td><td><b>${c?`<span class="manager-dot" style="--manager-color:${esc(c)}"></span>`:''}${esc(r.name)}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td><b>${r.pts}</b></td></tr>`}).join('')}</tbody></table></div>`;
-}
-function resultNav(){
-  const tabs=[['season','Season'],['players','Player stats'],['tots','Team of Season'],['session','Session']];
-  return `<div class="result-tabs">${tabs.map(([key,label])=>`<button class="result-tab ${resultsTab===key?'active':''}" data-result-tab="${key}">${label}</button>`).join('')}</div>`;
-}
-function wireResultTabs(){
-  document.querySelectorAll('[data-result-tab]').forEach(b=>b.onclick=()=>{resultsTab=b.dataset.resultTab;results()});
-}
-function leaderboardHtml(metric){
-  const rows=state.simulation?.leaderboards?.[metric]||[];
-  const labels={goals:'Goals',assists:'Assists',saves:'Saves',rating:'Avg rating'};
-  const value=p=>metric==='rating'?Number(p.avgRating||0).toFixed(2):(p[metric]??0);
-  return `<div class="stat-switch">${Object.entries(labels).map(([key,label])=>`<button class="stat-chip ${statsMetric===key?'active':''}" data-stat="${key}">${label}</button>`).join('')}</div><div class="table-wrap"><table class="player-stats-table"><thead><tr><th>#</th><th>Player</th><th>Manager</th><th>Pos</th><th>${labels[metric]}</th></tr></thead><tbody>${rows.map((p,i)=>`<tr><td>${i+1}</td><td><b>${esc(p.player)}</b></td><td>${esc(p.managerName)}</td><td>${esc(p.deployedSlot)}</td><td><b>${value(p)}</b></td></tr>`).join('')}</tbody></table></div>`;
-}
-function wireStatSwitch(){
-  document.querySelectorAll('[data-stat]').forEach(b=>b.onclick=()=>{statsMetric=b.dataset.stat;results()});
-}
-function totsPitchHtml(tots){
-  const layout=FF_LAYOUTS[tots?.formation];
-  if(!layout||!tots?.players?.length)return '<div class="muted">No valid Team of the Season could be built.</div>';
-  return `<div class="pitch tots-pitch">${layout.rows.map(row=>`<div class="pitch-row cols-${row.length}">${row.map(idx=>{
-    const p=tots.players[idx];
-    return `<div class="pitch-slot tots-slot"><span class="slot-label">${esc(layout.slots[idx])}</span><span class="slot-name">${p?esc(p.player):'—'}</span>${p?`<span class="tots-manager">${esc(p.managerName)} · ${Number(p.avgRating).toFixed(2)}</span>`:''}</div>`;
-  }).join('')}</div>`).join('')}</div>`;
-}
-function sessionHtml(){
-  const ss=state.sessionStats||{drafts:0,table:[],headToHead:[]};
-  const colour=id=>state.managers.find(m=>m.id===id)?.color||null;
-  const table=`<div class="table-wrap"><table class="session-table"><thead><tr><th>#</th><th>Manager</th><th>Titles</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(ss.table||[]).map((r,i)=>`<tr><td>${i+1}</td><td><b>${colour(r.id)?`<span class="manager-dot" style="--manager-color:${esc(colour(r.id))}"></span>`:''}${esc(r.name)}</b></td><td><b>${r.titles}</b></td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td>${r.pts}</td></tr>`).join('')}</tbody></table></div>`;
-  const h2h=(ss.headToHead||[]).filter(x=>x.aWins+x.bWins+x.draws>0).map(x=>`<div class="h2h-card"><div><b>${colour(x.managerAId)?`<span class="manager-dot" style="--manager-color:${esc(colour(x.managerAId))}"></span>`:''}${esc(x.managerAName)}</b><strong>${x.aWins}</strong></div><span>${x.draws} draws<br><small>${x.aGoals}–${x.bGoals} goals</small></span><div class="right"><b>${colour(x.managerBId)?`<span class="manager-dot" style="--manager-color:${esc(colour(x.managerBId))}"></span>`:''}${esc(x.managerBName)}</b><strong>${x.bWins}</strong></div></div>`).join('');
-  return `<div class="card"><h2>Session rivalry</h2><p class="muted">${ss.drafts||0} completed draft${ss.drafts===1?'':'s'} in this room. League matches accumulate until the room ends.</p>${table}</div>${h2h?`<div class="card"><h2>Head-to-head</h2><div class="h2h-list">${h2h}</div></div>`:''}`;
-}
-function permanentHistoryStatusHtml(){
-  if(!state?.historySaveStatus)return '';
-  const cls=state.historySaveStatus==='saved'?'history-saved':(state.historySaveStatus==='saving'?'history-saving':'history-warning');
-  const title=state.historySaveStatus==='saved'?'✓ Saved to All-Time Records':state.historySaveStatus==='saving'?'Saving to All-Time Records…':state.historySaveStatus==='practice'?'Practice game · not saved':'Permanent history notice';
-  return `<div class="card ${cls}"><b>${title}</b><div class="muted small">${esc(state.historySaveMessage||'')}</div></div>`;
-}
-function fullResults(){
-  const host=state.hostId===meId,sim=state.simulation;
-  const champion=state.managers.find(m=>m.id===sim.championId);
-  const exhibition=state.simulationKind==='exhibition';
-  if(!reviewManagerId||!state.managers.some(m=>m.id===reviewManagerId))reviewManagerId=state.managers.some(m=>m.id===meId)?meId:state.managers[0]?.id;
-  const viewToggle=`<div class="post-view-toggle"><button class="result-tab ${postSimView==='results'?'active':''}" data-post-view="results">Results</button><button class="result-tab ${postSimView==='teams'?'active':''}" data-post-view="teams">Teams</button></div>`;
-  const playoffs=(sim.playoffs||[]).length?`<div class="card"><h2>Title tiebreak</h2><p class="muted small">The league tiebreakers could not separate the leaders, so the title was decided on the pitch.</p>${sim.playoffs.map(m=>matchHtml(m,'Tiebreak playoff')).join('')}</div>`:'';
-  let body='';
-  if(postSimView==='teams'){
-    body=teamReviewHtml(state.managers,sim.playerStats||[],reviewManagerId,false,sim.matches||[]);
-  }else{
-    if(resultsTab==='season') body=`<div class="card"><h2>Final table</h2>${standingsHtml(sim.table)}</div>${playoffs}<div class="card"><h2>Gameweek results</h2><div class="matches">${gameweekResultsHtml(sim.matches||[],sim.gameweeks||null)}</div></div><div class="card"><h2>Team ratings</h2><p class="muted small">The team ratings that drove the simulation. Individual hidden player ratings remain secret.</p>${state.managers.map(m=>`<div class="rating-summary"><div><b>${esc(m.name)}</b><span>${isFreeformLike()?esc(m.finalFormation||'XI'):esc(m.formation||'XI')}</span></div><strong>${state.teamRatings?.[m.id]?.overall??'—'}</strong></div>`).join('')}</div>${['blind','priority'].includes(state.mode)?draftHistoryHtml():''}`;
-    else if(resultsTab==='players') body=`<div class="card"><h2>League player stats</h2><p class="muted">Top 10 performers across every manager's XI.</p>${leaderboardHtml(statsMetric)}</div>`;
-    else if(resultsTab==='tots') body=`<div class="card"><div class="budget"><div><h2>Team of the Season</h2><p class="muted no-margin">Best-performing valid XI by average match rating, using the positions players were actually deployed in with sensible neighbouring roles.</p></div><b>${esc(sim.teamOfSeason?.formation||'XI')}</b></div><div class="spacer14"></div>${totsPitchHtml(sim.teamOfSeason)}</div>`;
-    else body=sessionHtml();
-    body=`${resultNav()}${body}`;
-  }
-  const simNote=exhibition?`<div class="card exhibition-banner"><b>Exhibition re-simulation #${state.exhibitionNumber||1}</b><div>This result is just for fun and does not change titles, head-to-heads or session history.</div></div>`:'';
-  const controls=host?`<div class="post-sim-controls"><button class="secondary big" id="resimulate">${exhibition?'Re-simulate again':'Re-simulate season'}</button>${exhibition?'<button class="secondary big" id="officialResult">View official result</button>':''}<button class="primary big" id="again">Play again</button></div>`:'<div class="card muted">Waiting for the host to choose what happens next.</div>';
-  shell(`${simNote}<div class="card champion"><div class="muted">${exhibition?'EXHIBITION WINNER':'SEASON CHAMPION'}</div><h1>🏆 ${esc(champion?.name||'Winner')}</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p></div>${!exhibition?permanentHistoryStatusHtml():''}${viewToggle}${body}<button class="secondary big" id="viewRecords">View All-Time Records</button><div class="spacer10"></div>${controls}`);
-  if(postSimView==='results'){wireResultTabs();wireStatSwitch();}
-  document.querySelectorAll('[data-post-view]').forEach(b=>b.onclick=()=>{postSimView=b.dataset.postView;fullResults();});
-  document.querySelectorAll('[data-team-review]').forEach(b=>b.onclick=()=>{reviewManagerId=b.dataset.teamReview;fullResults();});
-  const recordsButton=document.querySelector('#viewRecords');if(recordsButton)recordsButton.onclick=openRecords;
-  if(host){
-    document.querySelector('#again').onclick=()=>socket.emit('playAgain',{});
-    document.querySelector('#resimulate').onclick=()=>socket.emit('resimulateSeason',{},r=>{if(r&&!r.ok)showToast(r.error)});
-    const official=document.querySelector('#officialResult');if(official)official.onclick=()=>socket.emit('viewOfficialSimulation',{},r=>{if(r&&!r.ok)showToast(r.error)});
-  }
-}
-
-function results(){
-  const host=state.hostId===meId,sim=state.simulation;if(!sim)return reveal();
-  const gameweeks=sim.gameweeks?.length?sim.gameweeks:gameweeksFromMatches(sim.matches||[]);
-  const total=gameweeks.length,shown=Math.min(state.simulationRevealCount||0,total),exhibition=state.simulationKind==='exhibition';
-  if(shown>=total)return fullResults();
-  const latest=shown>0?gameweeks[shown-1]:null,liveTable=shown>0?sim.progressTables?.[shown-1]:null;
-  const controls=host?`<div class="reveal-controls"><button class="primary big" id="revealNext">${shown===0?'Reveal first Gameweek':`Reveal Gameweek ${shown+1}`}</button><button class="secondary" id="revealAll">Reveal all results</button></div>`:'<div class="card muted">Waiting for the host to reveal the next Gameweek.</div>';
-  shell(`${exhibition?`<div class="card exhibition-banner"><b>Exhibition re-simulation #${state.exhibitionNumber||1}</b><div>Does not affect official session history.</div></div>`:''}<div class="card reveal-header"><div class="muted">${exhibition?'EXHIBITION GAMEWEEK REVEAL':'GAMEWEEK REVEAL'}</div><h1>${shown} / ${total}</h1><p class="muted">Every fixture in a Gameweek is revealed together and the live table updates once afterwards.</p></div>${latest?gameweekCardHtml(latest):'<div class="card"><h2>Season ready</h2><p class="muted">No Gameweeks have been shown yet.</p></div>'}${liveTable?`<div class="card"><h2>Live table</h2>${standingsHtml(liveTable)}</div>`:''}${controls}`);
-  if(host){document.querySelector('#revealNext').onclick=()=>socket.emit('revealNextMatch',{});document.querySelector('#revealAll').onclick=()=>socket.emit('revealAllMatches',{});}
-}
-
-function finished(){
-  const host=state.hostId===meId;
-  if(isFreeformLike()){
-    shell(`<div class="card"><h1>Teams revealed</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p></div>${state.managers.map(m=>`<div class="card"><div class="budget"><h2>${esc(m.name)}</h2><b>${esc(m.finalFormation||'XI')} · £${m.budget}m left</b></div>${pitchHtml(m,false)}</div>`).join('')}${host?'<button class="primary big" id="again">Play again</button>':'<div class="card muted">Waiting for the host to start another game.</div>'}`);
-  } else {
-    shell(`<div class="card"><h1>Draft complete</h1><p class="muted">${esc(packName())} · Hard Mode</p></div>${state.managers.map(m=>`<div class="card"><div class="budget"><h2>${esc(m.name)}</h2><b>${m.formation} · £${m.budget}m left</b></div><div class="squad">${hardSquadHtml(m)}</div></div>`).join('')}${host?'<button class="primary big" id="again">Play again</button>':'<div class="card muted">Waiting for the host to start another game.</div>'}`);
-  }
-  if(host)document.querySelector('#again').onclick=()=>socket.emit('playAgain',{});
-}
-
-
-function ownTeamBuildSignature(s){
-  const id=s?.viewerId||meId,m=s?.managers?.find(x=>x.id===id);
-  if(!m)return '';
-  return JSON.stringify({formation:m.finalFormation,lineup:m.lineup,ready:m.teamReady,squad:(m.squad||[]).map(p=>p.id),budget:m.budget});
-}
-function patchTeamBuildShared(){
-  const count=document.querySelector('#teamReadyCount');if(count)count.textContent=`${state.managers.filter(x=>x.teamReady).length}/${state.managers.length} set`;
-  for(const m of state.managers){
-    const el=document.querySelector(`[data-team-status="${CSS.escape(String(m.id))}"]`);if(!el)continue;
-    el.className=m.teamReady?'ready':'notready';el.textContent=m.teamReady?'TEAM SET':'ARRANGING';
-  }
-}
-function samePriorityInteraction(a,b){
-  const ac=a?.current,bc=b?.current;if(!ac||!bc)return false;
-  if(ac.priorityRound!==bc.priorityRound||ac.priorityStage!==bc.priorityStage)return false;
-  if(!['bidding','tiebreak'].includes(bc.priorityStage))return false;
-  if(bc.priorityStage==='bidding'){
-    const aa=(ac.priorityBoard||[]).map(p=>p.id).join(','),bb=(bc.priorityBoard||[]).map(p=>p.id).join(',');
-    return aa===bb;
-  }
-  return ac.priorityTiePlayer?.id===bc.priorityTiePlayer?.id;
-}
-function patchPriorityInteraction(){
-  const c=state?.current;if(!c)return;
-  const locked=!!c.myPriorityLocked,disabled=locked||!!state.paused;
-  const lock=document.querySelector('#priorityLock');
-  if(lock){lock.textContent=locked?'Unlock Decision':'Lock Decision';lock.classList.toggle('primary',!locked);lock.classList.toggle('secondary',locked);lock.disabled=!!state.paused;}
-  if(c.priorityStage==='bidding'){
-    document.querySelectorAll('.priority-bid-input').forEach(input=>{
-      const pid=input.dataset.player;
-      if(document.activeElement!==input)input.value=String(c.myPriorityBids?.[pid]??1);
-      input.disabled=disabled;
-    });
-    document.querySelectorAll('.priority-step').forEach(b=>b.disabled=disabled);
-  }else if(c.priorityStage==='tiebreak'&&c.priorityTiebreakEligible){
-    const input=document.querySelector('#priorityTieInput');
-    if(input){if(document.activeElement!==input)input.value=String(c.myPriorityTieBid??c.priorityTieMin??1);input.disabled=disabled;}
-    document.querySelectorAll('.priority-tie-step').forEach(b=>b.disabled=disabled);
-  }
-}
-function patchOpenAuctionLive(){
-  const c=state?.current;if(!c)return;
-  const bid=document.querySelector('#currentBidValue'),leader=document.querySelector('#currentBidLeader');
-  if(bid)bid.textContent=`£${c.bid||0}m`;
-  if(leader)leader.textContent=c.bidderId?`${managerName(c.bidderId)} leads`:'No bids yet';
-  updateCustomBidValidity();
-}
-
-function render(){
-  if(viewingRecords)return recordsScreen();
-  if(!state)return home();
-  if(state.phase==='lobby')lobby();
-  else if(state.phase==='draft')draft();
-  else if(state.phase==='team_build')teamBuild();
-  else if(state.phase==='reveal')reveal();
-  else if(state.phase==='results')results();
-  else finished();
-}
-
-socket.on('state',s=>{
-  const previous=state;
-  const phaseChanged=previous?.phase!==s.phase;
-  const endgameJustBegan=s.mode==='blind'&&s.phase==='draft'&&!!s.current?.blindEndgame&&!blindEndgameAnnounced;
-  const active=document.activeElement;
-  state=s;
-  if(s.viewerId)meId=s.viewerId;
-  if(s.mode!=='blind'||s.phase!=='draft')blindEndgameAnnounced=false;
-  if(phaseChanged){
-    selectedLineupSlot=null;
-    if(s.phase==='draft'){tab='draft';nominationSearch='';nominationPosition='ALL';firstSessionRecoveryCode=null;}
-    if(s.phase==='results'){resultsTab='season';statsMetric='goals';postSimView='results';reviewManagerId=meId||null;}
-  }
-  let handled=false;
-  if(viewingRecords){
-    // Room activity can continue behind the Records overlay without rebuilding the
-    // records UI or closing an in-progress filter/history interaction.
-    handled=true;
-  }else if(!phaseChanged&&previous&&s.phase==='team_build'&&ownTeamBuildSignature(previous)===ownTeamBuildSignature(s)){
-    patchTeamBuildShared();handled=true;
-  }else if(!phaseChanged&&previous&&s.phase==='draft'&&s.mode==='priority'&&samePriorityInteraction(previous,s)){
-    // Keep simultaneous Priority Bid edits stable. Server state remains authoritative,
-    // but bid inputs are patched in place instead of destroying/recreating the form.
-    patchPriorityInteraction();handled=true;
-  }else if(!phaseChanged&&previous&&s.phase==='draft'&&!['blind','priority'].includes(s.mode)&&active?.id==='customBidInput'&&previous.current?.player?.id===s.current?.player?.id){
-    patchOpenAuctionLive();handled=true;
-  }
-  if(!handled)render();
-  if(endgameJustBegan){blindEndgameAnnounced=true;showToast('Endgame has begun · remaining players are compulsory');}
-});
-socket.on('tick',({timeLeft})=>{
-  if(state?.current){
-    state.current.timeLeft=timeLeft;
-    const t=document.querySelector('#timer');
-    if(t){t.textContent=timeLeft;t.classList.toggle('warn',timeLeft<=5)}
-  }
-});
-socket.on('nominationTick',({timeLeft})=>{
-  if(state?.nomination){state.nomination.timeLeft=timeLeft;const t=document.querySelector('#nominationTimer');if(t){t.textContent=timeLeft;t.classList.toggle('warn',timeLeft<=5)}}
-});
-socket.on('auctionNotice',({message})=>{if(message)showToast(message)});
-socket.on('removedFromLobby',({message})=>{
-  clearSavedSession();state=null;meId=null;firstSessionRecoveryCode=null;history.replaceState({},'',location.pathname);home();showToast(message||'You were removed from the lobby.');
-});
-socket.on('connect',()=>{attemptResume();refreshRecordsStatus();});
-applyVisualTheme();
-home();
+module.exports={qualityFor,getProfile,positionalFit,assessLineup,publicAssessment,simulateCompetition};
