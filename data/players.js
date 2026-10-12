@@ -3672,8 +3672,7 @@ const PLAYER_DB = [
   {
     "name": "Danny Welbeck",
     "positions": [
-      "ST",
-      "LW"
+      "ST"
     ],
     "packs": [
       "all_time_prem",
@@ -3772,8 +3771,8 @@ const PLAYER_DB = [
   {
     "name": "Piero Hincapie",
     "positions": [
-      "CB",
-      "LB"
+      "LB",
+      "CB"
     ],
     "packs": [
       "current_prem",
@@ -3863,7 +3862,7 @@ const PLAYER_DB = [
     "name": "Mikel Merino",
     "positions": [
       "CM",
-      "AM"
+      "ST"
     ],
     "packs": [
       "current_prem",
@@ -4509,7 +4508,8 @@ const PLAYER_DB = [
     "name": "Keane Lewis-Potter",
     "positions": [
       "LW",
-      "RW"
+      "LB",
+      "LM"
     ],
     "packs": [
       "current_prem"
@@ -5385,8 +5385,8 @@ const PLAYER_DB = [
   {
     "name": "Kiernan Dewsbury-Hall",
     "positions": [
-      "CM",
-      "AM"
+      "AM",
+      "CM"
     ],
     "packs": [
       "current_prem"
@@ -6315,7 +6315,8 @@ const PLAYER_DB = [
     "name": "Alexis Mac Allister",
     "positions": [
       "CM",
-      "DM"
+      "DM",
+      "AM"
     ],
     "packs": [
       "current_prem",
@@ -6327,8 +6328,8 @@ const PLAYER_DB = [
   {
     "name": "Dominik Szoboszlai",
     "positions": [
-      "AM",
-      "CM"
+      "CM",
+      "AM"
     ],
     "packs": [
       "current_prem",
@@ -6405,7 +6406,8 @@ const PLAYER_DB = [
   {
     "name": "Hugo Ekitike",
     "positions": [
-      "ST"
+      "ST",
+      "LW"
     ],
     "packs": [
       "current_prem",
@@ -6526,8 +6528,8 @@ const PLAYER_DB = [
   {
     "name": "Matheus Nunes",
     "positions": [
-      "CM",
-      "RB"
+      "RB",
+      "CM"
     ],
     "packs": [
       "current_prem",
@@ -6579,8 +6581,7 @@ const PLAYER_DB = [
     "name": "Antoine Semenyo",
     "positions": [
       "RW",
-      "LW",
-      "ST"
+      "LW"
     ],
     "packs": [
       "current_prem",
@@ -6592,8 +6593,9 @@ const PLAYER_DB = [
   {
     "name": "Iliman Ndiaye",
     "positions": [
-      "AM",
-      "LW"
+      "RW",
+      "LW",
+      "AM"
     ],
     "packs": [
       "current_prem",
@@ -6902,7 +6904,7 @@ const PLAYER_DB = [
     "name": "Jacob Ramsey",
     "positions": [
       "CM",
-      "AM"
+      "LM"
     ],
     "packs": [
       "current_prem",
@@ -6926,8 +6928,7 @@ const PLAYER_DB = [
   {
     "name": "Nicolas Gonzalez",
     "positions": [
-      "AM",
-      "RW"
+      "CM"
     ],
     "packs": [
       "current_prem",
@@ -7272,8 +7273,8 @@ const PLAYER_DB = [
   {
     "name": "Nordi Mukiele",
     "positions": [
-      "CB",
-      "RB"
+      "RB",
+      "CB"
     ],
     "packs": [
       "current_prem"
@@ -7332,8 +7333,8 @@ const PLAYER_DB = [
   {
     "name": "Enzo Le Fee",
     "positions": [
-      "CM",
-      "AM"
+      "AM",
+      "CM"
     ],
     "packs": [
       "current_prem"
@@ -7757,10 +7758,12 @@ const PLAYER_DB = [
   {
     "name": "Ronald Araujo",
     "positions": [
-      "CB"
+      "CB",
+      "RB"
     ],
     "packs": [
-      "current_world"
+      "current_world",
+      "current_prem"
     ],
     "tier": 1,
     "id": 631
@@ -11762,6 +11765,297 @@ const PLAYER_DB = [
     ],
     "tier": 2,
     "id": 975
+  },
+  {
+    "name": "Antonio Silva",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 976
+  },
+  {
+    "name": "Ayyoub Bouaddi",
+    "positions": [
+      "CM",
+      "DM"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 977
+  },
+  {
+    "name": "Bazoumana Toure",
+    "positions": [
+      "LW",
+      "RW"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 978
+  },
+  {
+    "name": "Christian Norgaard",
+    "positions": [
+      "DM"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 979
+  },
+  {
+    "name": "El Hadji Malick Diouf",
+    "positions": [
+      "LB",
+      "LM"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 980
+  },
+  {
+    "name": "Eli Junior Kroupi",
+    "positions": [
+      "ST",
+      "AM"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 981
+  },
+  {
+    "name": "Geovany Quenda",
+    "positions": [
+      "RW",
+      "RM"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 982
+  },
+  {
+    "name": "Gonzalo Garcia",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 983
+  },
+  {
+    "name": "Jeremy Jacquet",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 984
+  },
+  {
+    "name": "Joao Gomes",
+    "positions": [
+      "CM",
+      "DM"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 985
+  },
+  {
+    "name": "Johan Manzambi",
+    "positions": [
+      "CM"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 986
+  },
+  {
+    "name": "Luka Vuskovic",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 987
+  },
+  {
+    "name": "Malick Fofana",
+    "positions": [
+      "LW",
+      "RW"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 988
+  },
+  {
+    "name": "Mamadou Sangare",
+    "positions": [
+      "DM",
+      "CM"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 989
+  },
+  {
+    "name": "Marco Palestra",
+    "positions": [
+      "RB",
+      "RM"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 990
+  },
+  {
+    "name": "Mateus Fernandes",
+    "positions": [
+      "CM"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 991
+  },
+  {
+    "name": "Matias Fernandez-Pardo",
+    "positions": [
+      "LW",
+      "RW"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 992
+  },
+  {
+    "name": "Max Dowman",
+    "positions": [
+      "AM",
+      "RW"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 993
+  },
+  {
+    "name": "Nico O'Reilly",
+    "positions": [
+      "LB",
+      "CM",
+      "AM"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 994
+  },
+  {
+    "name": "Rayan",
+    "positions": [
+      "RW",
+      "ST"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 995
+  },
+  {
+    "name": "Rio Ngumoha",
+    "positions": [
+      "LW"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 996
+  },
+  {
+    "name": "Shea Charles",
+    "positions": [
+      "DM"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 997
+  },
+  {
+    "name": "Tarik Muharemovic",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 998
+  },
+  {
+    "name": "Thomas Meunier",
+    "positions": [
+      "RB",
+      "RM"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 999
+  },
+  {
+    "name": "Victor Munoz",
+    "positions": [
+      "RW",
+      "LW"
+    ],
+    "packs": [
+      "current_prem"
+    ],
+    "tier": 2,
+    "id": 1000
   }
 ];
 
