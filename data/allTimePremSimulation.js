@@ -761,96 +761,101 @@ function rangeScore(value,min,max){
   return clamp(100-dist*18,25,100);
 }
 
+// v11 universal unit balances. The All-Time archetype database remains unchanged.
+// Unit scoring is intentionally independent of the tactical slot-share matrices used by v10.
+const V11_TRAIT_PROVIDER_WEIGHTS=[1,0.35,0.20,0.10,0.05,0.03];
+const V11_UNIT_TARGETS={
+  attack:{1:[110,95,105],2:[140,125,135],3:[157,142,152],4:[162,147,157]},
+  midfield:{2:[112,135,123,105,113],3:[128,151,139,121,129],
+    4:[133,156,144,126,134],5:[137,160,148,130,138],
+    // The only six-midfielder formation is 3-4-2-1. Provisional +3 rule, accepted as build default.
+    6:[140,163,151,133,141]},
+  defence:{3:[160,140],4:[163,145],5:[168,155]}
+};
+const V11_UNIT_REQUIREMENTS={
+  attack:[['goalThreat',0.45],['creativity',0.35],['directness',0.20]],
+  midfield:[['protection',0.30],['progression',0.30],['creativity',0.20],['goalThreat',0.10],['directness',0.10]],
+  defence:[['protection',0.70],['progression',0.30]]
+};
+const V11_UNIT_BY_SLOT={GK:'defence',CB:'defence',LB:'defence',RB:'defence',DM:'midfield',CM:'midfield',AM:'midfield',LM:'midfield',RM:'midfield',LW:'attack',RW:'attack',ST:'attack'};
+function v11TraitCoverage(members,trait,weights=V11_TRAIT_PROVIDER_WEIGHTS){
+  return members.map(d=>d.profile.traits[trait]||0).sort((a,b)=>b-a)
+    .reduce((acc,v,index)=>acc+v*(weights[index]||0),0);
+}
+function v11WidthSide(details,side){
+  const allowed=side==='left'?['LW','LM','LB']:['RW','RM','RB'];
+  const widths=details.filter(d=>allowed.includes(d.slot)).map(d=>({
+    name:d.player.name,slot:d.slot,effectiveWidth:(d.profile.traits.width||0)*(d.slot==='LB'||d.slot==='RB'?0.85:1)
+  })).sort((a,b)=>b.effectiveWidth-a.effectiveWidth);
+  const strongest=widths[0]?.effectiveWidth||0;
+  const coverage=strongest+0.15*(widths[1]?.effectiveWidth||0);
+  const ordinary=clamp(100*coverage/85,0,100);
+  const providerFloorCap=strongest<80?strongest/80*100:100;
+  return {score:Math.min(ordinary,providerFloorCap),strongest,coverage,providers:widths};
+}
 function assessLineup(entries,pack='all_time_prem'){
   if(!Array.isArray(entries)||entries.length!==11) throw new Error('Simulation needs exactly 11 lineup entries.');
   const details=entries.map(({player,slot})=>{
+    if(!V11_UNIT_BY_SLOT[slot]) throw new Error(`Unsupported position ${slot}`);
     const profile=getProfile(player,pack);
     const fit=positionalFit(player,slot);
-    const value=playerUnitValue(player,slot,profile,fit);
-    return {player,slot,profile,fit,value,unit:slotUnitWeights(slot)};
+    // Hard exception: any outfield player at GK always contributes exactly 0 quality.
+    const value=slot==='GK' && player.positions?.[0]!=='GK' ? 0 : profile.quality*(0.20+0.80*fit);
+    return {player,slot,profile,fit,value,unit:V11_UNIT_BY_SLOT[slot]};
   });
-
-  const unit={attack:{sum:0,w:0},midfield:{sum:0,w:0},defence:{sum:0,w:0}};
-  for(const d of details){
-    for(const k of ['attack','midfield','defence']){
-      const w=d.unit[k]; if(!w) continue;
-      unit[k].sum += d.value*w; unit[k].w += w;
+  const grouped={attack:[],midfield:[],defence:[]};
+  for(const d of details) grouped[d.unit].push(d);
+  const outfieldDefenders=grouped.defence.filter(d=>d.slot!=='GK');
+  const unitBalance={},unitRaw={},unitTraitScores={};
+  const unitsToScore={attack:grouped.attack,midfield:grouped.midfield,defence:outfieldDefenders};
+  for(const unit of ['attack','midfield','defence']){
+    const eligible=unitsToScore[unit];
+    const all=grouped[unit]; // GK contributes to raw Defence quality only.
+    const targets=V11_UNIT_TARGETS[unit][eligible.length];
+    if(!targets) throw new Error(`Missing v11 ${unit} targets for ${eligible.length} players.`);
+    unitRaw[unit]=avg(all.map(d=>d.value));
+    const traitScores={};
+    let balance=0;
+    for(const [i,[trait,weight]] of V11_UNIT_REQUIREMENTS[unit].entries()){
+      const coverage=v11TraitCoverage(eligible,trait);
+      const score=clamp(100*coverage/targets[i],0,100);
+      traitScores[trait]={score,coverage,target:targets[i]};
+      balance+=weight*score;
     }
+    unitBalance[unit]=balance;
+    unitTraitScores[unit]=traitScores;
   }
-  const attack=unit.attack.w?unit.attack.sum/unit.attack.w:60;
-  const midfield=unit.midfield.w?unit.midfield.sum/unit.midfield.w:60;
-  const defence=unit.defence.w?unit.defence.sum/unit.defence.w:60;
+  const attack=unitRaw.attack*(0.65+0.35*unitBalance.attack/100);
+  const midfield=unitRaw.midfield*(0.65+0.35*unitBalance.midfield/100);
+  const defence=unitRaw.defence*(0.65+0.35*unitBalance.defence/100);
+  const left=v11WidthSide(details,'left'),right=v11WidthSide(details,'right');
+  const width=0.25*(left.score+right.score)+0.50*Math.min(left.score,right.score);
+  const connect=(from,fromTrait,fromTarget,to,toTrait,toTarget)=>{
+    // Cross-unit connections use 100% best + 25% second only.
+    const source=clamp(100*v11TraitCoverage(unitsToScore[from],fromTrait,[1,0.25])/fromTarget,0,100);
+    const destination=clamp(100*v11TraitCoverage(unitsToScore[to],toTrait,[1,0.25])/toTarget,0,100);
+    return {score:Math.sqrt(source*destination),source,destination};
+  };
+  const buildup=connect('defence','progression',108,'midfield','progression',115);
+  const creation=connect('midfield','creativity',115,'attack','goalThreat',115);
+  const shielding=connect('midfield','protection',95,'defence','protection',125);
+  const teamBalance=0.25*buildup.score+0.30*creation.score+0.25*shielding.score+0.20*width;
+  const overall=0.90*(0.34*attack+0.33*midfield+0.33*defence)+0.10*teamBalance;
+  // Informational only: fit is already reflected in adjusted player quality.
   const fitScore=avg(details.map(d=>d.fit))*100;
-  const rawFormationSuitability=avg(details.map(d=>traitSuitability(d.profile,d.slot)));
-  const formationSuitability=clamp(0.70*(50+0.55*rawFormationSuitability)+0.30*fitScore,30,99);
-
-  // Team Balance v2: elite balance is difficult to reach. Instead of awarding 100 as soon as
-  // a minimum threshold is crossed, every unit climbs gradually toward an elite benchmark.
-  const benchmarkScore=(value,target)=>clamp(value/target*100,20,100);
-  const idealRoleScore=(value,target)=>clamp(100-Math.abs(value-target)*20,25,100);
-
-  // Generic squad role distribution, independent of the chosen formation. The targets sum to 10
-  // outfield-player equivalents and allow attacking/defensive shapes without rewarding extremes.
-  const outfield=details.filter(d=>d.slot!=='GK');
-  const roleTotals=outfield.reduce((a,d)=>{
-    a.d+=d.profile.role.defence; a.m+=d.profile.role.midfield; a.a+=d.profile.role.attack; return a;
-  },{d:0,m:0,a:0});
-  const roleBalance=avg([
-    idealRoleScore(roleTotals.d,3.4),
-    idealRoleScore(roleTotals.m,3.4),
-    idealRoleScore(roleTotals.a,3.2)
-  ]);
-
-  // Midfield complementarity: protection, progression, creativity and goal threat all matter.
-  // The weakest area still matters, but midfield no longer dominates the whole Team Balance rating.
-  const mids=details.filter(d=>['DM','CM','AM','LM','RM'].includes(d.slot));
-  const midTrait={};
-  for(const t of ['protection','progression','creativity','goalThreat']) midTrait[t]=avg(mids.map(d=>d.profile.traits[t]*d.fit));
-  const midParts=[
-    benchmarkScore(midTrait.protection,70), benchmarkScore(midTrait.progression,85),
-    benchmarkScore(midTrait.creativity,85), benchmarkScore(midTrait.goalThreat,60)
-  ];
-  const midfieldBalance=mids.length ? 0.55*avg(midParts)+0.45*Math.min(...midParts) : 30;
-
-  // Attack balance now includes width as well as creation, finishing and directness.
-  const attackers=details.filter(d=>['AM','LM','RM','LW','RW','ST'].includes(d.slot));
-  const attackCreat=avg(attackers.map(d=>d.profile.traits.creativity*d.fit));
-  const attackGoal=avg(attackers.map(d=>d.profile.traits.goalThreat*d.fit));
-  const attackDirect=avg(attackers.map(d=>d.profile.traits.directness*d.fit));
-  const attackWidth=avg(attackers.map(d=>d.profile.traits.width*d.fit));
-  const attackBalance=attackers.length ? avg([
-    benchmarkScore(attackCreat,75), benchmarkScore(attackGoal,94),
-    benchmarkScore(attackDirect,90), benchmarkScore(attackWidth,60)
-  ]) : 30;
-
-  // A genuinely balanced defensive unit needs both protection and the ability to move the ball.
-  const defenders=details.filter(d=>['GK','LB','RB','CB','DM'].includes(d.slot));
-  const defOutfield=defenders.filter(d=>d.slot!=='GK');
-  const defProtection=avg(defOutfield.map(d=>d.profile.traits.protection*d.fit));
-  const defProgression=avg(defOutfield.map(d=>d.profile.traits.progression*d.fit));
-  const defenceBalance=avg([benchmarkScore(defProtection,82),benchmarkScore(defProgression,60)]);
-
-  let teamBalance=0.25*roleBalance+0.25*midfieldBalance+0.20*attackBalance+0.30*defenceBalance;
-  const keeper=details.find(d=>d.slot==='GK');
-  if(!keeper || keeper.player.positions[0]!=='GK') teamBalance=Math.min(teamBalance,55);
-
-  const base=attack*0.34+midfield*0.33+defence*0.33;
-  const efficiency=0.58+0.18*(fitScore/100)+0.12*(teamBalance/100)+0.12*(formationSuitability/100);
-  const overall=clamp(base*efficiency,35,99);
-
-  return {
-    overall,attack,midfield,defence,
-    positionalFit:fitScore,teamBalance,formationSuitability,
-    details
-  };
+  return {overall,attack,midfield,defence,positionalFit:fitScore,teamBalance,
+    attackBalance:unitBalance.attack,midfieldBalance:unitBalance.midfield,
+    defenceBalance:unitBalance.defence,width,
+    unitRaw,unitTraitScores,
+    teamLinks:{buildup,creation,shielding,left,right},details};
 }
-
 function publicAssessment(a){
-  const r=n=>Math.round(clamp(n,0,99));
-  return {
-    overall:r(a.overall), attack:r(a.attack), midfield:r(a.midfield), defence:r(a.defence),
-    positionalFit:r(a.positionalFit), teamBalance:r(a.teamBalance), formationSuitability:r(a.formationSuitability)
-  };
+  const round=x=>Math.round(clamp(x,0,100));
+  return {overall:round(a.overall),attack:round(a.attack),midfield:round(a.midfield),
+    defence:round(a.defence),positionalFit:round(a.positionalFit),
+    teamBalance:round(a.teamBalance),attackBalance:round(a.attackBalance),
+    midfieldBalance:round(a.midfieldBalance),defenceBalance:round(a.defenceBalance),
+    width:round(a.width)};
 }
 
 function poisson(lambda){
@@ -917,7 +922,7 @@ function expectedGoals(a,b,homeAdvantage){
   // and equal teams receive a modern-football-sized home advantage (~44/24/31 H/D/A).
   let log=Math.log(1.32)+0.021*attackEdge+0.016*midfieldEdge+0.023*overallEdge+(homeAdvantage?0.20:0);
   // A non-goalkeeper in goal is already punished in the ratings, but remains an exceptional match-day weakness.
-  if(!hasNaturalKeeper(b)) log+=Math.log(1.18);
+  if(!hasNaturalKeeper(b)) log+=Math.log(1.20);
   return clamp(Math.exp(log),0.10,5.5);
 }
 function simulateShotsOnTarget(goals,xg){
