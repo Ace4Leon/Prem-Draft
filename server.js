@@ -343,7 +343,7 @@ function historyCompetitionPayload(room,simulation){
     homeShotsOnTarget:m.homeShotsOnTarget,awayShotsOnTarget:m.awayShotsOnTarget,homeSaves:m.homeSaves,awaySaves:m.awaySaves,playerOfMatch:m.playerOfMatch
   }));
   return {
-    version:'v10',participants,championProfileId:toProfile(simulation.championId),matches,
+    version:'v11',participants,championProfileId:toProfile(simulation.championId),matches,
     playoffs:(simulation.playoffs||[]).map(m=>({
       homeProfileId:toProfile(m.homeId),awayProfileId:toProfile(m.awayId),homeName:m.homeName,awayName:m.awayName,
       homeGoals:m.homeGoals,awayGoals:m.awayGoals,homeScorers:m.homeScorers,awayScorers:m.awayScorers,
