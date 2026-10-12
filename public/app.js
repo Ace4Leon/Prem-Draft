@@ -13,11 +13,15 @@ let nominationSearch='';
 let nominationPosition='ALL';
 let blindEndgameAnnounced=false;
 let viewingRecords=false;
-let recordsSection='rivalry';
+let recordsSection='all';
 let recordsSummaryData=null;
 let recordsGroupData=null;
 let recordsAllData=null;
 let selectedRivalryKey='';
+let selectedRecordManagers=new Set();
+let requireAllSelectedManagers=false;
+let recordsH2HData=null,recordsH2HOne='',recordsH2HTwo='';
+let recordsManagerData=null,recordsManagerId='',recordsPlayerPack='all';
 let selectedRecordModes=new Set();
 let selectedRecordPacks=new Set();
 let recordsConnectionStatus=null;
@@ -91,7 +95,7 @@ function wireRoomCodeInput(input){
   input.oninput=()=>{const cleaned=cleanRoomCodeInput(input.value);if(input.value!==cleaned)input.value=cleaned;};
 }
 function managerDot(m){return `<span class="manager-dot" style="--manager-color:${esc(m?.color||'#64748b')}"></span>`;}
-function managerNameHtml(m){return `${managerDot(m)}<span>${esc(m?.name||'Manager')}</span>`;}
+function managerNameHtml(m){return `${managerDot(m)}<span>${esc(m?.displayName||m?.name||'Manager')}</span>`;}
 
 let resumeInFlight=false;
 function readSavedSession(){
@@ -168,7 +172,7 @@ const FF_LAYOUTS={
   '3-4-1-2':{slots:['GK','CB','CB','CB','LM','CM','CM','RM','AM','ST','ST'],rows:[[9,10],[8],[4,5,6,7],[1,2,3],[0]]},
   '3-4-2-1':{slots:['GK','CB','CB','CB','LM','CM','CM','RM','AM','AM','ST'],rows:[[10],[8,9],[4,5,6,7],[1,2,3],[0]]},
   '3-4-3':{slots:['GK','CB','CB','CB','LM','CM','CM','RM','LW','ST','RW'],rows:[[8,9,10],[4,5,6,7],[1,2,3],[0]]},
-  '3-5-2':{slots:['GK','CB','CB','CB','LM','CM','CM','AM','RM','ST','ST'],rows:[[9,10],[7],[4,5,6,8],[1,2,3],[0]]},
+  '3-5-2':{slots:['GK','CB','CB','CB','LM','DM','DM','AM','RM','ST','ST'],rows:[[9,10],[7],[4,8],[5,6],[1,2,3],[0]]},
   '4-1-2-1-2 Narrow':{slots:['GK','LB','CB','CB','RB','DM','CM','CM','AM','ST','ST'],rows:[[9,10],[8],[6,7],[5],[1,2,3,4],[0]]},
   '4-1-2-1-2 Wide':{slots:['GK','LB','CB','CB','RB','DM','LM','RM','AM','ST','ST'],rows:[[9,10],[8],[6,7],[5],[1,2,3,4],[0]]},
   '4-1-3-2':{slots:['GK','LB','CB','CB','RB','DM','LM','CM','RM','ST','ST'],rows:[[9,10],[6,7,8],[5],[1,2,3,4],[0]]},
@@ -180,7 +184,7 @@ const FF_LAYOUTS={
   '4-2-4':{slots:['GK','LB','CB','CB','RB','CM','CM','LW','ST','ST','RW'],rows:[[7,8,9,10],[5,6],[1,2,3,4],[0]]},
   '4-3-1-2':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','AM','ST','ST'],rows:[[9,10],[8],[5,6,7],[1,2,3,4],[0]]},
   '4-3-2-1':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','AM','AM','ST'],rows:[[10],[8,9],[5,6,7],[1,2,3,4],[0]]},
-  '4-3-3 Wide':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','LW','ST','RW'],rows:[[8,9,10],[5,6,7],[1,2,3,4],[0]]},
+  '4-3-3 Defend':{slots:['GK','LB','CB','CB','RB','DM','DM','CM','LW','ST','RW'],rows:[[8,9,10],[7],[5,6],[1,2,3,4],[0]]},
   '4-3-3 Holding':{slots:['GK','LB','CB','CB','RB','DM','CM','CM','LW','ST','RW'],rows:[[8,9,10],[6,7],[5],[1,2,3,4],[0]]},
   '4-3-3 Attack':{slots:['GK','LB','CB','CB','RB','CM','CM','AM','LW','ST','RW'],rows:[[8,9,10],[7],[5,6],[1,2,3,4],[0]]},
   '4-3-3 Balanced':{slots:['GK','LB','CB','CB','RB','CM','CM','CM','LW','ST','RW'],rows:[[8,9,10],[5,6,7],[1,2,3,4],[0]]},
@@ -188,7 +192,7 @@ const FF_LAYOUTS={
   '4-4-2':{slots:['GK','LB','CB','CB','RB','LM','CM','CM','RM','ST','ST'],rows:[[9,10],[5,6,7,8],[1,2,3,4],[0]]},
   '4-4-2 Holding':{slots:['GK','LB','CB','CB','RB','LM','DM','DM','RM','ST','ST'],rows:[[9,10],[5,6,7,8],[1,2,3,4],[0]]},
   '4-5-1':{slots:['GK','LB','CB','CB','RB','LM','CM','CM','CM','RM','ST'],rows:[[10],[5,6,7,8,9],[1,2,3,4],[0]]},
-  '4-5-1 Attack':{slots:['GK','LB','CB','CB','RB','LM','DM','AM','DM','RM','ST'],rows:[[10],[7],[5,6,8,9],[1,2,3,4],[0]]},
+  '4-5-1 Attack':{slots:['GK','LB','CB','CB','RB','LM','AM','AM','CM','RM','ST'],rows:[[10],[6,7],[5,8,9],[1,2,3,4],[0]]},
   '5-2-1-2':{slots:['GK','LB','CB','CB','CB','RB','CM','CM','AM','ST','ST'],rows:[[9,10],[8],[6,7],[1,2,3,4,5],[0]]},
   '5-2-3':{slots:['GK','LB','CB','CB','CB','RB','CM','CM','LW','ST','RW'],rows:[[8,9,10],[6,7],[1,2,3,4,5],[0]]},
   '5-3-2':{slots:['GK','LB','CB','CB','CB','RB','CM','CM','CM','ST','ST'],rows:[[9,10],[6,7,8],[1,2,3,4,5],[0]]},
@@ -196,7 +200,8 @@ const FF_LAYOUTS={
 };
 // Hidden legacy aliases keep old saved drafts viewable without putting old formations back in the selector.
 Object.assign(FF_LAYOUTS,{
-  '4-3-3':FF_LAYOUTS['4-3-3 Wide'],
+  '4-3-3':FF_LAYOUTS['4-3-3 Balanced'],
+  '4-3-3 Wide':FF_LAYOUTS['4-3-3 Balanced'],
   '4-2-3-1':FF_LAYOUTS['4-2-3-1 Wide'],
   '4-1-2-1-2':FF_LAYOUTS['4-1-2-1-2 Narrow']
 });
@@ -315,7 +320,7 @@ function home(){
 }
 
 function historyTableHtml(rows){
-  return `<div class="table-wrap"><table class="history-table"><thead><tr><th>#</th><th>Manager</th><th>Drafts</th><th>Titles</th><th>PPG</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(rows||[]).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.name)}</b></td><td>${r.drafts}</td><td><b>${r.titles}</b></td><td><b>${Number(r.ppg||0).toFixed(2)}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td><b>${r.pts}</b></td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="history-table"><thead><tr><th>#</th><th>Manager</th><th>Drafts</th><th>Titles</th><th>PPG</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(rows||[]).map((r,i)=>`<tr><td>${i+1}</td><td><button type="button" class="record-profile-link" data-open-profile="${esc(r.profileId)}">${esc(r.name)}</button></td><td>${r.drafts}</td><td><b>${r.titles}</b></td><td><b>${Number(r.ppg||0).toFixed(2)}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td><b>${r.pts}</b></td></tr>`).join('')}</tbody></table></div>`;
 }
 
 function readSavedRecordFilters(modeLabels,packLabels){
@@ -325,26 +330,28 @@ function readSavedRecordFilters(modeLabels,packLabels){
     const modes=(raw.modes||[]).filter(x=>Object.prototype.hasOwnProperty.call(modeLabels||{},x));
     const packs=(raw.packs||[]).filter(x=>Object.prototype.hasOwnProperty.call(packLabels||{},x));
     if(!modes.length||!packs.length)return null;
-    return {modes:new Set(modes),packs:new Set(packs)};
+    return {modes:new Set(modes),packs:new Set(packs),managers:Array.isArray(raw.managers)?new Set(raw.managers):null,requireAll:!!raw.requireAll};
   }catch{return null}
 }
 function saveRecordFilters(){
-  try{localStorage.setItem(RECORD_FILTERS_KEY,JSON.stringify({modes:[...selectedRecordModes],packs:[...selectedRecordPacks]}))}catch{}
+  try{localStorage.setItem(RECORD_FILTERS_KEY,JSON.stringify({modes:[...selectedRecordModes],packs:[...selectedRecordPacks],managers:[...selectedRecordManagers],requireAll:requireAllSelectedManagers}))}catch{}
 }
 function recordFilterCount(){
   const allModes=Object.keys(recordsSummaryData?.modeLabels||{}).length,allPacks=Object.keys(recordsSummaryData?.packLabels||{}).length;
-  return Math.max(0,allModes-selectedRecordModes.size)+Math.max(0,allPacks-selectedRecordPacks.size);
+  return Math.max(0,allModes-selectedRecordModes.size)+Math.max(0,allPacks-selectedRecordPacks.size)+Math.max(0,(recordsSummaryData?.profiles?.length||0)-selectedRecordManagers.size)+(requireAllSelectedManagers?1:0);
 }
 function recordFilterSummary(){
   const modes=recordsSummaryData?.modeLabels||{},packs=recordsSummaryData?.packLabels||{};
   const active=[];
   if(selectedRecordModes.size!==Object.keys(modes).length)active.push(...[...selectedRecordModes].map(k=>modes[k]).filter(Boolean));
   if(selectedRecordPacks.size!==Object.keys(packs).length)active.push(...[...selectedRecordPacks].map(k=>packs[k]).filter(Boolean));
+  if(selectedRecordManagers.size!==(recordsSummaryData?.profiles?.length||0))active.push(`${selectedRecordManagers.size} allowed managers`);
+  if(requireAllSelectedManagers)active.push('All selected must play');
   return active.length?`<div class="active-filter-chips">${active.map(x=>`<span>${esc(x)}</span>`).join('')}</div>`:'';
 }
 function loadAllRecords(){
   recordsAllData=null;recordsScreen();
-  socket.emit('recordsAll',{modes:[...selectedRecordModes],packs:[...selectedRecordPacks]},r=>{
+  socket.emit('recordsAll',{modes:[...selectedRecordModes],packs:[...selectedRecordPacks],managerIds:[...selectedRecordManagers],requireAll:requireAllSelectedManagers},r=>{
     if(!r?.ok){showToast(r?.error||'Could not load All-Time Records');return;}
     recordsAllData=r;if(viewingRecords&&!historicalCompetition)recordsScreen();
   });
@@ -356,15 +363,17 @@ function openRecords(){
   socket.emit('recordsSummary',{},r=>{
     if(!r?.ok){shell(`<div class="card"><h1>All-Time Records</h1><p class="muted">${esc(r?.error||'Could not load records.')}</p><button class="secondary big" id="recordsBack">Back</button></div>`);document.querySelector('#recordsBack').onclick=closeRecords;return;}
     recordsSummaryData=r;recordsConnectionStatus=r.recordsConnected!==false;recordsAdminConfigured=!!r.adminConfigured;
-    const profile=savedProfile();
-    const preferred=(r.groups||[]).find(g=>profile?.profileId&&g.profileIds?.includes(profile.profileId))||(r.groups||[])[0];
-    selectedRivalryKey=preferred?.key||'';
     const saved=readSavedRecordFilters(r.modeLabels||{},r.packLabels||{});
     selectedRecordModes=saved?.modes||new Set(Object.keys(r.modeLabels||{}));
     selectedRecordPacks=saved?.packs||new Set(Object.keys(r.packLabels||{}));
-    if(recordsSection==='all')loadAllRecords();
-    else if(selectedRivalryKey)loadRivalryGroup();
-    else recordsScreen();
+    const ids=new Set((r.profiles||[]).map(p=>p.profileId));
+    selectedRecordManagers=saved?.managers?new Set([...saved.managers].filter(id=>ids.has(id))):ids;
+    if(!selectedRecordManagers.size)selectedRecordManagers=ids;
+    requireAllSelectedManagers=!!saved?.requireAll;
+    if(!recordsH2HOne||!ids.has(recordsH2HOne))recordsH2HOne=r.profiles?.[0]?.profileId||'';
+    if(!recordsH2HTwo||!ids.has(recordsH2HTwo)||recordsH2HOne===recordsH2HTwo)recordsH2HTwo=(r.profiles||[]).find(p=>p.profileId!==recordsH2HOne)?.profileId||'';
+    if(!recordsManagerId||!ids.has(recordsManagerId))recordsManagerId=savedProfile()?.profileId&&ids.has(savedProfile().profileId)?savedProfile().profileId:r.profiles?.[0]?.profileId||'';
+    loadCurrentRecordSection();
   });
 }
 function closeRecords(){
@@ -381,7 +390,50 @@ function loadRivalryGroup(){
 }
 function recordsFiltersHtml(){
   const modes=recordsSummaryData?.modeLabels||{},packs=recordsSummaryData?.packLabels||{};
-  return `<div class="records-filter-panel" id="recordsFilterPanel" hidden><div class="filter-columns"><div><b>Draft modes</b>${Object.entries(modes).map(([k,v])=>`<label class="filter-check"><input type="checkbox" data-filter-mode="${esc(k)}" ${selectedRecordModes.has(k)?'checked':''}> ${esc(v)}</label>`).join('')}</div><div><b>Player packs</b>${Object.entries(packs).map(([k,v])=>`<label class="filter-check"><input type="checkbox" data-filter-pack="${esc(k)}" ${selectedRecordPacks.has(k)?'checked':''}> ${esc(v)}</label>`).join('')}</div></div><div class="row mobile-stack"><button class="secondary grow" id="recordsAllFilters">Select all</button><button class="secondary grow" id="recordsClearFilters">Reset</button><button class="primary grow" id="recordsApplyFilters">Apply</button></div></div>`;
+  const profiles=recordsSummaryData?.profiles||[];
+  return `<div class="records-filter-panel" id="recordsFilterPanel" hidden>
+    <div class="filter-columns"><div><b>Draft modes</b>${Object.entries(modes).map(([k,v])=>`<label class="filter-check"><input type="checkbox" data-filter-mode="${esc(k)}" ${selectedRecordModes.has(k)?'checked':''}> ${esc(v)}</label>`).join('')}</div>
+    <div><b>Player packs</b>${Object.entries(packs).map(([k,v])=>`<label class="filter-check"><input type="checkbox" data-filter-pack="${esc(k)}" ${selectedRecordPacks.has(k)?'checked':''}> ${esc(v)}</label>`).join('')}</div></div>
+    <div class="spacer10"></div><b>Allowed managers — exclude drafts containing anybody unchecked</b>
+    <p class="muted small">Uncheck anyone you don't want in these records. By default any subset of checked managers can play.</p>
+    <div class="record-manager-choices">${profiles.map(p=>`<label><input type="checkbox" data-filter-manager="${esc(p.profileId)}" ${selectedRecordManagers.has(p.profileId)?'checked':''}> ${esc(p.name)}</label>`).join('')}</div>
+    <label class="filter-check"><input type="checkbox" id="requireAllManagers" ${requireAllSelectedManagers?'checked':''}> Require <b>every selected manager</b> to be present (exact-group view)</label>
+    <div class="row mobile-stack"><button class="secondary grow" id="recordsAllFilters">Select all</button><button class="secondary grow" id="recordsClearFilters">Reset</button><button class="primary grow" id="recordsApplyFilters">Apply</button></div></div>`;
+}
+function loadCurrentRecordSection(){
+  if(recordsSection==='all')return loadAllRecords();
+  if(recordsSection==='h2h')return loadRecordsH2H();
+  if(recordsSection==='profile')return loadRecordsManagerProfile();
+  return loadAllRecords();
+}
+function loadRecordsH2H(){
+  if(!recordsH2HOne||!recordsH2HTwo||recordsH2HOne===recordsH2HTwo){recordsH2HData=null;return recordsScreen();}
+  recordsH2HData=null;recordsScreen();
+  socket.emit('recordsH2H',{one:recordsH2HOne,two:recordsH2HTwo,modes:[...selectedRecordModes],packs:[...selectedRecordPacks]},r=>{
+    if(!r?.ok){showToast(r?.error||'Could not load head to head');return;}
+    recordsH2HData=r;if(viewingRecords&&!historicalCompetition&&recordsSection==='h2h')recordsScreen();
+  });
+}
+function loadRecordsManagerProfile(){
+  if(!recordsManagerId){recordsManagerData=null;return recordsScreen();}
+  recordsManagerData=null;recordsScreen();
+  socket.emit('recordsManagerProfile',{profileId:recordsManagerId,modes:[...selectedRecordModes],packs:[...selectedRecordPacks]},r=>{
+    if(!r?.ok){showToast(r?.error||'Could not load manager profile');return;}
+    recordsManagerData=r;if(viewingRecords&&!historicalCompetition&&recordsSection==='profile')recordsScreen();
+  });
+}
+function recordProfileHtml(){
+  if(!recordsManagerData)return '<div class="card muted">Loading manager profile…</div>';
+  const d=recordsManagerData,c=d.career||{},packs=recordsSummaryData?.packLabels||{};
+  const players=(d.players||[]).filter(p=>recordsPlayerPack==='all'||p.pack===recordsPlayerPack);
+  return `<div class="card"><h2>${esc(d.name)} · Career profile</h2><div class="record-metric-grid">
+    ${[['Drafts',c.drafts],['Titles',c.titles],['Title %',Number(c.titlePercentage||0).toFixed(1)+'%'],['Points per game',Number(c.ppg||0).toFixed(2)],['W / D / L',`${c.w}/${c.d}/${c.l}`],['Goals for / against',`${c.gf}/${c.ga}`]].map(([k,v])=>`<div><b>${esc(String(v??0))}</b><span class="muted small">${esc(k)}</span></div>`).join('')}
+    </div><h3>Most owned players and transfer spending</h3><p class="muted small">One ownership per draft, grouped by player pack. Appearances, goals and assists count only that manager's official matches.</p>
+    <label>Player pack</label><select id="profilePlayerPack"><option value="all">All packs</option>${Object.entries(packs).map(([k,v])=>`<option value="${esc(k)}" ${recordsPlayerPack===k?'selected':''}>${esc(v)}</option>`).join('')}</select>
+    <div class="table-wrap"><table class="history-table"><thead><tr><th>Player</th><th>Pack</th><th>Drafts</th><th>Avg £m</th><th>Total £m</th><th>Max £m</th><th>Apps</th><th>Goals</th><th>Assists</th><th>Clean sheets</th></tr></thead><tbody>${players.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${esc(packs[p.pack]||p.pack)}</td><td>${p.drafts}</td><td>${p.averageSpend.toFixed(1)}</td><td>${p.totalSpend}</td><td>${p.highestSpend}</td><td>${p.appearances}</td><td>${p.goals}</td><td>${p.assists}</td><td>${p.cleanSheets}</td></tr>`).join('')}</tbody></table></div>
+    ${!players.length?'<p class="muted">No players in this selection.</p>':''}</div>
+    <div class="card"><h3>Strongest seasons</h3>${(d.bestSeasons||[]).map(v=>`<div class="rating-summary"><div><b>${esc(adminDate(v.completedAt))}</b><span>${esc(packs[v.pack]||v.pack)} · Rank ${v.rank||'—'} · ${esc(v.mode)}</span></div><strong>${v.teamRating||'—'}</strong></div>`).join('')||'<p class="muted">No saved seasons yet.</p>'}</div>
+    <div class="card"><h3>Rivals</h3>${(d.rivals||[]).map(r=>`<div class="rating-summary"><div><button class="record-profile-link" data-profile-h2h="${esc(r.two)}">${esc(r.name)} — View H2H</button><span>${r.meetings} meetings</span></div><b>${r.w}W ${r.d}D ${r.l}L</b></div>`).join('')||'<p class="muted">No direct fixtures yet.</p>'}</div>`;
 }
 function adminDate(v){
   try{return new Date(v).toLocaleString()}catch{return String(v||'')}
@@ -407,21 +459,27 @@ function openHistoricalCompetition(competitionId){
 }
 function priorityBidHistoryHtml(rows,title='Priority Bid history'){
   if(!rows?.length)return '';
-  return `<div class="card"><h2>${esc(title)}</h2><p class="muted">Full bid sheets are revealed only after the teams are complete.</p><div class="priority-history-list">${rows.map(r=>{
-    const board=r.board||[],allocs=r.allocations||[];
-    const summary=allocs.map(a=>`<span class="pill"><b>${esc(a.player?.name||board.find(p=>p.id===a.playerId)?.name||'Player')}</b> → ${esc(a.managerName||'Manager')} · £${a.price}m</span>`).join('');
-    const matrix=`<div class="table-wrap"><table class="priority-matrix"><thead><tr><th>Manager</th>${board.map(p=>`<th>${esc(p.name)}</th>`).join('')}</tr></thead><tbody>${(r.bids||[]).map(row=>`<tr><td><b>${esc(row.managerName||'Manager')}</b></td>${board.map(p=>{const b=(row.bids||[]).find(x=>Number(x.playerId)===Number(p.id));return `<td>£${b?.amount??1}m</td>`}).join('')}</tr>`).join('')}</tbody></table></div>`;
+  return `<div class="card"><h2>${esc(title)}</h2><p class="muted">Completed boards, all submitted bids and players never reached. An unsigned player is not a purchase.</p><div class="priority-history-list">${rows.map(r=>{
+    const board=r.board||[],allocs=r.allocations||[],unshown=r.type==='priorityUnshown';
+    const summary=board.map(p=>{
+      const a=allocs.find(x=>Number(x.playerId)===Number(p.id));
+      return `<span class="pill"><b>${esc(p.name)}</b> → ${a?`${esc(a.managerName||'Manager')} · £${a.price}m`:unshown?'Not auctioned':'Not signed'}</span>`;
+    }).join('');
+    const matrix=unshown?'':`<div class="table-wrap"><table class="priority-matrix"><thead><tr><th>Manager</th>${board.map(p=>`<th>${esc(p.name)}</th>`).join('')}</tr></thead><tbody>${(r.bids||[]).map(row=>`<tr><td><b>${esc(row.managerName||'Manager')}</b>${r.skippedManagerIds?.includes(row.managerId)?' (skipped)':''}</td>${board.map(p=>{const b=(row.bids||[]).find(x=>Number(x.playerId)===Number(p.id));return `<td>${b?.amount===0?'SKIP':b?.amount!=null?'£'+b.amount+'m':'—'}</td>`}).join('')}</tr>`).join('')}</tbody></table></div>`;
     const ties=(r.tiebreaks||[]).length?`<div class="priority-tie-history"><b>Tiebreaks</b>${r.tiebreaks.map(t=>{const p=board.find(x=>Number(x.id)===Number(t.playerId));return `<div>${esc(p?.name||'Player')}: ${(t.bids||[]).map(b=>`${esc((r.bids||[]).find(x=>x.managerId===b.managerId)?.managerName||'Manager')} £${b.amount}m`).join(' · ')}${t.randomSecondTie?' · second tie decided randomly':''}</div>`}).join('')}</div>`:'';
-    return `<details class="priority-history-round"><summary>Round ${r.round||'—'} <span>${allocs.length} signings</span></summary><div class="priority-history-summary">${summary}</div>${matrix}${ties}</details>`;
+    return `<details class="priority-history-round"><summary>Round ${r.round||'—'} <span>${unshown?'Not reached':allocs.length+' signings'}</span></summary><div class="priority-history-summary">${summary}</div>${matrix}${ties}</details>`;
   }).join('')}</div></div>`;
 }
 function simpleDraftHistoryHtml(rows,title='Draft / auction history'){
   if(!rows?.length)return '';
-  return `<div class="card"><h2>${esc(title)}</h2><div class="table-wrap"><table class="draft-history-table"><thead><tr><th>#</th><th>Player</th><th>Manager</th><th>Price</th></tr></thead><tbody>${rows.map((h,i)=>`<tr><td>${i+1}</td><td><b>${esc(h.player?.name||'—')}</b></td><td>${h.noSale?'No sale':esc(h.winnerName||'—')}${h.forced?' <span class="forced-tag">forced</span>':''}</td><td>${h.noSale?'—':`£${h.price}m`}</td></tr>`).join('')}</tbody></table></div></div>`;
+  return `<div class="card"><h2>${esc(title)}</h2><div class="table-wrap"><table class="draft-history-table"><thead><tr><th>#</th><th>Player</th><th>Manager</th><th>Price</th></tr></thead><tbody>${rows.map((h,i)=>{
+    const missing=h.notAuctioned||h.notNominated,description=missing?(h.notNominated?'Not nominated':'Not auctioned'):h.noSale?'No sale':'';
+    return `<tr class="${missing?'unauctioned-row':''}"><td>${i+1}</td><td><b>${esc(h.player?.name||'—')}</b>${description?`<div class="muted small">${description}</div>`:''}</td><td>${missing?'—':h.noSale?'No sale':esc(h.winnerName||'—')}${h.forced?' <span class="forced-tag">forced</span>':''}</td><td>${h.noSale?'—':`£${h.price}m`}</td></tr>`;
+  }).join('')}</tbody></table></div></div>`;
 }
 function historicalDraftHistoryHtml(data){
   const rows=data?.draftHistory||[];if(!rows.length)return '';
-  return rows.some(r=>r.type==='priorityRound')?priorityBidHistoryHtml(rows.filter(r=>r.type==='priorityRound'),'Priority Bid history'):simpleDraftHistoryHtml(rows);
+  return rows.some(r=>r.type==='priorityRound'||r.type==='priorityUnshown')?priorityBidHistoryHtml(rows.filter(r=>r.type==='priorityRound'||r.type==='priorityUnshown'),'Priority Bid history'):simpleDraftHistoryHtml(rows);
 }
 function historicalCompetitionScreen(){
   if(historicalCompetition?.loading){shell('<div class="card"><h1>Saved Draft</h1><p class="muted">Loading the completed season…</p></div>');return;}
@@ -431,7 +489,7 @@ function historicalCompetitionScreen(){
   const viewToggle=`<div class="post-view-toggle"><button class="result-tab ${historicalView==='results'?'active':''}" data-historical-view="results">Results</button><button class="result-tab ${historicalView==='teams'?'active':''}" data-historical-view="teams">Teams</button></div>`;
   let body='';
   if(historicalView==='teams'){
-    body=teamReviewHtml(participants,d.playerStats||[],historicalTeamId,true,d.matches||[]);
+    body=teamReviewHtml(participants,d.playerStats||[],historicalTeamId,true,d.matches||[])+historicalDraftHistoryHtml(d);
   }else{
     const nav=`<div class="result-tabs"><button class="result-tab ${historicalResultTab==='season'?'active':''}" data-historical-tab="season">Season</button><button class="result-tab ${historicalResultTab==='players'?'active':''}" data-historical-tab="players">Player stats</button><button class="result-tab ${historicalResultTab==='tots'?'active':''}" data-historical-tab="tots">Team of Season</button></div>`;
     if(historicalResultTab==='season'){
@@ -443,7 +501,7 @@ function historicalCompetitionScreen(){
       body=`${nav}<div class="card"><div class="budget"><div><h2>Team of the Season</h2><p class="muted no-margin">The Team of the Season generated when this draft was played.</p></div><b>${esc(d.teamOfSeason?.formation||'XI')}</b></div><div class="spacer14"></div>${totsPitchHtml(d.teamOfSeason)}</div>`;
     }
   }
-  shell(`<div class="card records-header"><div><div class="muted small">SAVED OFFICIAL DRAFT · ${esc(adminDate(c.completedAt))}</div><h1>🏆 ${esc(champion?.displayName||'Completed draft')}</h1><p class="muted no-margin">${esc(pack)} · ${esc(mode)}</p></div><button class="secondary" id="historicalBack">${historicalReturnSection==='all'?'Back to All-Time':'Back to rivalry'}</button></div>${viewToggle}${body}`);
+  shell(`<div class="card records-header"><div><div class="muted small">SAVED OFFICIAL DRAFT · ${esc(adminDate(c.completedAt))}</div><h1>🏆 ${esc(champion?.displayName||'Completed draft')}</h1><p class="muted no-margin">${esc(pack)} · ${esc(mode)}</p></div><button class="secondary" id="historicalBack">Back to Records</button></div>${viewToggle}${body}`);
   document.querySelector('#historicalBack').onclick=()=>{historicalCompetition=null;recordsScreen();};
   document.querySelectorAll('[data-historical-view]').forEach(b=>b.onclick=()=>{historicalView=b.dataset.historicalView;recordsScreen();});
   document.querySelectorAll('[data-historical-tab]').forEach(b=>b.onclick=()=>{historicalResultTab=b.dataset.historicalTab;recordsScreen();});
@@ -518,39 +576,39 @@ function recordsScreen(){
     shell(`<div class="card records-header"><div><div class="muted small">PERMANENT HISTORY</div><h1>🏆 All-Time Records</h1></div><button class="secondary" id="recordsBack">Close</button></div>${adminRecordsHtml()}`);
     document.querySelector('#recordsBack').onclick=closeRecords;wireAdminControls();return;
   }
-  const groups=recordsSummaryData.groups||[];
-  const nav=`<div class="record-tabs"><button class="result-tab ${recordsSection==='rivalry'?'active':''}" data-record-section="rivalry">Rivalry Groups</button><button class="result-tab ${recordsSection==='all'?'active':''}" data-record-section="all">All Managers</button></div>`;
-  const filterCount=recordFilterCount();
-  const filterButton=`<button class="secondary" id="recordsFilterButton">Filters${filterCount?` (${filterCount})`:''} ⚙</button>${recordsFiltersHtml()}${recordFilterSummary()}`;
+  const profiles=recordsSummaryData.profiles||[],picker=(id,selected)=>`<select id="${id}">${profiles.map(p=>`<option value="${esc(p.profileId)}" ${p.profileId===selected?'selected':''}>${esc(p.name)}</option>`).join('')}</select>`;
+  const nav=`<div class="record-tabs">${[['all','Leaderboards'],['h2h','Head to Head'],['profile','Manager Profiles']].map(([key,label])=>`<button class="result-tab ${recordsSection===key?'active':''}" data-record-section="${key}">${label}</button>`).join('')}</div>`;
+  const filterCount=recordFilterCount(),filterButton=`<button class="secondary" id="recordsFilterButton">Filters${filterCount?` (${filterCount})`:''} ⚙</button>${recordsFiltersHtml()}${recordFilterSummary()}`;
   let body='';
   if(recordsSection==='all'){
-    const meta=recordsAllData?`${recordsAllData.matchingDrafts} matching draft${recordsAllData.matchingDrafts===1?'':'s'} · ${recordsAllData.matchingMatches} matches`:'Loading filtered records…';
-    body=`<div class="card"><h2>All-Time leaderboard</h2><p class="muted">Every completed official season stored across every room and rivalry group. Ranked by PPG, with Titles as the first tiebreak.</p>${filterButton}<p class="muted small records-match-count">${esc(meta)}</p>${recordsAllData?historyTableHtml(recordsAllData.table||[]):'<div class="muted">Loading…</div>'}</div>${recordsAllData?`<div class="card"><h2>Draft History</h2><p class="muted">Every official saved draft matching the filters, newest first.</p>${draftHistoryCardsHtml(recordsAllData.drafts||[])}</div>`:''}`;
-  }else if(!groups.length){
-    body=`<div class="card"><h2>Rivalry Groups</h2><p class="muted">No completed official seasons have been saved yet.</p>${filterButton}</div>`;
+    const meta=recordsAllData?`${recordsAllData.matchingDrafts} matching drafts · ${recordsAllData.matchingMatches} matches`:'Loading filtered records…';
+    body=`<div class="card"><h2>All-Time leaderboard</h2><p class="muted">Only drafts involving allowed managers count. Select a subset of friends in Filters, or require all selected managers for an exact group.</p>${filterButton}<p class="muted small records-match-count">${esc(meta)}</p>${recordsAllData?historyTableHtml(recordsAllData.table||[]):'<div class="muted">Loading…</div>'}</div>${recordsAllData?`<div class="card"><h2>Draft History</h2>${draftHistoryCardsHtml(recordsAllData.drafts||[])}</div>`:''}`;
+  }else if(recordsSection==='h2h'){
+    const d=recordsH2HData;
+    body=`<div class="card"><h2>Direct head-to-head across drafts</h2><p class="muted">Only matches where these two managers played each other. Other managers in shared drafts have no effect.</p>${filterButton}<div class="filter-columns"><div><label>Manager 1</label>${picker('recordsH2HOne',recordsH2HOne)}</div><div><label>Manager 2</label>${picker('recordsH2HTwo',recordsH2HTwo)}</div></div>
+      ${!d?'<p class="muted">Select two different managers.</p>':`<div class="record-metric-grid">${[[d.oneName+' wins',d.w],['Draws',d.d],[d.twoName+' wins',d.l],[d.oneName+' goals',d.gf],[d.twoName+' goals',d.ga],['Direct meetings',d.meetings],['Shared drafts',d.sharedDrafts],[d.oneName+' win rate',d.winPercentage.toFixed(1)+'%']].map(([k,v])=>`<div><b>${esc(String(v))}</b><span class="muted small">${esc(k)}</span></div>`).join('')}</div>`}</div>`;
   }else{
-    const options=groups.map(g=>`<option value="${esc(g.key)}" ${g.key===selectedRivalryKey?'selected':''}>${esc(g.names.join(' / '))} · ${g.drafts} draft${g.drafts===1?'':'s'}</option>`).join('');
-    const meta=recordsGroupData?`${recordsGroupData.matchingDrafts} matching draft${recordsGroupData.matchingDrafts===1?'':'s'} · ${recordsGroupData.matchingMatches} matches`:'Loading filtered table…';
-    body=`<div class="card"><div class="budget"><div><h2>Rivalry Group</h2><p class="muted no-margin">Only drafts containing exactly this combination of managers count.</p></div></div><div class="spacer10"></div><select id="rivalryGroupSelect">${options}</select><div class="spacer10"></div>${filterButton}<p class="muted small records-match-count">${esc(meta)}</p>${recordsGroupData?historyTableHtml(recordsGroupData.table||[]):'<div class="muted">Loading…</div>'}</div>${recordsGroupData?`<div class="card"><h2>Draft History</h2><p class="muted">Open any saved official draft and revisit its final results and teams.</p>${draftHistoryCardsHtml(recordsGroupData.drafts||[])}</div>`:''}`;
+    body=`<div class="card"><h2>Manager profile</h2>${filterButton}<label>Select manager</label>${picker('recordsProfileSelect',recordsManagerId)}</div>${recordProfileHtml()}`;
   }
   shell(`<div class="card records-header"><div><div class="muted small">PERMANENT HISTORY</div><h1>🏆 All-Time Records</h1>${recordsConnectionHtml()}</div><div class="profile-actions">${recordsAdminConfigured?'<button class="secondary small-button" id="recordsAdmin">Admin</button>':''}<button class="secondary" id="recordsBack">Back</button></div></div>${nav}${body}`);
   document.querySelector('#recordsBack').onclick=closeRecords;
   const adminButton=document.querySelector('#recordsAdmin');if(adminButton)adminButton.onclick=openAdminRecords;
-  document.querySelectorAll('[data-record-section]').forEach(b=>b.onclick=()=>{
-    recordsSection=b.dataset.recordSection;
-    if(recordsSection==='all')loadAllRecords();else if(selectedRivalryKey)loadRivalryGroup();else recordsScreen();
-  });
+  document.querySelectorAll('[data-record-section]').forEach(b=>b.onclick=()=>{recordsSection=b.dataset.recordSection;loadCurrentRecordSection();});
   document.querySelectorAll('[data-historical-comp]').forEach(b=>b.onclick=()=>openHistoricalCompetition(b.dataset.historicalComp));
-  const sel=document.querySelector('#rivalryGroupSelect');if(sel)sel.onchange=e=>{selectedRivalryKey=e.target.value;loadRivalryGroup();};
+  document.querySelectorAll('[data-open-profile]').forEach(b=>b.onclick=()=>{recordsManagerId=b.dataset.openProfile;recordsSection='profile';loadRecordsManagerProfile();});
+  document.querySelectorAll('[data-profile-h2h]').forEach(b=>b.onclick=()=>{recordsH2HOne=recordsManagerId;recordsH2HTwo=b.dataset.profileH2h;recordsSection='h2h';loadRecordsH2H();});
+  const one=document.querySelector('#recordsH2HOne'),two=document.querySelector('#recordsH2HTwo');
+  if(one)one.onchange=e=>{recordsH2HOne=e.target.value;loadRecordsH2H();};
+  if(two)two.onchange=e=>{recordsH2HTwo=e.target.value;loadRecordsH2H();};
+  const profilePicker=document.querySelector('#recordsProfileSelect');if(profilePicker)profilePicker.onchange=e=>{recordsManagerId=e.target.value;loadRecordsManagerProfile();};
+  const playerPack=document.querySelector('#profilePlayerPack');if(playerPack)playerPack.onchange=e=>{recordsPlayerPack=e.target.value;recordsScreen();};
   const filterBtn=document.querySelector('#recordsFilterButton'),panel=document.querySelector('#recordsFilterPanel');if(filterBtn&&panel)filterBtn.onclick=()=>{panel.hidden=!panel.hidden};
-  const all=document.querySelector('#recordsAllFilters');if(all)all.onclick=()=>{document.querySelectorAll('[data-filter-mode],[data-filter-pack]').forEach(x=>{x.checked=true});};
-  const reset=document.querySelector('#recordsClearFilters');if(reset)reset.onclick=()=>{document.querySelectorAll('[data-filter-mode],[data-filter-pack]').forEach(x=>{x.checked=true});};
+  const all=document.querySelector('#recordsAllFilters');if(all)all.onclick=()=>{document.querySelectorAll('[data-filter-mode],[data-filter-pack],[data-filter-manager]').forEach(x=>x.checked=true);const req=document.querySelector('#requireAllManagers');if(req)req.checked=false;};
+  const reset=document.querySelector('#recordsClearFilters');if(reset)reset.onclick=()=>{document.querySelectorAll('[data-filter-mode],[data-filter-pack],[data-filter-manager]').forEach(x=>x.checked=true);const req=document.querySelector('#requireAllManagers');if(req)req.checked=false;};
   const apply=document.querySelector('#recordsApplyFilters');if(apply)apply.onclick=()=>{
-    const modes=[...document.querySelectorAll('[data-filter-mode]:checked')].map(x=>x.dataset.filterMode);
-    const packs=[...document.querySelectorAll('[data-filter-pack]:checked')].map(x=>x.dataset.filterPack);
-    if(!modes.length||!packs.length)return showToast('Choose at least one mode and one player pack.');
-    selectedRecordModes=new Set(modes);selectedRecordPacks=new Set(packs);saveRecordFilters();
-    if(recordsSection==='all')loadAllRecords();else loadRivalryGroup();
+    const modes=[...document.querySelectorAll('[data-filter-mode]:checked')].map(x=>x.dataset.filterMode),packs=[...document.querySelectorAll('[data-filter-pack]:checked')].map(x=>x.dataset.filterPack),managers=[...document.querySelectorAll('[data-filter-manager]:checked')].map(x=>x.dataset.filterManager);
+    if(!modes.length||!packs.length||!managers.length)return showToast('Choose at least one mode, pack and allowed manager.');
+    selectedRecordModes=new Set(modes);selectedRecordPacks=new Set(packs);selectedRecordManagers=new Set(managers);requireAllSelectedManagers=!!document.querySelector('#requireAllManagers')?.checked;saveRecordFilters();loadCurrentRecordSection();
   };
 }
 
@@ -562,12 +620,12 @@ function lobby(){
   const descriptions={
     freeform:'Draft any 11 players in the normal open auction. Choose and arrange your formation after the draft.',
     nomination:'Managers take turns choosing who enters the auction. The pool is larger (18 per manager), and every nomination starts with a real £1m+ opening bid.',
-    blind:'Every player is a sealed bid. Opponent budgets, squads, bids and winners stay secret until all teams are set.',
-    priority:'Every round shows one player per manager. Bid blindly on all of them; the highest remaining bids resolve first until everyone gets one player.',
+    blind:'Every player is a sealed bid. Opponent bids and squads stay secret during the auction; complete bid history is revealed once the draft ends.',
+    priority:'Up to 14 boards of players, 3 optional skip rounds each. Bid on every player or skip; everyone builds an XI of 11. Bids resolve highest first.',
     hard:'Legacy mode. Choose your formation now; every signing must fit an open position and stays in its assigned slot.'
   };
   const legacyControl=host?`<details class="legacy-mode-box"><summary>Legacy modes</summary><p class="muted small">Hard Mode is retired from the main mode list while we decide whether to redesign it.</p><button class="secondary big" id="legacyHard">Use Hard Mode (Legacy)</button></details>`:(state.mode==='hard'?'<div class="legacy-badge">Legacy mode</div>':'');
-  const prioritySettings=state.mode==='priority'?`<div class="card"><h2>Priority Bid visibility</h2><p class="muted small">The rules are identical; this only changes what managers can see during the draft.</p><div class="priority-visibility-row"><button class="${state.priorityVisibility==='visible'?'primary':'secondary'} grow priority-visibility" data-visibility="visible" ${host?'':'disabled'}>Visible</button><button class="${state.priorityVisibility==='hidden'?'primary':'secondary'} grow priority-visibility" data-visibility="hidden" ${host?'':'disabled'}>Hidden</button></div><p class="muted small">${state.priorityVisibility==='hidden'?'Hidden: opponent squads, budgets, winners, prices and remaining-position counts stay secret until the final team reveal.':'Visible: opponent squads/budgets stay visible; each round reveals only winning allocations and prices, plus remaining positional supply.'}</p></div>`:'';
+  const prioritySettings=state.mode==='priority'?`<div class="card"><h2>Priority Bid visibility</h2><p class="muted small">The rules are identical; this only changes what managers can see during the draft.</p><div class="priority-visibility-row"><button class="${state.priorityVisibility==='visible'?'primary':'secondary'} grow priority-visibility" data-visibility="visible" ${host?'':'disabled'}>Visible</button><button class="${state.priorityVisibility==='hidden'?'primary':'secondary'} grow priority-visibility" data-visibility="hidden" ${host?'':'disabled'}>Hidden</button></div><p class="muted small">${state.priorityVisibility==='hidden'?'Hidden: opponent squads, budgets, winners and prices stay secret during bidding. Full auction history is revealed after the auction ends.':'Visible: opponent squads/budgets stay visible; each round reveals only winning allocations and prices, plus remaining positional supply.'}</p></div>`:'';
   const formationCard=state.mode==='hard'
     ? `<div class="card"><h2>Your formation</h2><select id="formation"><option value="">Choose formation</option>${HARD_FORMATIONS.map(f=>`<option ${m.formation===f?'selected':''}>${f}</option>`).join('')}</select><div class="spacer10"></div><button class="${m.ready?'secondary':'primary'} big" id="ready" ${!m.formation?'disabled':''}>${m.ready?'Not ready':'Ready'}</button></div>`
     : `<div class="card"><h2>Your draft</h2><p class="muted">No formation yet. Draft any 11 players; you will build your XI afterwards.</p><button class="${m.ready?'secondary':'primary'} big" id="ready">${m.ready?'Not ready':'Ready'}</button></div>`;
@@ -674,19 +732,20 @@ function priorityDraftPanel(m,c){
   if(c.priorityStage==='result'){
     const rows=c.priorityAllocations||[];
     const hidden=c.priorityVisibility==='hidden';
-    return `<div class="card priority-resolution"><div class="player-counter">ROUND ${c.priorityRound} OF 11</div><h2>${hidden?'Your result':'Round resolved'}</h2>${rows.length?rows.map(a=>`<div class="priority-result-row"><div><b>${esc(a.player?.name||'Player')}</b><div class="muted small">${esc(a.player?.positions?.join(' / ')||'')}</div></div><div class="right"><b>${hidden?'You':esc(a.managerName||'Manager')}</b><div>£${a.price}m</div></div></div>`).join(''):'<p class="muted">Other allocations remain hidden until the final team reveal.</p>'}<p class="muted small">Next board loading…</p></div>`;
+    return `<div class="card priority-resolution"><div class="player-counter">ROUND ${c.priorityRound} OF 14</div><h2>${hidden?'Your result':'Round resolved'}</h2>${rows.length?rows.map(a=>`<div class="priority-result-row ${a.managerId===c.viewerId?'priority-my-signing':''}" style="${a.managerId===c.viewerId?`--manager-color:${esc(m.color||'#166534')}`:''}"><div>${a.managerId===c.viewerId?'<span class="priority-owned-label">YOUR SIGNING</span>':''}<b>${esc(a.player?.name||'Player')}</b><div class="muted small">${esc(a.player?.positions?.join(' / ')||'')}</div></div><div class="right"><b>${hidden?'You':esc(a.managerName||'Manager')}</b><div>£${a.price}m</div></div></div>`).join(''):'<p class="muted">Other allocations remain hidden until the final team reveal.</p>'}<p class="muted small">Next board loading…</p></div>`;
   }
   if(c.priorityStage==='tiebreak'){
     const eligible=!!c.priorityTiebreakEligible,locked=!!c.myPriorityLocked,min=Number(c.priorityTieMin||1),max=Number(c.priorityMaxBid||min),bid=Number(c.myPriorityTieBid||min);
-    if(!eligible)return `<div class="card"><div class="player-counter">ROUND ${c.priorityRound} OF 11 · TIEBREAK</div><div id="timer" class="timer ${Number(c.timeLeft)<=5?'warn':''}">${c.timeLeft}</div><h2>Tiebreak in progress</h2><p class="muted">The round will continue as soon as the tied managers settle it.</p>${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}</div>`;
-    return `<div class="card priority-tiebreak"><div class="player-counter">ROUND ${c.priorityRound} OF 11 · TIEBREAK</div><div id="timer" class="timer ${Number(c.timeLeft)<=5?'warn':''}">${c.timeLeft}</div><h2>${esc(c.priorityTiePlayer?.name||'Tied player')}</h2><p class="muted">Your original £${min}m bid carries forward. Keep it or increase it; you cannot lower it.</p><div class="priority-tie-control"><button class="secondary priority-tie-step" data-step="-1" ${locked||state.paused?'disabled':''}>−</button><input id="priorityTieInput" inputmode="numeric" type="number" min="${min}" max="${max}" value="${bid}" ${locked||state.paused?'disabled':''}><span>m</span><button class="secondary priority-tie-step" data-step="1" ${locked||state.paused?'disabled':''}>+</button></div><button class="${locked?'secondary':'primary'} big" id="priorityLock" ${state.paused?'disabled':''}>${locked?'Unlock Decision':'Lock Decision'}</button>${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}</div>`;
+    if(!eligible)return `<div class="card"><div class="player-counter">ROUND ${c.priorityRound} OF 14 · TIEBREAK</div><div id="timer" class="timer ${Number(c.timeLeft)<=5?'warn':''}">${c.timeLeft}</div><h2>Tiebreak in progress</h2><p class="muted">The round will continue as soon as the tied managers settle it.</p>${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}</div>`;
+    return `<div class="card priority-tiebreak"><div class="player-counter">ROUND ${c.priorityRound} OF 14 · TIEBREAK</div><div id="timer" class="timer ${Number(c.timeLeft)<=5?'warn':''}">${c.timeLeft}</div><h2>${esc(c.priorityTiePlayer?.name||'Tied player')}</h2><p class="muted">Your original £${min}m bid carries forward. Keep it or increase it; you cannot lower it.</p><div class="priority-tie-control"><button class="secondary priority-tie-step" data-step="-1" ${locked||state.paused?'disabled':''}>−</button><input id="priorityTieInput" inputmode="numeric" type="number" min="${min}" max="${max}" value="${bid}" ${locked||state.paused?'disabled':''}><span>m</span><button class="secondary priority-tie-step" data-step="1" ${locked||state.paused?'disabled':''}>+</button></div><button class="${locked?'secondary':'primary'} big" id="priorityLock" ${state.paused?'disabled':''}>${locked?'Unlock Decision':'Lock Decision'}</button>${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}</div>`;
   }
   const locked=!!c.myPriorityLocked,bids=c.myPriorityBids||{},max=Number(c.priorityMaxBid||1);
+  const skipping=!!c.myPrioritySkip,complete=Number(c.prioritySquadCount||0)>=11;
   const rows=(c.priorityBoard||[]).map(p=>{
     const bid=Number(bids[p.id]||1);
-    return `<div class="priority-bid-row" data-priority-player="${p.id}"><div class="priority-player-info"><b>${esc(p.name)}</b><span>${esc(p.positions.join(' / '))}</span></div><div class="priority-bid-control"><button class="secondary priority-step" data-player="${p.id}" data-step="-1" ${locked||state.paused?'disabled':''}>−</button><div class="priority-bid-input-wrap"><span>£</span><input class="priority-bid-input" data-player="${p.id}" inputmode="numeric" type="number" min="1" max="${max}" value="${bid}" ${locked||state.paused?'disabled':''}><span>m</span></div><button class="secondary priority-step" data-player="${p.id}" data-step="1" ${locked||state.paused?'disabled':''}>+</button></div></div>`;
+    return `<div class="priority-bid-row" data-priority-player="${p.id}"><div class="priority-player-info"><b>${esc(p.name)}</b><span>${esc(p.positions.join(' / '))}</span></div><div class="priority-bid-control"><button class="secondary priority-step" data-player="${p.id}" data-step="-1" ${locked||skipping||complete||state.paused?'disabled':''}>−</button><div class="priority-bid-input-wrap"><span>£</span><input class="priority-bid-input" data-player="${p.id}" inputmode="numeric" type="number" min="1" max="${max}" value="${bid}" ${locked||skipping||complete||state.paused?'disabled':''}><span>m</span></div><button class="secondary priority-step" data-player="${p.id}" data-step="1" ${locked||skipping||complete||state.paused?'disabled':''}>+</button></div></div>`;
   }).join('');
-  return `<div class="card priority-board"><div class="priority-board-head"><div><div class="player-counter">ROUND ${c.priorityRound} OF 11</div><h2>Bid on every player</h2><p class="muted no-margin">Bids above £1m must be unique. £1m can be repeated.</p></div><div id="timer" class="timer ${Number(c.timeLeft)<=5?'warn':''}">${c.timeLeft}</div></div>${priorityPositionCounterHtml(c.priorityRemainingPositions)}<div class="priority-bid-list">${rows}</div><div class="priority-sticky"><div><span class="muted small">BUDGET</span><b>£${m.budget}m</b><span class="muted small">MAX SAFE BID £${max}m</span></div><button class="${locked?'secondary':'primary'}" id="priorityLock" ${state.paused?'disabled':''}>${locked?'Unlock Decision':'Lock Decision'}</button></div>${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}</div>`;
+  return `<div class="card priority-board"><div class="priority-board-head"><div><div class="player-counter">ROUND ${c.priorityRound} OF 14</div><h2>Bid on every player</h2><p class="muted no-margin">Bids above £1m must be unique. £1m can be repeated.</p></div><div id="timer" class="timer ${Number(c.timeLeft)<=5?'warn':''}">${c.timeLeft}</div></div>${priorityPositionCounterHtml(c.priorityRemainingPositions)}${complete?'<p class="required">Squad complete — you are automatically sitting out this round.</p>':`<div class="priority-skip-box"><b>${3-Number(c.prioritySkipsUsed||0)} skip(s) left</b><p class="muted small">Skipping means £0 on every player and no random £1 allocation.</p><button type="button" class="${skipping?'primary':'secondary'}" id="prioritySkip" ${locked||state.paused||(!skipping&&!c.priorityCanSkip)?'disabled':''}>${skipping?'✓ Skipping — undo':'Skip this round'}</button></div>`}<div class="priority-bid-list">${rows}</div><div class="priority-sticky"><div><span class="muted small">BUDGET</span><b>£${m.budget}m</b><span class="muted small">MAX SAFE BID £${max}m</span></div><button class="${locked?'secondary':'primary'}" id="priorityLock" ${complete||state.paused?'disabled':''}>${locked?'Unlock Decision':'Lock Decision'}</button></div>${state.paused?'<div class="required">Draft paused by commissioner.</div>':''}</div>`;
 }
 function priorityUsedAmounts(c,exceptPlayerId){
   const used=new Set();for(const [pid,v] of Object.entries(c.myPriorityBids||{})){if(Number(pid)!==Number(exceptPlayerId)&&Number(v)>1)used.add(Number(v));}return used;
@@ -708,6 +767,7 @@ function wirePriorityControls(){
     return;
   }
   if(c.priorityStage!=='bidding')return;
+  const skipBtn=document.querySelector('#prioritySkip');if(skipBtn)skipBtn.onclick=()=>socket.emit('setPrioritySkip',{skip:!c.myPrioritySkip},r=>{if(!r?.ok)showToast(r?.error||'Could not change skip')});
   const submit=(playerId,amount,input)=>socket.emit('setPriorityBid',{playerId:Number(playerId),amount:Number(amount)},r=>{
     if(!r?.ok){showToast(r?.error||'Could not set bid');if(input)input.value=String(c.myPriorityBids?.[playerId]||1);return;}
     c.myPriorityBids[playerId]=Number(r.amount);if(input)input.value=String(r.amount);
@@ -857,7 +917,7 @@ function teamBuild(){
       return `<button type="button" class="picker-player" data-player="${p.id}" ${selectedLineupSlot===null?'disabled':''}><span><b>${esc(p.name)}</b><small>${esc(p.positions.join(' / '))}</small></span><span class="picker-position">${slotLabel||'—'}</span></button>`;
     }).join('')}</div></div>
     <div class="card"><h2>Managers</h2>${state.managers.map(x=>`<div class="manager manager-colour-row" style="--manager-color:${esc(x.color||'#64748b')}"><b class="manager-name-with-dot">${managerNameHtml(x)}</b><div data-team-status="${esc(x.id)}" class="${x.teamReady?'ready':'notready'}">${x.teamReady?'TEAM SET':'ARRANGING'}</div></div>`).join('')}</div>
-    <button class="${m.teamReady?'secondary':'primary'} big" id="teamReady" ${!m.finalFormation?'disabled':''}>${m.teamReady?'Unset team':'Set team'}</button>`);
+    <button class="${m.teamReady?'secondary':'primary'} big" id="teamReady" ${!m.finalFormation?'disabled':''}>${m.teamReady?'Unset team':'Set team'}</button>${draftHistoryHtml()}`);
 
   document.querySelector('#finalFormation').onchange=e=>{
     selectedLineupSlot=null;
@@ -878,7 +938,7 @@ function teamBuild(){
 
 function ratingPanelHtml(r){
   if(!r)return '<div class="muted small">Pre-simulation team ratings unavailable for this saved team.</div>';
-  return `<div class="ratings"><div class="overall-rating"><span>OVERALL</span><strong>${r.overall}</strong></div><div class="rating-grid"><div><span>Attack</span><b>${r.attack}</b></div><div><span>Midfield</span><b>${r.midfield}</b></div><div><span>Defence</span><b>${r.defence}</b></div><div><span>Positional Fit</span><b>${r.positionalFit}</b></div><div><span>Team Balance</span><b>${r.teamBalance}</b></div><div><span>Formation Fit</span><b>${r.formationSuitability}</b></div></div></div>`;
+  return `<div class="ratings"><div class="overall-rating"><span>OVERALL</span><strong>${r.overall}</strong></div><div class="rating-grid"><div><span>Attack</span><b>${r.attack}</b></div><div><span>Midfield</span><b>${r.midfield}</b></div><div><span>Defence</span><b>${r.defence}</b></div><div><span>Positional Fit</span><b>${r.positionalFit}</b></div><div><span>Team Balance</span><b>${r.teamBalance}</b></div>${r.attackBalance!==undefined?`<div><span>Attack Balance</span><b>${r.attackBalance}</b></div><div><span>Midfield Balance</span><b>${r.midfieldBalance}</b></div><div><span>Defence Balance</span><b>${r.defenceBalance}</b></div><div><span>Wide Partnerships</span><b>${r.width}</b></div>`:`<div><span>Formation Fit (legacy)</span><b>${r.formationSuitability??'—'}</b></div>`}</div></div>`;
 }
 function ratingsHtml(m){return ratingPanelHtml(state.teamRatings?.[m.id]);}
 function reviewManagerKey(m){return String(m.profileId||m.id||m.managerId||'')}
@@ -943,9 +1003,8 @@ function revealedTeamHtml(m){
 
 function draftHistoryHtml(){
   if(!state.draftHistory?.length)return '';
-  if(state.mode==='priority')return priorityBidHistoryHtml(state.draftHistory.filter(r=>r.type==='priorityRound'),'Priority Bid reveal');
-  if(state.mode==='blind')return simpleDraftHistoryHtml(state.draftHistory,'Blind auction reveal');
-  return '';
+  if(state.mode==='priority')return priorityBidHistoryHtml(state.draftHistory.filter(r=>r.type==='priorityRound'||r.type==='priorityUnshown'),'Priority Bid reveal');
+  return simpleDraftHistoryHtml(state.draftHistory,`${modeName()} — complete player pool`);
 }
 function reveal(){
   const host=state.hostId===meId;
@@ -1037,9 +1096,9 @@ function fullResults(){
   const playoffs=(sim.playoffs||[]).length?`<div class="card"><h2>Title tiebreak</h2><p class="muted small">The league tiebreakers could not separate the leaders, so the title was decided on the pitch.</p>${sim.playoffs.map(m=>matchHtml(m,'Tiebreak playoff')).join('')}</div>`:'';
   let body='';
   if(postSimView==='teams'){
-    body=teamReviewHtml(state.managers,sim.playerStats||[],reviewManagerId,false,sim.matches||[]);
+    body=teamReviewHtml(state.managers,sim.playerStats||[],reviewManagerId,false,sim.matches||[])+draftHistoryHtml();
   }else{
-    if(resultsTab==='season') body=`<div class="card"><h2>Final table</h2>${standingsHtml(sim.table)}</div>${playoffs}<div class="card"><h2>Gameweek results</h2><div class="matches">${gameweekResultsHtml(sim.matches||[],sim.gameweeks||null)}</div></div><div class="card"><h2>Team ratings</h2><p class="muted small">The team ratings that drove the simulation. Individual hidden player ratings remain secret.</p>${state.managers.map(m=>`<div class="rating-summary"><div><b>${esc(m.name)}</b><span>${isFreeformLike()?esc(m.finalFormation||'XI'):esc(m.formation||'XI')}</span></div><strong>${state.teamRatings?.[m.id]?.overall??'—'}</strong></div>`).join('')}</div>${['blind','priority'].includes(state.mode)?draftHistoryHtml():''}`;
+    if(resultsTab==='season') body=`<div class="card"><h2>Final table</h2>${standingsHtml(sim.table)}</div>${playoffs}<div class="card"><h2>Gameweek results</h2><div class="matches">${gameweekResultsHtml(sim.matches||[],sim.gameweeks||null)}</div></div><div class="card"><h2>Team ratings</h2><p class="muted small">The team ratings that drove the simulation. Individual hidden player ratings remain secret.</p>${state.managers.map(m=>`<div class="rating-summary"><div><b>${esc(m.name)}</b><span>${isFreeformLike()?esc(m.finalFormation||'XI'):esc(m.formation||'XI')}</span></div><strong>${state.teamRatings?.[m.id]?.overall??'—'}</strong></div>`).join('')}</div>${draftHistoryHtml()}`;
     else if(resultsTab==='players') body=`<div class="card"><h2>League player stats</h2><p class="muted">Top 10 performers across every manager's XI.</p>${leaderboardHtml(statsMetric)}</div>`;
     else if(resultsTab==='tots') body=`<div class="card"><div class="budget"><div><h2>Team of the Season</h2><p class="muted no-margin">Best-performing valid XI by average match rating, using the positions players were actually deployed in with sensible neighbouring roles.</p></div><b>${esc(sim.teamOfSeason?.formation||'XI')}</b></div><div class="spacer14"></div>${totsPitchHtml(sim.teamOfSeason)}</div>`;
     else body=sessionHtml();
@@ -1105,10 +1164,11 @@ function samePriorityInteraction(a,b){
 }
 function patchPriorityInteraction(){
   const c=state?.current;if(!c)return;
-  const locked=!!c.myPriorityLocked,disabled=locked||!!state.paused;
+  const locked=!!c.myPriorityLocked,disabled=locked||!!c.myPrioritySkip||Number(c.prioritySquadCount||0)>=11||!!state.paused;
   const lock=document.querySelector('#priorityLock');
   if(lock){lock.textContent=locked?'Unlock Decision':'Lock Decision';lock.classList.toggle('primary',!locked);lock.classList.toggle('secondary',locked);lock.disabled=!!state.paused;}
   if(c.priorityStage==='bidding'){
+    const skipBtn=document.querySelector('#prioritySkip');if(skipBtn){skipBtn.textContent=c.myPrioritySkip?'✓ Skipping — undo':'Skip this round';skipBtn.disabled=locked||!!state.paused||(!c.myPrioritySkip&&!c.priorityCanSkip);}
     document.querySelectorAll('.priority-bid-input').forEach(input=>{
       const pid=input.dataset.player;
       if(document.activeElement!==input)input.value=String(c.myPriorityBids?.[pid]??1);
