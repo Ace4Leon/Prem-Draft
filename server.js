@@ -122,7 +122,42 @@ async function renamePermanentProfile(code,name){
   return rows[0]||null;
 }
 
-function blankCareer(profileId,name){return {profileId,name,drafts:0,titles:0,p:0,w:0,d:0,l:0,gf:0,ga:0,gd:0,pts:0,ppg:0};}
+// Records helpers are deliberately separate from the public player-assessment API.
+function draftSizeOf(c){return (c.data?.participants||c.participant_profile_ids||[]).length;}
+function matchDraftSize(c,sizes){
+  if(!Array.isArray(sizes))return true;
+  return sizes.includes(String(draftSizeOf(c))) || (draftSizeOf(c)>=5&&sizes.includes('5+'));
+}
+function historicalTopRatingCredits(comp){
+  const participants=(comp.data?.participants||[]).filter(p=>p.profileId);
+  const values=participants.map(p=>({id:p.profileId,value:Number(p.teamOverallPrecise??p.teamRating?.overall)})).filter(p=>Number.isFinite(p.value));
+  if(!values.length)return new Map();
+  const max=Math.max(...values.map(p=>p.value));
+  // Historical integer ties share credit. New games use unrounded values.
+  const winners=values.filter(p=>Math.abs(p.value-max)<1e-9);
+  return new Map(winners.map(p=>[p.id,1/winners.length]));
+}
+function emptySplit(){return {p:0,w:0,d:0,l:0,gf:0,ga:0,pts:0,winPct:0,ppg:0,gfPerGame:0,gaPerGame:0};}
+function addSplit(split,scored,conceded){
+  split.p++;split.gf+=scored;split.ga+=conceded;
+  if(scored>conceded){split.w++;split.pts+=3;}else if(scored<conceded){split.l++;}else{split.d++;split.pts++;}
+}
+function finaliseSplit(s){s.winPct=s.p?100*s.w/s.p:0;s.drawPct=s.p?100*s.d/s.p:0;s.lossPct=s.p?100*s.l/s.p:0;s.ppg=s.p?s.pts/s.p:0;s.gfPerGame=s.p?s.gf/s.p:0;s.gaPerGame=s.p?s.ga/s.p:0;return s;}
+function profileVenueSplits(comps,profileId,opponentId=null){
+  const home=emptySplit(),away=emptySplit();
+  for(const c of comps)for(const m of c.data?.matches||[]){
+    if(m.homeProfileId===profileId&&(!opponentId||m.awayProfileId===opponentId))addSplit(home,Number(m.homeGoals)||0,Number(m.awayGoals)||0);
+    if(m.awayProfileId===profileId&&(!opponentId||m.homeProfileId===opponentId))addSplit(away,Number(m.awayGoals)||0,Number(m.homeGoals)||0);
+  }
+  return {home:finaliseSplit(home),away:finaliseSplit(away)};
+}
+function safeHistoricalDetail(d){
+  // Never send the precise rating used to rank teams through historical endpoints.
+  for(const p of d.participants||[])delete p.teamOverallPrecise;
+  return d;
+}
+
+function blankCareer(profileId,name){return {profileId,name,drafts:0,titles:0,p:0,w:0,d:0,l:0,gf:0,ga:0,gd:0,pts:0,ppg:0,topRatedCredit:0,topRatedTitleCredit:0};}
 function aggregateHistoryCompetitions(comps,nameMap,sortMode='titles'){
   const rows=new Map();
   const ensure=(id,fallback='Manager')=>{
@@ -133,16 +168,33 @@ function aggregateHistoryCompetitions(comps,nameMap,sortMode='titles'){
     const d=comp.data||{};
     for(const p of d.participants||[])ensure(p.profileId,p.displayName).drafts++;
     if(d.championProfileId)ensure(d.championProfileId).titles++;
+    for(const [id,credit] of historicalTopRatingCredits(comp)){
+      const r=ensure(id);r.topRatedCredit+=credit;
+      if(d.championProfileId===id)r.topRatedTitleCredit+=credit;
+    }
     for(const m of d.matches||[]){
       const h=ensure(m.homeProfileId,m.homeName),a=ensure(m.awayProfileId,m.awayName);if(!h||!a)continue;
       h.p++;a.p++;h.gf+=m.homeGoals;h.ga+=m.awayGoals;a.gf+=m.awayGoals;a.ga+=m.homeGoals;
       if(m.homeGoals>m.awayGoals){h.w++;a.l++;h.pts+=3;}else if(m.homeGoals<m.awayGoals){a.w++;h.l++;a.pts+=3;}else{h.d++;a.d++;h.pts++;a.pts++;}
     }
   }
-  for(const r of rows.values()){r.gd=r.gf-r.ga;r.ppg=r.p?r.pts/r.p:0;}
+  for(const r of rows.values()){
+    r.gd=r.gf-r.ga;r.ppg=r.p?r.pts/r.p:0;
+    r.titlePercentage=r.drafts?100*r.titles/r.drafts:0;
+    r.highestRatedPercentage=r.drafts?100*r.topRatedCredit/r.drafts:0;
+    r.topRatedConversionPercentage=r.topRatedCredit?100*r.topRatedTitleCredit/r.topRatedCredit:0;
+    r.winPercentage=r.p?100*r.w/r.p:0;r.drawPercentage=r.p?100*r.d/r.p:0;r.lossPercentage=r.p?100*r.l/r.p:0;
+    r.goalsForPerGame=r.p?r.gf/r.p:0;r.goalsAgainstPerGame=r.p?r.ga/r.p:0;r.gdPerGame=r.p?r.gd/r.p:0;
+  }
   const out=[...rows.values()];
   if(sortMode==='ppg')return out.sort((a,b)=>b.ppg-a.ppg||b.titles-a.titles||b.gd-a.gd||b.pts-a.pts||b.gf-a.gf||a.name.localeCompare(b.name));
   return out.sort((a,b)=>b.titles-a.titles||b.pts-a.pts||b.gd-a.gd||b.gf-a.gf||a.name.localeCompare(b.name));
+}
+function publicCareer(r){
+  return {profileId:r.profileId,name:r.name,ppg:r.ppg,titlePercentage:r.titlePercentage,
+    highestRatedPercentage:r.highestRatedPercentage,topRatedConversionPercentage:r.topRatedConversionPercentage,
+    winPercentage:r.winPercentage,drawPercentage:r.drawPercentage,lossPercentage:r.lossPercentage,
+    goalsForPerGame:r.goalsForPerGame,goalsAgainstPerGame:r.goalsAgainstPerGame,gdPerGame:r.gdPerGame};
 }
 async function loadHistoryDataset(){
   if(!await initHistoryDb())return null;
@@ -168,15 +220,15 @@ function rivalryGroupsFromDataset(dataset){
 }
 async function recordsSummaryPayload(){
   const dataset=await loadHistoryDataset();if(!dataset)return null;
-  return {allTime:aggregateHistoryCompetitions(dataset.competitions,dataset.nameMap,'ppg'),groups:rivalryGroupsFromDataset(dataset),profiles:[...dataset.nameMap.entries()].map(([profileId,name])=>({profileId,name})).sort((a,b)=>a.name.localeCompare(b.name))};
+  return {allTime:aggregateHistoryCompetitions(dataset.competitions,dataset.nameMap,'ppg').map(publicCareer),groups:rivalryGroupsFromDataset(dataset),profiles:[...dataset.nameMap.entries()].map(([profileId,name])=>({profileId,name})).sort((a,b)=>a.name.localeCompare(b.name))};
 }
-async function allRecordsPayload(modes,packs,managerIds=null,requireAll=false){
+async function allRecordsPayload(modes,packs,managerIds=null,requireAll=false,sizes=null){
   const dataset=await loadHistoryDataset();if(!dataset)return null;
   const allowedModes=new Set(Array.isArray(modes)?modes.filter(x=>MODE_LABELS[x]):Object.keys(MODE_LABELS));
   const allowedPacks=new Set(Array.isArray(packs)?packs.filter(x=>x==='chaos'||Object.prototype.hasOwnProperty.call(PACKS,x)):[...Object.keys(PACKS),'chaos']);
   const selected=new Set(Array.isArray(managerIds)?managerIds.filter(id=>dataset.nameMap.has(id)):[]);
   const filtered=dataset.competitions.filter(c=>{
-    if(!allowedModes.has(c.mode)||!allowedPacks.has(c.pack))return false;
+    if(!allowedModes.has(c.mode)||!allowedPacks.has(c.pack)||!matchDraftSize(c,sizes))return false;
     if(!selected.size)return true;
     const ids=Array.isArray(c.participant_profile_ids)?c.participant_profile_ids:(c.data?.participants||[]).map(p=>p.profileId);
     return ids.length>0&&ids.every(id=>selected.has(id))&&(!requireAll||[...selected].every(id=>ids.includes(id)));
@@ -188,17 +240,17 @@ async function allRecordsPayload(modes,packs,managerIds=null,requireAll=false){
     return {competitionId:c.competition_id,completedAt:c.completed_at,mode:c.mode,pack:c.pack,champion:champion?.name||'—',participants:names};
   });
   return {
-    table:aggregateHistoryCompetitions(filtered,dataset.nameMap,'ppg'),
+    table:aggregateHistoryCompetitions(filtered,dataset.nameMap,'ppg').map(publicCareer),
     matchingDrafts:filtered.length,
     matchingMatches:filtered.reduce((n,c)=>n+(c.data?.matches?.length||0),0),
     drafts
   };
 }
 // v13: all Records queries read historical snapshots; none mutate the database.
-function filteredHistoryCompetitions(dataset,modes,packs){
+function filteredHistoryCompetitions(dataset,modes,packs,sizes=null){
   const allowedModes=new Set(Array.isArray(modes)?modes.filter(x=>MODE_LABELS[x]):Object.keys(MODE_LABELS));
   const allowedPacks=new Set(Array.isArray(packs)?packs.filter(x=>x==='chaos'||Object.hasOwn(PACKS,x)):[...Object.keys(PACKS),'chaos']);
-  return dataset.competitions.filter(c=>allowedModes.has(c.mode)&&allowedPacks.has(c.pack));
+  return dataset.competitions.filter(c=>allowedModes.has(c.mode)&&allowedPacks.has(c.pack)&&matchDraftSize(c,sizes));
 }
 function directH2H(comps,one,two){
   const result={one,two,w:0,d:0,l:0,gf:0,ga:0,meetings:0,sharedDrafts:0,winPercentage:0};
@@ -218,16 +270,19 @@ function directH2H(comps,one,two){
   result.winPercentage=result.meetings?100*result.w/result.meetings:0;
   return result;
 }
-async function recordsH2HPayload(one,two,modes,packs){
+async function recordsH2HPayload(one,two,modes,packs,sizes=null){
   const dataset=await loadHistoryDataset();if(!dataset)return null;
   if(!one||!two||one===two||!dataset.nameMap.has(one)||!dataset.nameMap.has(two))throw new Error('Select two different existing managers.');
-  const comps=filteredHistoryCompetitions(dataset,modes,packs);
-  return {...directH2H(comps,one,two),oneName:dataset.nameMap.get(one),twoName:dataset.nameMap.get(two)};
+  const comps=filteredHistoryCompetitions(dataset,modes,packs,sizes);
+  const h2h=directH2H(comps,one,two);
+  return {...h2h,...profileVenueSplits(comps,one,two),ppg:h2h.meetings?(h2h.w*3+h2h.d)/h2h.meetings:0,
+    goalsForPerGame:h2h.meetings?h2h.gf/h2h.meetings:0,goalsAgainstPerGame:h2h.meetings?h2h.ga/h2h.meetings:0,
+    oneName:dataset.nameMap.get(one),twoName:dataset.nameMap.get(two)};
 }
-async function recordsManagerProfilePayload(profileId,modes,packs){
+async function recordsManagerProfilePayload(profileId,modes,packs,sizes=null){
   const dataset=await loadHistoryDataset();if(!dataset)return null;
   if(!dataset.nameMap.has(profileId))throw new Error('Manager not found.');
-  const filtered=filteredHistoryCompetitions(dataset,modes,packs);
+  const filtered=filteredHistoryCompetitions(dataset,modes,packs,sizes);
   const comps=filtered.filter(c=>(c.data?.participants||[]).some(p=>p.profileId===profileId));
   const career=aggregateHistoryCompetitions(comps,dataset.nameMap,'ppg').find(x=>x.profileId===profileId)||blankCareer(profileId,dataset.nameMap.get(profileId));
   const perPlayer=new Map(),seasons=[];
@@ -255,16 +310,58 @@ async function recordsManagerProfilePayload(profileId,modes,packs){
     const d=directH2H(comps,profileId,id);return {...d,name:dataset.nameMap.get(id)||'Manager'};
   }).filter(r=>r.meetings).sort((a,b)=>b.meetings-a.meetings||b.w-a.w);
   seasons.sort((a,b)=>b.teamRating-a.teamRating||new Date(b.completedAt)-new Date(a.completedAt));
-  return {profileId,name:dataset.nameMap.get(profileId),career:{...career,titlePercentage:career.drafts?100*career.titles/career.drafts:0},
-    players:players.sort((a,b)=>b.drafts-a.drafts||a.name.localeCompare(b.name)),bestSeasons:seasons.slice(0,5),rivals};
+  return {profileId,name:dataset.nameMap.get(profileId),career:publicCareer(career),venue:profileVenueSplits(comps,profileId),
+    players:players.sort((a,b)=>b.drafts-a.drafts||a.name.localeCompare(b.name)),bestSeasons:seasons,rivals};
 }
 
-async function rivalryPayload(key,modes,packs){
+
+// Player statistics come from finished official competitions, never from player profile ratings.
+async function recordsFootballersPayload(modes,packs,sizes=null){
+  const dataset=await loadHistoryDataset();if(!dataset)return null;
+  const comps=filteredHistoryCompetitions(dataset,modes,packs,sizes);
+  const rows=new Map();
+  for(const c of comps){
+    const d=c.data||{};
+    for(const participant of d.participants||[]){
+      const stats=(d.playerStats||[]).filter(st=>st.profileId===participant.profileId || (!st.profileId&&st.managerId===participant.managerId));
+      for(const player of participant.squad||[]){
+        const key=JSON.stringify([c.pack,player.id??player.name]);
+        if(!rows.has(key))rows.set(key,{key,pack:c.pack,name:player.name,position:player.positions?.[0]||'',drafted:0,
+          appearances:0,goals:0,assists:0,cleanSheets:0,saves:0,ratingWeighted:0,ratingApps:0,spend:0,
+          highestPrice:0,highestBuyer:null,owners:{},titles:0});
+        const r=rows.get(key),price=Number(player.price)||0;
+        r.drafted++;r.spend+=price;
+        if(price>r.highestPrice){r.highestPrice=price;r.highestBuyer=dataset.nameMap.get(participant.profileId)||participant.displayName;}
+        const ownerId=participant.profileId;
+        if(!r.owners[ownerId])r.owners[ownerId]={profileId:ownerId,name:dataset.nameMap.get(ownerId)||participant.displayName,
+          drafted:0,spend:0,goals:0,assists:0,appearances:0};
+        const o=r.owners[ownerId];o.drafted++;o.spend+=price;
+        if(d.championProfileId===ownerId)r.titles++;
+        const st=stats.find(x=>(x.playerId!=null&&player.id!=null&&String(x.playerId)===String(player.id))||x.player===player.name);
+        if(!st)continue;
+        const apps=Number(st.apps)||0;
+        r.appearances+=apps;r.goals+=Number(st.goals)||0;r.assists+=Number(st.assists)||0;
+        r.saves+=Number(st.saves)||0;r.cleanSheets+=Number(st.cleanSheets)||0;
+        if(Number.isFinite(Number(st.avgRating))&&apps){r.ratingWeighted+=Number(st.avgRating)*apps;r.ratingApps+=apps;}
+        o.appearances+=apps;o.goals+=Number(st.goals)||0;o.assists+=Number(st.assists)||0;
+      }
+    }
+  }
+  return {players:[...rows.values()].map(r=>{
+    const owners=Object.values(r.owners).sort((a,b)=>b.drafted-a.drafted||b.spend-a.spend||a.name.localeCompare(b.name));
+    const {ratingWeighted,ratingApps,owners:rawOwners,...safe}=r;
+    return {...safe,avgPrice:r.drafted?r.spend/r.drafted:0,avgRating:ratingApps?ratingWeighted/ratingApps:0,
+      goalsPerGame:r.appearances?r.goals/r.appearances:0,assistsPerGame:r.appearances?r.assists/r.appearances:0,
+      mostFrequentOwner:owners[0]||null,highestLifetimeSpender:[...owners].sort((a,b)=>b.spend-a.spend)[0]||null,owners};
+  })};
+}
+
+async function rivalryPayload(key,modes,packs,sizes=null){
   const dataset=await loadHistoryDataset();if(!dataset)return null;
   const allowedModes=new Set(Array.isArray(modes)?modes.filter(x=>MODE_LABELS[x]):Object.keys(MODE_LABELS));
   const allowedPacks=new Set(Array.isArray(packs)?packs.filter(x=>x==='chaos'||Object.prototype.hasOwnProperty.call(PACKS,x)):[...Object.keys(PACKS),'chaos']);
   const all=dataset.competitions.filter(c=>c.rivalry_key===key);
-  const filtered=all.filter(c=>allowedModes.has(c.mode)&&allowedPacks.has(c.pack));
+  const filtered=all.filter(c=>allowedModes.has(c.mode)&&allowedPacks.has(c.pack)&&matchDraftSize(c,sizes));
   const profileIds=all[0]?(Array.isArray(all[0].participant_profile_ids)?all[0].participant_profile_ids:(all[0].data?.participants||[]).map(p=>p.profileId).sort()):[];
   const drafts=filtered.map(c=>{
     const d=c.data||{},participants=[...(d.participants||[])].sort((a,b)=>(a.rank||999)-(b.rank||999));
@@ -274,7 +371,7 @@ async function rivalryPayload(key,modes,packs){
   });
   return {
     key,profileIds,names:profileIds.map(id=>dataset.nameMap.get(id)||'Manager').sort((a,b)=>a.localeCompare(b)),
-    table:aggregateHistoryCompetitions(filtered,dataset.nameMap),matchingDrafts:filtered.length,
+    table:aggregateHistoryCompetitions(filtered,dataset.nameMap).map(publicCareer),matchingDrafts:filtered.length,
     matchingMatches:filtered.reduce((n,c)=>n+(c.data?.matches?.length||0),0),drafts
   };
 }
@@ -314,6 +411,7 @@ async function competitionDetailPayload(competitionId){
     nameMap=new Map(names.rows.map(x=>[x.profile_id,x.default_name]));
   }
   const managerNames=new Map();
+  safeHistoricalDetail(d);
   for(const p of d.participants||[]){
     const current=nameMap.get(p.profileId)||p.displayName||'Manager';p.displayName=current;if(p.managerId)managerNames.set(p.managerId,current);
   }
@@ -405,6 +503,7 @@ function historyCompetitionPayload(room,simulation){
     profileId:m.profileId,displayName:m.name,managerId:m.id,color:m.color||null,rank:rankByManager.get(m.id)||null,
     formation:isFreeformLike(room.mode)?m.finalFormation:m.formation,budget:m.budget,
     teamRating:room.teamAssessments?.get(m.id)?publicAssessment(room.teamAssessments.get(m.id)):null,
+    teamOverallPrecise:room.teamAssessments?.get(m.id)?.overall??null,
     squad:m.squad.map(publicPlayer),lineup:Array.isArray(m.lineup)?[...m.lineup]:[]
   }));
   const matches=(simulation.matches||[]).map(m=>({
@@ -414,7 +513,7 @@ function historyCompetitionPayload(room,simulation){
     homeShotsOnTarget:m.homeShotsOnTarget,awayShotsOnTarget:m.awayShotsOnTarget,homeSaves:m.homeSaves,awaySaves:m.awaySaves,playerOfMatch:m.playerOfMatch
   }));
   return {
-    version:'v11',participants,championProfileId:toProfile(simulation.championId),matches,
+    version:'v14',participants,championProfileId:toProfile(simulation.championId),matches,
     playoffs:(simulation.playoffs||[]).map(m=>({
       homeProfileId:toProfile(m.homeId),awayProfileId:toProfile(m.awayId),homeName:m.homeName,awayName:m.awayName,
       homeGoals:m.homeGoals,awayGoals:m.awayGoals,homeScorers:m.homeScorers,awayScorers:m.awayScorers,
@@ -704,6 +803,11 @@ function roomPublic(room,viewerId){
   const teamRatings = ratingsVisible && room.teamAssessments
     ? Object.fromEntries([...room.teamAssessments.entries()].map(([id,a])=>[id,publicAssessment(a)]))
     : null;
+  const rankedTeams=ratingsVisible&&room.teamAssessments
+    ? [...room.teamAssessments.entries()].sort((a,b)=>b[1].overall-a[1].overall)
+    : [];
+  const teamRanking=rankedTeams.map(([id,a],i)=>({id,rank:i>0&&Math.abs(a.overall-rankedTeams[0][1].overall)<1e-9?1:i+1,
+    topRated:Math.abs(a.overall-rankedTeams[0][1].overall)<1e-9}));
   let current=null;
   if(room.current){
     if(room.mode==='priority'){
@@ -760,6 +864,7 @@ function roomPublic(room,viewerId){
     freeformFormations: SELECTABLE_FREEFORM_FORMATIONS,
     simulationAvailable: true,
     teamRatings,
+    teamRanking,
     simulation: room.phase==='results' ? room.simulation : null,
     simulationRevealCount: room.phase==='results' ? (room.simulationRevealCount||0) : 0,
     simulationKind:room.simulationKind||'official',
@@ -1613,19 +1718,23 @@ io.on('connection', socket=>{
   socket.on('recordsSummary', async (_,cb)=>{
     try{const payload=await recordsSummaryPayload();if(!payload)return cb?.({ok:false,error:'Permanent Records are not configured yet.'});cb?.({ok:true,...payload,modeLabels:MODE_LABELS,packLabels:{...PACKS,chaos:'Chaos Mode'},recordsConnected:!!historyDbReady,adminConfigured:!!ADMIN_CODE});}catch(err){console.error('Records summary error:',err.message);cb?.({ok:false,error:'Could not load All-Time Records.'});}
   });
-  socket.on('recordsAll', async ({modes,packs,managerIds,requireAll},cb)=>{
-    try{const payload=await allRecordsPayload(modes,packs,managerIds,requireAll);if(!payload)return cb?.({ok:false,error:'Permanent Records are not configured yet.'});cb?.({ok:true,...payload});}catch(err){console.error('All records error:',err.message);cb?.({ok:false,error:'Could not load filtered All-Time Records.'});}
+  socket.on('recordsAll', async ({modes,packs,managerIds,requireAll,sizes},cb)=>{
+    try{const payload=await allRecordsPayload(modes,packs,managerIds,requireAll,sizes);if(!payload)return cb?.({ok:false,error:'Permanent Records are not configured yet.'});cb?.({ok:true,...payload});}catch(err){console.error('All records error:',err.message);cb?.({ok:false,error:'Could not load filtered All-Time Records.'});}
   });
-  socket.on('recordsH2H', async ({one,two,modes,packs},cb)=>{
-    try{const payload=await recordsH2HPayload(one,two,modes,packs);if(!payload)return cb?.({ok:false,error:'Permanent Records unavailable.'});cb?.({ok:true,...payload});}
+  socket.on('recordsH2H', async ({one,two,modes,packs,sizes},cb)=>{
+    try{const payload=await recordsH2HPayload(one,two,modes,packs,sizes);if(!payload)return cb?.({ok:false,error:'Permanent Records unavailable.'});cb?.({ok:true,...payload});}
     catch(err){cb?.({ok:false,error:err.message||'Could not load H2H.'});}
   });
-  socket.on('recordsManagerProfile', async ({profileId,modes,packs},cb)=>{
-    try{const payload=await recordsManagerProfilePayload(profileId,modes,packs);if(!payload)return cb?.({ok:false,error:'Permanent Records unavailable.'});cb?.({ok:true,...payload});}
+  socket.on('recordsManagerProfile', async ({profileId,modes,packs,sizes},cb)=>{
+    try{const payload=await recordsManagerProfilePayload(profileId,modes,packs,sizes);if(!payload)return cb?.({ok:false,error:'Permanent Records unavailable.'});cb?.({ok:true,...payload});}
     catch(err){cb?.({ok:false,error:err.message||'Could not load manager profile.'});}
   });
-  socket.on('recordsGroup', async ({key,modes,packs},cb)=>{
-    try{const payload=await rivalryPayload(String(key||''),modes,packs);if(!payload)return cb?.({ok:false,error:'Permanent Records are not configured yet.'});cb?.({ok:true,...payload});}catch(err){console.error('Rivalry records error:',err.message);cb?.({ok:false,error:'Could not load this rivalry group.'});}
+  socket.on('recordsGroup', async ({key,modes,packs,sizes},cb)=>{
+    try{const payload=await rivalryPayload(String(key||''),modes,packs,sizes);if(!payload)return cb?.({ok:false,error:'Permanent Records are not configured yet.'});cb?.({ok:true,...payload});}catch(err){console.error('Rivalry records error:',err.message);cb?.({ok:false,error:'Could not load this rivalry group.'});}
+  });
+  socket.on('recordsFootballers', async ({modes,packs,sizes},cb)=>{
+    try{const payload=await recordsFootballersPayload(modes,packs,sizes);if(!payload)return cb?.({ok:false,error:'Permanent Records unavailable.'});cb?.({ok:true,...payload});}
+    catch(err){console.error('Footballer records error:',err.message);cb?.({ok:false,error:'Could not load footballer records.'});}
   });
   socket.on('recordsCompetition', async ({competitionId},cb)=>{
     try{
