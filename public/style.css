@@ -664,3 +664,49 @@ body[data-theme="immersive"] .gameweek-heading{background:rgba(7,24,18,.72);bord
 .record-metric-grid>div{background:rgba(110,140,130,.1);padding:12px;border-radius:10px}
 .record-metric-grid b{font-size:21px;display:block}
 @media(max-width:580px){.record-manager-choices{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* v14: Records redesign, responsive averages and team reveal distinction */
+.record-tabs{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.record-tabs .result-tab{min-width:0;padding:10px 5px;font-size:clamp(10px,2.5vw,13px);overflow-wrap:anywhere}
+.records-header,.records-header>div,.record-metric-grid>div,.rating-summary>div{min-width:0}
+.record-metric-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,145px),1fr))}
+.record-metric-grid>div{overflow-wrap:anywhere;min-width:0}
+.record-metric-grid b{font-size:clamp(16px,4vw,22px);line-height:1.22;overflow-wrap:anywhere}
+.record-metric-grid .small{display:block;margin-top:6px;line-height:1.3}
+.record-averages-table{min-width:950px}
+.history-table td:first-child,.history-table th:first-child{text-align:left}
+.record-averages-table .record-sticky-name{position:sticky;left:0;z-index:1;background:var(--card-bg,#fff);box-shadow:3px 0 5px rgba(0,0,0,.035);max-width:190px;overflow-wrap:anywhere}
+.record-averages-table tbody tr:nth-child(even) .record-sticky-name{background:var(--card-bg,#fff)}
+.record-averages-table td{font-variant-numeric:tabular-nums}
+.record-averages-table th:nth-child(3),.record-averages-table th:nth-child(4),.record-averages-table th:nth-child(5),.record-averages-table td:nth-child(3),.record-averages-table td:nth-child(4),.record-averages-table td:nth-child(5){font-weight:700}
+.record-sort{border:0;background:transparent;color:inherit;font:inherit;font-size:inherit;font-weight:800;padding:6px 2px;min-height:26px;cursor:pointer;white-space:normal}
+.record-sort:hover,.record-sort:focus-visible{text-decoration:underline;text-underline-offset:3px}
+.record-size-choices{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.record-size-choices label{padding:6px 10px;border:1px solid rgba(100,130,115,.24);border-radius:10px}
+.record-quick-sizes{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0}
+.record-search-row{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:12px;align-items:end;margin:12px 0}
+.record-search-row>div{min-width:0}
+.record-venue-table{min-width:320px;width:100%}
+.record-venue-table th:first-child,.record-venue-table td:first-child{text-align:left}
+.record-details-title{font-size:16px;font-weight:750;cursor:pointer;padding:7px 0}
+.record-highlight-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}
+.record-highlight-row>div{min-width:0;border-radius:12px;padding:12px;background:rgba(110,140,130,.1);display:grid;gap:5px;overflow-wrap:anywhere}
+.footballer-detail>h2{margin-top:12px;overflow-wrap:anywhere}
+.top-rated-team{border:2px solid #b99129 !important;box-shadow:0 0 0 2px rgba(185,145,41,.13),0 4px 22px rgba(185,145,41,.12)}
+.team-reveal-rank{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;margin-bottom:10px}
+.rank-number{font-weight:800;letter-spacing:.03em;font-size:12px;opacity:.8}
+.top-rated-badge{color:#7a5400;background:#fff0b8;border:1px solid #d8ac38;border-radius:999px;font-size:11px;padding:5px 9px;font-weight:900;letter-spacing:.045em}
+body[data-theme="immersive"] .top-rated-badge{color:#ffdf89;background:rgba(122,80,0,.38);border-color:#d8ac38}
+body[data-theme="immersive"] .record-averages-table .record-sticky-name{background:#10251e}
+@media(max-width:600px){
+ .record-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .record-search-row,.record-highlight-row{grid-template-columns:1fr}
+ .record-metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .records-header h1{font-size:clamp(22px,6vw,30px)}
+ .history-table th,.history-table td{padding:9px 7px}
+ .record-size-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+.record-history-heading{display:flex;justify-content:space-between;align-items:end;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+.record-history-heading h2{margin:0}
+.record-history-heading>div{min-width:145px}
+.record-history-heading select{width:100%}
