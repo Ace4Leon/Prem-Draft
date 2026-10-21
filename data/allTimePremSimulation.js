@@ -1706,13 +1706,23 @@ function hasNaturalKeeper(assessment){
   const keeper=assessment.details.find(d=>d.slot==='GK');
   return !!keeper && keeper.player.positions?.[0]==='GK';
 }
+// Final nonlinear match-engine calibration: small rating edges earn a stronger
+// advantage, while the extra amplification tapers for larger differences.
+// Signed, symmetric transformation; applied separately to each matchup edge.
+function nonlinearRatingEdge(d){
+  return d*(1+2.2/(1+Math.abs(d)/3));
+}
 function expectedGoals(a,b,homeAdvantage){
   const attackEdge=a.attack-b.defence;
   const midfieldEdge=a.midfield-b.midfield;
   const overallEdge=a.overall-b.overall;
-  // v5D calibration: matchups are more balanced, meaningful rating gaps matter more,
-  // and equal teams receive a modern-football-sized home advantage (~44/24/31 H/D/A).
-  let log=Math.log(1.32)+0.021*attackEdge+0.016*midfieldEdge+0.023*overallEdge+(homeAdvantage?0.20:0);
+  // Only the three rating differences are transformed. The baseline,
+  // their coefficients, and the existing home advantage remain unchanged.
+  let log=Math.log(1.32)
+    +0.021*nonlinearRatingEdge(attackEdge)
+    +0.016*nonlinearRatingEdge(midfieldEdge)
+    +0.023*nonlinearRatingEdge(overallEdge)
+    +(homeAdvantage?0.20:0);
   // A non-goalkeeper in goal is already punished in the ratings, but remains an exceptional match-day weakness.
   if(!hasNaturalKeeper(b)) log+=Math.log(1.20);
   return clamp(Math.exp(log),0.10,5.5);
