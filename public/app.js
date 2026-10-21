@@ -14,6 +14,11 @@ let nominationPosition='ALL';
 let blindEndgameAnnounced=false;
 let viewingRecords=false;
 let recordsSection='all';
+let selectedDraftSizes=new Set(['2','3','4','5+']);
+let recordSort={all:{key:'ppg',dir:-1},players:{key:'drafted',dir:-1},owned:{key:'drafts',dir:-1},rivals:{key:'winPercentage',dir:-1},owners:{key:'drafted',dir:-1}};
+let footballerData=null,footballerQuery='',footballerPack='all',footballerSelectedKey=null,footballerShowAll=false;
+let managerPlayersExpanded=false;
+let recordHistorySort='newest',recordSeasonSort='rating',recordShowAllSeasons=false;
 let recordsSummaryData=null;
 let recordsGroupData=null;
 let recordsAllData=null;
@@ -319,8 +324,33 @@ function home(){
   document.querySelector('#join').onclick=()=>launch('join');
 }
 
+function recordSortableTh(section,key,label){
+  const active=recordSort[section]?.key===key;
+  return `<th><button class="record-sort" data-record-sort="${section}" data-sort-key="${key}" aria-label="Sort by ${esc(label)}">${esc(label)} ${active?(recordSort[section].dir===-1?'▼':'▲'):''}</button></th>`;
+}
+function sortRecordRows(rows,section){
+  const {key,dir}=recordSort[section]||{};
+  return [...(rows||[])].sort((a,b)=>{
+    const av=a[key],bv=b[key],an=Number(av),bn=Number(bv);
+    if(Number.isFinite(an)&&Number.isFinite(bn))return dir*(an-bn)||String(a.name||'').localeCompare(String(b.name||''));
+    return dir*String(av??'').localeCompare(String(bv??''))||String(a.name||'').localeCompare(String(b.name||''));
+  });
+}
+function recordSortWiring(){
+  document.querySelectorAll('[data-record-sort]').forEach(b=>b.onclick=()=>{
+    const section=b.dataset.recordSort,key=b.dataset.sortKey;
+    if(recordSort[section]?.key===key)recordSort[section].dir*=-1;
+    else recordSort[section]={key,dir:key==='name'?1:-1};
+    recordsScreen();
+  });
+}
+function fmtPct(n){return `${Number(n||0).toFixed(1)}%`;}
+function fmtNum(n){return Number(n||0).toFixed(2);}
 function historyTableHtml(rows){
-  return `<div class="table-wrap"><table class="history-table"><thead><tr><th>#</th><th>Manager</th><th>Drafts</th><th>Titles</th><th>PPG</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>${(rows||[]).map((r,i)=>`<tr><td>${i+1}</td><td><button type="button" class="record-profile-link" data-open-profile="${esc(r.profileId)}">${esc(r.name)}</button></td><td>${r.drafts}</td><td><b>${r.titles}</b></td><td><b>${Number(r.ppg||0).toFixed(2)}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.gd>0?'+':''}${r.gd}</td><td><b>${r.pts}</b></td></tr>`).join('')}</tbody></table></div>`;
+  const cols=[['ppg','PPG'],['titlePercentage','Title %'],['highestRatedPercentage','Top rated %'],['topRatedConversionPercentage','Top-rate win %'],
+    ['winPercentage','Win %'],['drawPercentage','Draw %'],['lossPercentage','Loss %'],
+    ['goalsForPerGame','GF/game'],['goalsAgainstPerGame','GA/game'],['gdPerGame','GD/game']];
+  return `<div class="table-wrap record-table-scroll"><table class="history-table record-averages-table"><thead><tr><th>#</th>${recordSortableTh('all','name','Manager')}${cols.map(([k,v])=>recordSortableTh('all',k,v)).join('')}</tr></thead><tbody>${sortRecordRows(rows,'all').map((r,i)=>`<tr><td>${i+1}</td><td class="record-sticky-name"><button type="button" class="record-profile-link" data-open-profile="${esc(r.profileId)}">${esc(r.name)}</button></td>${cols.map(([k])=>`<td>${k==='ppg'||k.includes('PerGame')?fmtNum(r[k]):fmtPct(r[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 }
 
 function readSavedRecordFilters(modeLabels,packLabels){
@@ -330,15 +360,15 @@ function readSavedRecordFilters(modeLabels,packLabels){
     const modes=(raw.modes||[]).filter(x=>Object.prototype.hasOwnProperty.call(modeLabels||{},x));
     const packs=(raw.packs||[]).filter(x=>Object.prototype.hasOwnProperty.call(packLabels||{},x));
     if(!modes.length||!packs.length)return null;
-    return {modes:new Set(modes),packs:new Set(packs),managers:Array.isArray(raw.managers)?new Set(raw.managers):null,requireAll:!!raw.requireAll};
+    return {modes:new Set(modes),packs:new Set(packs),managers:Array.isArray(raw.managers)?new Set(raw.managers):null,requireAll:!!raw.requireAll,sizes:Array.isArray(raw.sizes)?new Set(raw.sizes):null};
   }catch{return null}
 }
 function saveRecordFilters(){
-  try{localStorage.setItem(RECORD_FILTERS_KEY,JSON.stringify({modes:[...selectedRecordModes],packs:[...selectedRecordPacks],managers:[...selectedRecordManagers],requireAll:requireAllSelectedManagers}))}catch{}
+  try{localStorage.setItem(RECORD_FILTERS_KEY,JSON.stringify({modes:[...selectedRecordModes],packs:[...selectedRecordPacks],managers:[...selectedRecordManagers],requireAll:requireAllSelectedManagers,sizes:[...selectedDraftSizes]}))}catch{}
 }
 function recordFilterCount(){
   const allModes=Object.keys(recordsSummaryData?.modeLabels||{}).length,allPacks=Object.keys(recordsSummaryData?.packLabels||{}).length;
-  return Math.max(0,allModes-selectedRecordModes.size)+Math.max(0,allPacks-selectedRecordPacks.size)+Math.max(0,(recordsSummaryData?.profiles?.length||0)-selectedRecordManagers.size)+(requireAllSelectedManagers?1:0);
+  return Math.max(0,allModes-selectedRecordModes.size)+Math.max(0,allPacks-selectedRecordPacks.size)+Math.max(0,(recordsSummaryData?.profiles?.length||0)-selectedRecordManagers.size)+(requireAllSelectedManagers?1:0)+(selectedDraftSizes.size===4?0:1);
 }
 function recordFilterSummary(){
   const modes=recordsSummaryData?.modeLabels||{},packs=recordsSummaryData?.packLabels||{};
@@ -347,11 +377,12 @@ function recordFilterSummary(){
   if(selectedRecordPacks.size!==Object.keys(packs).length)active.push(...[...selectedRecordPacks].map(k=>packs[k]).filter(Boolean));
   if(selectedRecordManagers.size!==(recordsSummaryData?.profiles?.length||0))active.push(`${selectedRecordManagers.size} allowed managers`);
   if(requireAllSelectedManagers)active.push('All selected must play');
+  if(selectedDraftSizes.size!==4)active.push(`Draft sizes: ${[...selectedDraftSizes].join(', ')||'none'}`);
   return active.length?`<div class="active-filter-chips">${active.map(x=>`<span>${esc(x)}</span>`).join('')}</div>`:'';
 }
 function loadAllRecords(){
   recordsAllData=null;recordsScreen();
-  socket.emit('recordsAll',{modes:[...selectedRecordModes],packs:[...selectedRecordPacks],managerIds:[...selectedRecordManagers],requireAll:requireAllSelectedManagers},r=>{
+  socket.emit('recordsAll',{modes:[...selectedRecordModes],packs:[...selectedRecordPacks],managerIds:[...selectedRecordManagers],requireAll:requireAllSelectedManagers,sizes:[...selectedDraftSizes]},r=>{
     if(!r?.ok){showToast(r?.error||'Could not load All-Time Records');return;}
     recordsAllData=r;if(viewingRecords&&!historicalCompetition)recordsScreen();
   });
@@ -370,6 +401,7 @@ function openRecords(){
     selectedRecordManagers=saved?.managers?new Set([...saved.managers].filter(id=>ids.has(id))):ids;
     if(!selectedRecordManagers.size)selectedRecordManagers=ids;
     requireAllSelectedManagers=!!saved?.requireAll;
+    selectedDraftSizes=saved?.sizes||new Set(['2','3','4','5+']);
     if(!recordsH2HOne||!ids.has(recordsH2HOne))recordsH2HOne=r.profiles?.[0]?.profileId||'';
     if(!recordsH2HTwo||!ids.has(recordsH2HTwo)||recordsH2HOne===recordsH2HTwo)recordsH2HTwo=(r.profiles||[]).find(p=>p.profileId!==recordsH2HOne)?.profileId||'';
     if(!recordsManagerId||!ids.has(recordsManagerId))recordsManagerId=savedProfile()?.profileId&&ids.has(savedProfile().profileId)?savedProfile().profileId:r.profiles?.[0]?.profileId||'';
@@ -383,7 +415,7 @@ function closeRecords(){
 function loadRivalryGroup(){
   if(!selectedRivalryKey){recordsGroupData=null;return recordsScreen();}
   recordsGroupData=null;recordsScreen();
-  socket.emit('recordsGroup',{key:selectedRivalryKey,modes:[...selectedRecordModes],packs:[...selectedRecordPacks]},r=>{
+  socket.emit('recordsGroup',{key:selectedRivalryKey,modes:[...selectedRecordModes],packs:[...selectedRecordPacks],sizes:[...selectedDraftSizes]},r=>{
     if(!r?.ok){showToast(r?.error||'Could not load rivalry group');return;}
     recordsGroupData=r;if(viewingRecords&&!historicalCompetition)recordsScreen();
   });
@@ -394,22 +426,26 @@ function recordsFiltersHtml(){
   return `<div class="records-filter-panel" id="recordsFilterPanel" hidden>
     <div class="filter-columns"><div><b>Draft modes</b>${Object.entries(modes).map(([k,v])=>`<label class="filter-check"><input type="checkbox" data-filter-mode="${esc(k)}" ${selectedRecordModes.has(k)?'checked':''}> ${esc(v)}</label>`).join('')}</div>
     <div><b>Player packs</b>${Object.entries(packs).map(([k,v])=>`<label class="filter-check"><input type="checkbox" data-filter-pack="${esc(k)}" ${selectedRecordPacks.has(k)?'checked':''}> ${esc(v)}</label>`).join('')}</div></div>
+    <div class="spacer10"></div><b>Number of managers in each draft</b>
+    <div class="record-size-choices">${[['2','2 (H2H)'],['3','3'],['4','4'],['5+','5 or more']].map(([k,l])=>`<label class="filter-check"><input type="checkbox" data-filter-size="${k}" ${selectedDraftSizes.has(k)?'checked':''}> ${l}</label>`).join('')}</div>
+    <div class="record-quick-sizes"><button class="secondary small-button" type="button" data-size-preset="3">3 only</button><button class="secondary small-button" type="button" data-size-preset="multi">Exclude H2H</button><button class="secondary small-button" type="button" data-size-preset="all">All sizes</button></div>
     <div class="spacer10"></div><b>Allowed managers — exclude drafts containing anybody unchecked</b>
     <p class="muted small">Uncheck anyone you don't want in these records. By default any subset of checked managers can play.</p>
     <div class="record-manager-choices">${profiles.map(p=>`<label><input type="checkbox" data-filter-manager="${esc(p.profileId)}" ${selectedRecordManagers.has(p.profileId)?'checked':''}> ${esc(p.name)}</label>`).join('')}</div>
     <label class="filter-check"><input type="checkbox" id="requireAllManagers" ${requireAllSelectedManagers?'checked':''}> Require <b>every selected manager</b> to be present (exact-group view)</label>
-    <div class="row mobile-stack"><button class="secondary grow" id="recordsAllFilters">Select all</button><button class="secondary grow" id="recordsClearFilters">Reset</button><button class="primary grow" id="recordsApplyFilters">Apply</button></div></div>`;
+    <div class="row mobile-stack"><button class="secondary grow" id="recordsAllFilters">Select all</button><button class="secondary grow" id="recordsClearFilters">Clear managers</button><button class="primary grow" id="recordsApplyFilters">Apply</button></div></div>`;
 }
 function loadCurrentRecordSection(){
   if(recordsSection==='all')return loadAllRecords();
   if(recordsSection==='h2h')return loadRecordsH2H();
   if(recordsSection==='profile')return loadRecordsManagerProfile();
+  if(recordsSection==='footballers')return loadFootballerRecords();
   return loadAllRecords();
 }
 function loadRecordsH2H(){
   if(!recordsH2HOne||!recordsH2HTwo||recordsH2HOne===recordsH2HTwo){recordsH2HData=null;return recordsScreen();}
   recordsH2HData=null;recordsScreen();
-  socket.emit('recordsH2H',{one:recordsH2HOne,two:recordsH2HTwo,modes:[...selectedRecordModes],packs:[...selectedRecordPacks]},r=>{
+  socket.emit('recordsH2H',{one:recordsH2HOne,two:recordsH2HTwo,modes:[...selectedRecordModes],packs:[...selectedRecordPacks],sizes:[...selectedDraftSizes]},r=>{
     if(!r?.ok){showToast(r?.error||'Could not load head to head');return;}
     recordsH2HData=r;if(viewingRecords&&!historicalCompetition&&recordsSection==='h2h')recordsScreen();
   });
@@ -417,30 +453,66 @@ function loadRecordsH2H(){
 function loadRecordsManagerProfile(){
   if(!recordsManagerId){recordsManagerData=null;return recordsScreen();}
   recordsManagerData=null;recordsScreen();
-  socket.emit('recordsManagerProfile',{profileId:recordsManagerId,modes:[...selectedRecordModes],packs:[...selectedRecordPacks]},r=>{
+  socket.emit('recordsManagerProfile',{profileId:recordsManagerId,modes:[...selectedRecordModes],packs:[...selectedRecordPacks],sizes:[...selectedDraftSizes]},r=>{
     if(!r?.ok){showToast(r?.error||'Could not load manager profile');return;}
     recordsManagerData=r;if(viewingRecords&&!historicalCompetition&&recordsSection==='profile')recordsScreen();
   });
 }
+function loadFootballerRecords(){
+  footballerData=null;recordsScreen();
+  socket.emit('recordsFootballers',{modes:[...selectedRecordModes],packs:[...selectedRecordPacks],sizes:[...selectedDraftSizes]},r=>{
+    if(!r?.ok){showToast(r?.error||'Could not load footballer records');return;}
+    footballerData=r;if(viewingRecords&&!historicalCompetition&&recordsSection==='footballers')recordsScreen();
+  });
+}
+function footballersHtml(){
+  if(!footballerData)return '<div class="card muted">Loading footballer records…</div>';
+  const all=footballerData.players||[];
+  const packs=recordsSummaryData?.packLabels||{};
+  const packFilter=footballerPack==='all'?all:all.filter(p=>p.pack===footballerPack);
+  const chosen=all.find(p=>p.key===footballerSelectedKey);
+  const list=sortRecordRows(packFilter.filter(p=>p.name.toLowerCase().includes(footballerQuery.toLowerCase().trim())),'players');
+  const displayed=footballerShowAll?list:list.slice(0,80);
+  if(chosen){
+    const owners=sortRecordRows(chosen.owners||[],'owners');
+    return `<div class="card footballer-detail"><button class="secondary small-button" id="footballerBack">← All footballers</button>
+      <h2>${esc(chosen.name)}</h2><p class="muted">${esc(packs[chosen.pack]||chosen.pack)} · ${esc(chosen.position||'Footballer')}</p>
+      <div class="record-metric-grid">${[['Times drafted',chosen.drafted],['Appearances',chosen.appearances],['Total goals',chosen.goals],['Total assists',chosen.assists],['Goals/game',fmtNum(chosen.goalsPerGame)],['Assists/game',fmtNum(chosen.assistsPerGame)],['Average match rating',fmtNum(chosen.avgRating)],['Total saves',chosen.saves],['Clean sheets',chosen.cleanSheets],['Average auction price','£'+Number(chosen.avgPrice||0).toFixed(1)+'m'],['Highest auction price','£'+chosen.highestPrice+'m'],['Titles when owned',chosen.titles]].map(([label,value])=>`<div><b>${esc(String(value))}</b><span class="muted small">${esc(label)}</span></div>`).join('')}</div>
+      <div class="record-highlight-row"><div><span class="muted small">Most frequent owner</span><b>${esc(chosen.mostFrequentOwner?.name||'—')}</b></div><div><span class="muted small">Biggest single purchase</span><b>${esc(chosen.highestBuyer||'—')} · £${chosen.highestPrice}m</b></div><div><span class="muted small">Highest lifetime spender</span><b>${esc(chosen.highestLifetimeSpender?.name||'—')} · £${chosen.highestLifetimeSpender?.spend||0}m</b></div></div>
+      <h3>Owners and performance</h3><div class="table-wrap"><table class="history-table"><thead><tr>${recordSortableTh('owners','name','Manager')}${recordSortableTh('owners','drafted','Times bought')}${recordSortableTh('owners','spend','Spent')}${recordSortableTh('owners','appearances','Apps')}${recordSortableTh('owners','goals','Goals')}${recordSortableTh('owners','assists','Assists')}</tr></thead><tbody>${owners.map(o=>`<tr><td>${esc(o.name)}</td><td>${o.drafted}</td><td>£${o.spend}m</td><td>${o.appearances}</td><td>${o.goals}</td><td>${o.assists}</td></tr>`).join('')}</tbody></table></div></div>`;
+  }
+  return `<div class="card"><h2>Footballer Records</h2><p class="muted">Search individual footballers and explore ownership, auction spending and performance by player pack. Individual hidden quality ratings are never shown.</p>
+  <div class="record-search-row"><div><label>Search footballer</label><input id="footballerSearch" value="${esc(footballerQuery)}" placeholder="e.g. Cole Palmer"></div><div><label>Player pack</label><select id="footballerPack"><option value="all">All packs</option>${Object.entries(packs).map(([k,v])=>`<option value="${esc(k)}" ${footballerPack===k?'selected':''}>${esc(v)}</option>`).join('')}</select></div></div>
+  <div class="table-wrap record-table-scroll"><table class="history-table"><thead><tr>${recordSortableTh('players','name','Footballer')}${recordSortableTh('players','pack','Pack')}${recordSortableTh('players','drafted','Times drafted')}${recordSortableTh('players','goals','Goals')}${recordSortableTh('players','assists','Assists')}${recordSortableTh('players','appearances','Apps')}${recordSortableTh('players','avgPrice','Avg £m')}${recordSortableTh('players','highestPrice','Max £m')}</tr></thead><tbody>${displayed.map(p=>`<tr><td><button class="record-profile-link" data-footballer-key="${esc(p.key)}">${esc(p.name)}</button></td><td>${esc(packs[p.pack]||p.pack)}</td><td>${p.drafted}</td><td>${p.goals}</td><td>${p.assists}</td><td>${p.appearances}</td><td>${Number(p.avgPrice).toFixed(1)}</td><td>${p.highestPrice}</td></tr>`).join('')}</tbody></table></div>
+  ${displayed.length<list.length?`<button class="secondary big" id="footballerShowAll">Show all ${list.length} matching footballers</button>`:''}${!list.length?'<p class="muted">No players match these filters.</p>':''}</div>`;
+}
+function venueTableHtml(venue){
+  if(!venue)return '';
+  const stats=[['Win %','winPct',true],['Draw %','drawPct',true],['Loss %','lossPct',true],['Points/game','ppg',false],['Goals for/game','gfPerGame',false],['Goals against/game','gaPerGame',false]];
+  return `<div class="table-wrap"><table class="history-table record-venue-table"><thead><tr><th>Statistic</th><th>Home</th><th>Away</th></tr></thead><tbody>${stats.map(([label,key,pct])=>`<tr><td>${label}</td><td>${pct?fmtPct(venue.home[key]):key==='p'?venue.home[key]:fmtNum(venue.home[key])}</td><td>${pct?fmtPct(venue.away[key]):key==='p'?venue.away[key]:fmtNum(venue.away[key])}</td></tr>`).join('')}</tbody></table></div>`;
+}
 function recordProfileHtml(){
   if(!recordsManagerData)return '<div class="card muted">Loading manager profile…</div>';
   const d=recordsManagerData,c=d.career||{},packs=recordsSummaryData?.packLabels||{};
-  const players=(d.players||[]).filter(p=>recordsPlayerPack==='all'||p.pack===recordsPlayerPack);
+  const players=sortRecordRows((d.players||[]).filter(p=>recordsPlayerPack==='all'||p.pack===recordsPlayerPack),'owned');
+  const seasons=[...(d.bestSeasons||[])].sort(recordSeasonSort==='date'?(a,b)=>new Date(b.completedAt)-new Date(a.completedAt):recordSeasonSort==='points'?(a,b)=>b.points-a.points:recordSeasonSort==='finish'?(a,b)=>(a.rank||99)-(b.rank||99):(a,b)=>b.teamRating-a.teamRating);
   return `<div class="card"><h2>${esc(d.name)} · Career profile</h2><div class="record-metric-grid">
-    ${[['Drafts',c.drafts],['Titles',c.titles],['Title %',Number(c.titlePercentage||0).toFixed(1)+'%'],['Points per game',Number(c.ppg||0).toFixed(2)],['W / D / L',`${c.w}/${c.d}/${c.l}`],['Goals for / against',`${c.gf}/${c.ga}`]].map(([k,v])=>`<div><b>${esc(String(v??0))}</b><span class="muted small">${esc(k)}</span></div>`).join('')}
-    </div><h3>Most owned players and transfer spending</h3><p class="muted small">One ownership per draft, grouped by player pack. Appearances, goals and assists count only that manager's official matches.</p>
+    ${[['Title %',fmtPct(c.titlePercentage)],['Top rated %',fmtPct(c.highestRatedPercentage)],['Top-rated conversion %',fmtPct(c.topRatedConversionPercentage)],['Points/game',fmtNum(c.ppg)],['Win %',fmtPct(c.winPercentage)],['Goals/game',fmtNum(c.goalsForPerGame)],['Conceded/game',fmtNum(c.goalsAgainstPerGame)]].map(([k,v])=>`<div><b>${esc(String(v))}</b><span class="muted small">${esc(k)}</span></div>`).join('')}</div>
+    <h3>Home and away performance</h3>${venueTableHtml(d.venue)}</div>
+    <div class="card"><div class="budget"><div><h3>Season history</h3><p class="muted small">The team's published overall rating at the time of each draft.</p></div><select id="recordSeasonSort"><option value="rating" ${recordSeasonSort==='rating'?'selected':''}>Highest rated first</option><option value="date" ${recordSeasonSort==='date'?'selected':''}>Most recent first</option><option value="points" ${recordSeasonSort==='points'?'selected':''}>Most points first</option><option value="finish" ${recordSeasonSort==='finish'?'selected':''}>Best finish first</option></select></div>${(recordShowAllSeasons?seasons:seasons.slice(0,5)).map(v=>`<div class="rating-summary"><div><b>${esc(adminDate(v.completedAt))}</b><span>${esc(packs[v.pack]||v.pack)} · Rank ${v.rank||'—'} · ${esc(v.mode)}</span></div><strong>${v.teamRating||'—'}</strong></div>`).join('')||'<p class="muted">No saved seasons yet.</p>'}${seasons.length>5?`<button class="secondary small-button" id="recordShowAllSeasons">${recordShowAllSeasons?'Show top five':`Show all seasons`}</button>`:''}</div>
+    <div class="card"><h3>Rivals</h3>${sortRecordRows(d.rivals||[],'rivals').map(r=>`<div class="rating-summary"><div><button class="record-profile-link" data-profile-h2h="${esc(r.two)}">${esc(r.name)} — View H2H</button><span>${fmtPct(r.winPercentage)} win rate</span></div><b>${fmtNum(r.meetings?(r.w*3+r.d)/r.meetings:0)} PPG</b></div>`).join('')||'<p class="muted">No direct fixtures yet.</p>'}</div>
+    <div class="card"><details id="managerPlayerDetails" ${managerPlayersExpanded?'open':''}><summary class="record-details-title">Player ownership and transfer spending</summary><p class="muted small">Career totals here describe individual footballers, not manager performance rankings. Choose a player to open their full pack-specific records.</p>
     <label>Player pack</label><select id="profilePlayerPack"><option value="all">All packs</option>${Object.entries(packs).map(([k,v])=>`<option value="${esc(k)}" ${recordsPlayerPack===k?'selected':''}>${esc(v)}</option>`).join('')}</select>
-    <div class="table-wrap"><table class="history-table"><thead><tr><th>Player</th><th>Pack</th><th>Drafts</th><th>Avg £m</th><th>Total £m</th><th>Max £m</th><th>Apps</th><th>Goals</th><th>Assists</th><th>Clean sheets</th></tr></thead><tbody>${players.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${esc(packs[p.pack]||p.pack)}</td><td>${p.drafts}</td><td>${p.averageSpend.toFixed(1)}</td><td>${p.totalSpend}</td><td>${p.highestSpend}</td><td>${p.appearances}</td><td>${p.goals}</td><td>${p.assists}</td><td>${p.cleanSheets}</td></tr>`).join('')}</tbody></table></div>
-    ${!players.length?'<p class="muted">No players in this selection.</p>':''}</div>
-    <div class="card"><h3>Strongest seasons</h3>${(d.bestSeasons||[]).map(v=>`<div class="rating-summary"><div><b>${esc(adminDate(v.completedAt))}</b><span>${esc(packs[v.pack]||v.pack)} · Rank ${v.rank||'—'} · ${esc(v.mode)}</span></div><strong>${v.teamRating||'—'}</strong></div>`).join('')||'<p class="muted">No saved seasons yet.</p>'}</div>
-    <div class="card"><h3>Rivals</h3>${(d.rivals||[]).map(r=>`<div class="rating-summary"><div><button class="record-profile-link" data-profile-h2h="${esc(r.two)}">${esc(r.name)} — View H2H</button><span>${r.meetings} meetings</span></div><b>${r.w}W ${r.d}D ${r.l}L</b></div>`).join('')||'<p class="muted">No direct fixtures yet.</p>'}</div>`;
+    <div class="table-wrap"><table class="history-table"><thead><tr>${recordSortableTh('owned','name','Player')}${recordSortableTh('owned','pack','Pack')}${recordSortableTh('owned','drafts','Bought')}${recordSortableTh('owned','averageSpend','Avg £m')}${recordSortableTh('owned','highestSpend','Max £m')}${recordSortableTh('owned','goals','Goals')}${recordSortableTh('owned','assists','Assists')}${recordSortableTh('owned','appearances','Apps')}${recordSortableTh('owned','cleanSheets','CS')}</tr></thead><tbody>${players.map(p=>`<tr><td><button class="record-profile-link" data-player-name="${esc(p.name)}" data-player-pack="${esc(p.pack)}">${esc(p.name)}</button></td><td>${esc(packs[p.pack]||p.pack)}</td><td>${p.drafts}</td><td>${Number(p.averageSpend).toFixed(1)}</td><td>${p.highestSpend}</td><td>${p.goals}</td><td>${p.assists}</td><td>${p.appearances}</td><td>${p.cleanSheets}</td></tr>`).join('')}</tbody></table></div>${!players.length?'<p class="muted">No players in this selection.</p>':''}</details></div>`;
 }
+
 function adminDate(v){
   try{return new Date(v).toLocaleString()}catch{return String(v||'')}
 }
 function draftHistoryCardsHtml(drafts){
   if(!drafts?.length)return '<div class="muted">No drafts match the current filters.</div>';
-  return `<div class="saved-draft-list">${drafts.map(d=>{
+  const sorted=[...drafts].sort(recordHistorySort==='oldest'?(a,b)=>new Date(a.completedAt)-new Date(b.completedAt):recordHistorySort==='size'?(a,b)=>b.participants.length-a.participants.length:recordHistorySort==='winner'?(a,b)=>a.champion.localeCompare(b.champion):(a,b)=>new Date(b.completedAt)-new Date(a.completedAt));
+  return `<div class="saved-draft-list">${sorted.map(d=>{
     const places=(d.participants||[]).filter(p=>p.rank).sort((a,b)=>a.rank-b.rank).map(p=>`${p.rank}. ${esc(p.name)}`).join(' · ');
     return `<div class="saved-draft-card"><div class="saved-draft-main"><b>${esc(adminDate(d.completedAt))}</b><div class="muted small">${esc(recordsSummaryData?.modeLabels?.[d.mode]||d.mode)} · ${esc(recordsSummaryData?.packLabels?.[d.pack]||d.pack)}</div><div class="small"><strong>Champion: ${esc(d.champion||'—')}</strong>${places?`<span class="draft-places">${places}</span>`:''}</div></div><button class="secondary saved-draft-open" data-historical-comp="${esc(d.competitionId)}">View draft ›</button></div>`;
   }).join('')}</div>`;
@@ -577,16 +649,18 @@ function recordsScreen(){
     document.querySelector('#recordsBack').onclick=closeRecords;wireAdminControls();return;
   }
   const profiles=recordsSummaryData.profiles||[],picker=(id,selected)=>`<select id="${id}">${profiles.map(p=>`<option value="${esc(p.profileId)}" ${p.profileId===selected?'selected':''}>${esc(p.name)}</option>`).join('')}</select>`;
-  const nav=`<div class="record-tabs">${[['all','Leaderboards'],['h2h','Head to Head'],['profile','Manager Profiles']].map(([key,label])=>`<button class="result-tab ${recordsSection===key?'active':''}" data-record-section="${key}">${label}</button>`).join('')}</div>`;
+  const nav=`<div class="record-tabs">${[['all','Leaderboards'],['h2h','Head to Head'],['profile','Managers'],['footballers','Footballers']].map(([key,label])=>`<button class="result-tab ${recordsSection===key?'active':''}" data-record-section="${key}">${label}</button>`).join('')}</div>`;
   const filterCount=recordFilterCount(),filterButton=`<button class="secondary" id="recordsFilterButton">Filters${filterCount?` (${filterCount})`:''} ⚙</button>${recordsFiltersHtml()}${recordFilterSummary()}`;
   let body='';
   if(recordsSection==='all'){
-    const meta=recordsAllData?`${recordsAllData.matchingDrafts} matching drafts · ${recordsAllData.matchingMatches} matches`:'Loading filtered records…';
-    body=`<div class="card"><h2>All-Time leaderboard</h2><p class="muted">Only drafts involving allowed managers count. Select a subset of friends in Filters, or require all selected managers for an exact group.</p>${filterButton}<p class="muted small records-match-count">${esc(meta)}</p>${recordsAllData?historyTableHtml(recordsAllData.table||[]):'<div class="muted">Loading…</div>'}</div>${recordsAllData?`<div class="card"><h2>Draft History</h2>${draftHistoryCardsHtml(recordsAllData.drafts||[])}</div>`:''}`;
+    const meta=recordsAllData?'Showing per-match averages and per-draft percentages':'Loading filtered records…';
+    body=`<div class="card"><h2>Manager leaderboards</h2><p class="muted">Comparable averages and percentages; total drafts played are intentionally not displayed. Filter by draft size for fairer comparisons.</p>${filterButton}<p class="muted small records-match-count">${esc(meta)}</p>${recordsAllData?historyTableHtml(recordsAllData.table||[]):'<div class="muted">Loading…</div>'}</div>${recordsAllData?`<div class="card"><div class="record-history-heading"><h2>Draft History</h2><div><label for="recordHistorySort">Sort by</label><select id="recordHistorySort"><option value="newest" ${recordHistorySort==='newest'?'selected':''}>Newest</option><option value="oldest" ${recordHistorySort==='oldest'?'selected':''}>Oldest</option><option value="winner" ${recordHistorySort==='winner'?'selected':''}>Winning manager</option><option value="size" ${recordHistorySort==='size'?'selected':''}>Draft size</option></select></div></div>${draftHistoryCardsHtml(recordsAllData.drafts||[])}</div>`:''}`;
   }else if(recordsSection==='h2h'){
     const d=recordsH2HData;
     body=`<div class="card"><h2>Direct head-to-head across drafts</h2><p class="muted">Only matches where these two managers played each other. Other managers in shared drafts have no effect.</p>${filterButton}<div class="filter-columns"><div><label>Manager 1</label>${picker('recordsH2HOne',recordsH2HOne)}</div><div><label>Manager 2</label>${picker('recordsH2HTwo',recordsH2HTwo)}</div></div>
-      ${!d?'<p class="muted">Select two different managers.</p>':`<div class="record-metric-grid">${[[d.oneName+' wins',d.w],['Draws',d.d],[d.twoName+' wins',d.l],[d.oneName+' goals',d.gf],[d.twoName+' goals',d.ga],['Direct meetings',d.meetings],['Shared drafts',d.sharedDrafts],[d.oneName+' win rate',d.winPercentage.toFixed(1)+'%']].map(([k,v])=>`<div><b>${esc(String(v))}</b><span class="muted small">${esc(k)}</span></div>`).join('')}</div>`}</div>`;
+      ${!d?'<p class="muted">Select two different managers.</p>':`<div class="record-metric-grid">${[['Win %',fmtPct(d.winPercentage)],['Draw %',fmtPct(d.meetings?100*d.d/d.meetings:0)],['Loss %',fmtPct(d.meetings?100*d.l/d.meetings:0)],['Points/game',fmtNum(d.ppg)],['Goals/game',fmtNum(d.goalsForPerGame)],['Conceded/game',fmtNum(d.goalsAgainstPerGame)]].map(([k,v])=>`<div><b>${esc(String(v))}</b><span class="muted small">${esc(k)}</span></div>`).join('')}</div><h3>${esc(d.oneName)} · Home vs away against ${esc(d.twoName)}</h3>${venueTableHtml(d)}</div>`}</div>`;
+  }else if(recordsSection==='footballers'){
+    body=`<div class="card">${filterButton}</div>${footballersHtml()}`;
   }else{
     body=`<div class="card"><h2>Manager profile</h2>${filterButton}<label>Select manager</label>${picker('recordsProfileSelect',recordsManagerId)}</div>${recordProfileHtml()}`;
   }
@@ -594,21 +668,33 @@ function recordsScreen(){
   document.querySelector('#recordsBack').onclick=closeRecords;
   const adminButton=document.querySelector('#recordsAdmin');if(adminButton)adminButton.onclick=openAdminRecords;
   document.querySelectorAll('[data-record-section]').forEach(b=>b.onclick=()=>{recordsSection=b.dataset.recordSection;loadCurrentRecordSection();});
+  recordSortWiring();
+  const historySort=document.querySelector('#recordHistorySort');if(historySort)historySort.onchange=e=>{recordHistorySort=e.target.value;recordsScreen();};
+  const seasonSort=document.querySelector('#recordSeasonSort');if(seasonSort)seasonSort.onchange=e=>{recordSeasonSort=e.target.value;recordsScreen();};
+  const seasonAll=document.querySelector('#recordShowAllSeasons');if(seasonAll)seasonAll.onclick=()=>{recordShowAllSeasons=!recordShowAllSeasons;recordsScreen();};
+  const fSearch=document.querySelector('#footballerSearch');if(fSearch)fSearch.oninput=e=>{footballerQuery=e.target.value;const caret=e.target.selectionStart;recordsScreen();const n=document.querySelector('#footballerSearch');n?.focus();n?.setSelectionRange(caret,caret);};
+  const fPack=document.querySelector('#footballerPack');if(fPack)fPack.onchange=e=>{footballerPack=e.target.value;footballerShowAll=false;recordsScreen();};
+  const fBack=document.querySelector('#footballerBack');if(fBack)fBack.onclick=()=>{footballerSelectedKey=null;recordsScreen();};
+  const showAll=document.querySelector('#footballerShowAll');if(showAll)showAll.onclick=()=>{footballerShowAll=true;recordsScreen();};
+  document.querySelectorAll('[data-footballer-key]').forEach(b=>b.onclick=()=>{footballerSelectedKey=b.dataset.footballerKey;recordsScreen();});
+  document.querySelectorAll('[data-player-name]').forEach(b=>b.onclick=()=>{footballerQuery=b.dataset.playerName;footballerPack=b.dataset.playerPack;footballerSelectedKey=null;recordsSection='footballers';loadFootballerRecords();});
   document.querySelectorAll('[data-historical-comp]').forEach(b=>b.onclick=()=>openHistoricalCompetition(b.dataset.historicalComp));
-  document.querySelectorAll('[data-open-profile]').forEach(b=>b.onclick=()=>{recordsManagerId=b.dataset.openProfile;recordsSection='profile';loadRecordsManagerProfile();});
+  document.querySelectorAll('[data-open-profile]').forEach(b=>b.onclick=()=>{recordsManagerId=b.dataset.openProfile;managerPlayersExpanded=false;recordsSection='profile';loadRecordsManagerProfile();});
   document.querySelectorAll('[data-profile-h2h]').forEach(b=>b.onclick=()=>{recordsH2HOne=recordsManagerId;recordsH2HTwo=b.dataset.profileH2h;recordsSection='h2h';loadRecordsH2H();});
   const one=document.querySelector('#recordsH2HOne'),two=document.querySelector('#recordsH2HTwo');
   if(one)one.onchange=e=>{recordsH2HOne=e.target.value;loadRecordsH2H();};
   if(two)two.onchange=e=>{recordsH2HTwo=e.target.value;loadRecordsH2H();};
   const profilePicker=document.querySelector('#recordsProfileSelect');if(profilePicker)profilePicker.onchange=e=>{recordsManagerId=e.target.value;loadRecordsManagerProfile();};
+  const playerDetails=document.querySelector('#managerPlayerDetails');if(playerDetails)playerDetails.ontoggle=()=>{managerPlayersExpanded=playerDetails.open;};
   const playerPack=document.querySelector('#profilePlayerPack');if(playerPack)playerPack.onchange=e=>{recordsPlayerPack=e.target.value;recordsScreen();};
   const filterBtn=document.querySelector('#recordsFilterButton'),panel=document.querySelector('#recordsFilterPanel');if(filterBtn&&panel)filterBtn.onclick=()=>{panel.hidden=!panel.hidden};
-  const all=document.querySelector('#recordsAllFilters');if(all)all.onclick=()=>{document.querySelectorAll('[data-filter-mode],[data-filter-pack],[data-filter-manager]').forEach(x=>x.checked=true);const req=document.querySelector('#requireAllManagers');if(req)req.checked=false;};
-  const reset=document.querySelector('#recordsClearFilters');if(reset)reset.onclick=()=>{document.querySelectorAll('[data-filter-mode],[data-filter-pack],[data-filter-manager]').forEach(x=>x.checked=true);const req=document.querySelector('#requireAllManagers');if(req)req.checked=false;};
+  document.querySelectorAll('[data-size-preset]').forEach(b=>b.onclick=()=>{const preset=b.dataset.sizePreset,selected=preset==='3'?['3']:preset==='multi'?['3','4','5+']:['2','3','4','5+'];document.querySelectorAll('[data-filter-size]').forEach(x=>x.checked=selected.includes(x.dataset.filterSize));});
+  const all=document.querySelector('#recordsAllFilters');if(all)all.onclick=()=>{document.querySelectorAll('[data-filter-mode],[data-filter-pack],[data-filter-manager]').forEach(x=>x.checked=true);document.querySelectorAll('[data-filter-size]').forEach(x=>x.checked=true);const req=document.querySelector('#requireAllManagers');if(req)req.checked=false;};
+  const reset=document.querySelector('#recordsClearFilters');if(reset)reset.onclick=()=>{document.querySelectorAll('[data-filter-manager]').forEach(x=>x.checked=false);const req=document.querySelector('#requireAllManagers');if(req)req.checked=false;};
   const apply=document.querySelector('#recordsApplyFilters');if(apply)apply.onclick=()=>{
-    const modes=[...document.querySelectorAll('[data-filter-mode]:checked')].map(x=>x.dataset.filterMode),packs=[...document.querySelectorAll('[data-filter-pack]:checked')].map(x=>x.dataset.filterPack),managers=[...document.querySelectorAll('[data-filter-manager]:checked')].map(x=>x.dataset.filterManager);
-    if(!modes.length||!packs.length||!managers.length)return showToast('Choose at least one mode, pack and allowed manager.');
-    selectedRecordModes=new Set(modes);selectedRecordPacks=new Set(packs);selectedRecordManagers=new Set(managers);requireAllSelectedManagers=!!document.querySelector('#requireAllManagers')?.checked;saveRecordFilters();loadCurrentRecordSection();
+    const modes=[...document.querySelectorAll('[data-filter-mode]:checked')].map(x=>x.dataset.filterMode),packs=[...document.querySelectorAll('[data-filter-pack]:checked')].map(x=>x.dataset.filterPack),managers=[...document.querySelectorAll('[data-filter-manager]:checked')].map(x=>x.dataset.filterManager),sizes=[...document.querySelectorAll('[data-filter-size]:checked')].map(x=>x.dataset.filterSize);
+    if(!modes.length||!packs.length||!managers.length||!sizes.length)return showToast('Choose at least one mode, pack, manager and draft size.');
+    selectedRecordModes=new Set(modes);selectedRecordPacks=new Set(packs);selectedRecordManagers=new Set(managers);selectedDraftSizes=new Set(sizes);requireAllSelectedManagers=!!document.querySelector('#requireAllManagers')?.checked;saveRecordFilters();loadCurrentRecordSection();
   };
 }
 
@@ -995,10 +1081,13 @@ function historicalLeaderboardHtml(stats,metric){
   return `<div class="stat-switch">${Object.entries(labels).map(([key,label])=>`<button class="stat-chip ${historicalStatsMetric===key?'active':''}" data-historical-stat="${key}">${label}</button>`).join('')}</div><div class="table-wrap"><table class="player-stats-table"><thead><tr><th>#</th><th>Player</th><th>Manager</th><th>Pos</th><th>${labels[metric]}</th></tr></thead><tbody>${rows.map((p,i)=>`<tr><td>${i+1}</td><td><b>${esc(p.player)}</b></td><td>${esc(p.managerName||'—')}</td><td>${esc(p.deployedSlot||'—')}</td><td><b>${value(p)}</b></td></tr>`).join('')}</tbody></table></div>`;
 }
 function revealedTeamHtml(m){
+  const rank=state.teamRanking?.find(x=>x.id===m.id);
+  const top=!!rank?.topRated;
+  const rankLabel=`<div class="team-reveal-rank">${rank?`<span class="rank-number">#${rank.rank} overall</span>`:''}${top?'<span class="top-rated-badge">★ TOP RATED</span>':''}</div>`;
   if(isFreeformLike()){
-    return `<div class="card team-reveal manager-accent-card" style="--manager-color:${esc(m.color||'#64748b')}"><div class="budget"><div><h2 class="manager-name-with-dot">${managerNameHtml(m)}</h2><div class="muted">${esc(m.finalFormation||'XI')}</div></div><b>£${m.budget}m left</b></div>${ratingsHtml(m)}${pitchHtml(m,false)}</div>`;
+    return `<div class="card team-reveal manager-accent-card ${top?'top-rated-team':''}" style="--manager-color:${esc(m.color||'#64748b')}">${rankLabel}<div class="budget"><div><h2 class="manager-name-with-dot">${managerNameHtml(m)}</h2><div class="muted">${esc(m.finalFormation||'XI')}</div></div><b>£${m.budget}m left</b></div>${ratingsHtml(m)}${pitchHtml(m,false)}</div>`;
   }
-  return `<div class="card team-reveal manager-accent-card" style="--manager-color:${esc(m.color||'#64748b')}"><div class="budget"><div><h2 class="manager-name-with-dot">${managerNameHtml(m)}</h2><div class="muted">${esc(m.formation||'XI')}</div></div><b>£${m.budget}m left</b></div>${ratingsHtml(m)}<div class="squad">${hardSquadHtml(m)}</div></div>`;
+  return `<div class="card team-reveal manager-accent-card ${top?'top-rated-team':''}" style="--manager-color:${esc(m.color||'#64748b')}">${rankLabel}<div class="budget"><div><h2 class="manager-name-with-dot">${managerNameHtml(m)}</h2><div class="muted">${esc(m.formation||'XI')}</div></div><b>£${m.budget}m left</b></div>${ratingsHtml(m)}<div class="squad">${hardSquadHtml(m)}</div></div>`;
 }
 
 function draftHistoryHtml(){
@@ -1008,7 +1097,7 @@ function draftHistoryHtml(){
 }
 function reveal(){
   const host=state.hostId===meId;
-  shell(`<div class="card"><h1>Teams revealed</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p><p class="muted small">Individual player ratings remain hidden. These team scores judge the XI as deployed.</p></div>${state.managers.map(revealedTeamHtml).join('')}${draftHistoryHtml()}<div class="card"><h2>Season simulation</h2><p class="muted">Every opponent pairing is perfectly balanced home and away. Seasons are longer and revealed by Gameweek, with every fixture in that Gameweek shown together.</p></div>${host?'<button class="primary big" id="simulate">Simulate season</button>':'<div class="card muted">Waiting for the host to start the simulation.</div>'}`);
+  shell(`<div class="card"><h1>Teams revealed</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p><p class="muted small">Individual player ratings remain hidden. These team scores judge the XI as deployed.</p></div>${(state.teamRanking?.length?[...state.managers].sort((a,b)=>state.teamRanking.findIndex(x=>x.id===a.id)-state.teamRanking.findIndex(x=>x.id===b.id)):state.managers).map(revealedTeamHtml).join('')}${draftHistoryHtml()}<div class="card"><h2>Season simulation</h2><p class="muted">Every opponent pairing is perfectly balanced home and away. Seasons are longer and revealed by Gameweek, with every fixture in that Gameweek shown together.</p></div>${host?'<button class="primary big" id="simulate">Simulate season</button>':'<div class="card muted">Waiting for the host to start the simulation.</div>'}`);
   if(host)document.querySelector('#simulate').onclick=()=>socket.emit('startSimulation',{},r=>{if(r&&!r.ok)showToast(r.error)});
 }
 function scorerList(goals){
@@ -1098,7 +1187,7 @@ function fullResults(){
   if(postSimView==='teams'){
     body=teamReviewHtml(state.managers,sim.playerStats||[],reviewManagerId,false,sim.matches||[])+draftHistoryHtml();
   }else{
-    if(resultsTab==='season') body=`<div class="card"><h2>Final table</h2>${standingsHtml(sim.table)}</div>${playoffs}<div class="card"><h2>Gameweek results</h2><div class="matches">${gameweekResultsHtml(sim.matches||[],sim.gameweeks||null)}</div></div><div class="card"><h2>Team ratings</h2><p class="muted small">The team ratings that drove the simulation. Individual hidden player ratings remain secret.</p>${state.managers.map(m=>`<div class="rating-summary"><div><b>${esc(m.name)}</b><span>${isFreeformLike()?esc(m.finalFormation||'XI'):esc(m.formation||'XI')}</span></div><strong>${state.teamRatings?.[m.id]?.overall??'—'}</strong></div>`).join('')}</div>${draftHistoryHtml()}`;
+    if(resultsTab==='season') body=`<div class="card"><h2>Final table</h2>${standingsHtml(sim.table)}</div>${playoffs}<div class="card"><h2>Gameweek results</h2><div class="matches">${gameweekResultsHtml(sim.matches||[],sim.gameweeks||null)}</div></div><div class="card"><h2>Team ratings</h2><p class="muted small">The team ratings that drove the simulation. Individual hidden player ratings remain secret.</p>${(state.teamRanking?.length?[...state.managers].sort((a,b)=>state.teamRanking.findIndex(x=>x.id===a.id)-state.teamRanking.findIndex(x=>x.id===b.id)):state.managers).map(m=>`<div class="rating-summary"><div><b>${esc(m.name)}</b><span>${isFreeformLike()?esc(m.finalFormation||'XI'):esc(m.formation||'XI')}</span></div><strong>${state.teamRatings?.[m.id]?.overall??'—'}${state.teamRanking?.find(x=>x.id===m.id)?.topRated?' ★':''}</strong></div>`).join('')}</div>${draftHistoryHtml()}`;
     else if(resultsTab==='players') body=`<div class="card"><h2>League player stats</h2><p class="muted">Top 10 performers across every manager's XI.</p>${leaderboardHtml(statsMetric)}</div>`;
     else if(resultsTab==='tots') body=`<div class="card"><div class="budget"><div><h2>Team of the Season</h2><p class="muted no-margin">Best-performing valid XI by average match rating, using the positions players were actually deployed in with sensible neighbouring roles.</p></div><b>${esc(sim.teamOfSeason?.formation||'XI')}</b></div><div class="spacer14"></div>${totsPitchHtml(sim.teamOfSeason)}</div>`;
     else body=sessionHtml();
