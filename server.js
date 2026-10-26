@@ -6,6 +6,7 @@ const crypto = require('crypto');
 let PgPool=null;
 try{({Pool:PgPool}=require('pg'));}catch{}
 const { PACKS, PLAYER_DB } = require('./data/players');
+const { ALL_TIME_PREM_V15_POSITIONS, V14_CHAOS_PACKS_BY_ID, V14_MASTER_MAX_ID } = require('./data/allTimePremV15');
 const { assessLineup, publicAssessment, simulateCompetition, positionalFit } = require('./data/allTimePremSimulation');
 
 const app = express();
@@ -513,7 +514,7 @@ function historyCompetitionPayload(room,simulation){
     homeShotsOnTarget:m.homeShotsOnTarget,awayShotsOnTarget:m.awayShotsOnTarget,homeSaves:m.homeSaves,awaySaves:m.awaySaves,playerOfMatch:m.playerOfMatch
   }));
   return {
-    version:'v14',participants,championProfileId:toProfile(simulation.championId),matches,
+    version:'v15',participants,championProfileId:toProfile(simulation.championId),matches,
     playoffs:(simulation.playoffs||[]).map(m=>({
       homeProfileId:toProfile(m.homeId),awayProfileId:toProfile(m.awayId),homeName:m.homeName,awayName:m.awayName,
       homeGoals:m.homeGoals,awayGoals:m.awayGoals,homeScorers:m.homeScorers,awayScorers:m.awayScorers,
@@ -639,9 +640,22 @@ function shuffle(a){
   return out;
 }
 function randomChoice(a){ return a[Math.floor(Math.random()*a.length)]; }
-function packPlayers(pack){ return pack === 'chaos' ? PLAYER_DB : PLAYER_DB.filter(p=>p.packs.includes(pack)); }
+function packPlayers(pack){
+  if(pack==='chaos'){
+    // Chaos is deliberately kept on its pre-v15 roster and original pack memberships.
+    return PLAYER_DB.filter(p=>p.id<=V14_MASTER_MAX_ID).map(p=>{
+      const original=V14_CHAOS_PACKS_BY_ID[p.id];
+      return original ? {...p,packs:original} : p;
+    });
+  }
+  const players=PLAYER_DB.filter(p=>p.packs.includes(pack));
+  if(pack!=='all_time_prem') return players;
+  // Positional eligibility is pack-specific: do not silently alter Current/World packs.
+  return players.map(p=>ALL_TIME_PREM_V15_POSITIONS[p.name]
+    ? {...p,positions:ALL_TIME_PREM_V15_POSITIONS[p.name]} : p);
+}
 function packCounts(){
-  const counts={chaos:PLAYER_DB.length};
+  const counts={chaos:packPlayers('chaos').length};
   for(const key of Object.keys(PACKS)) counts[key]=packPlayers(key).length;
   return counts;
 }
