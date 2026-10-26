@@ -1,13 +1,11 @@
-// Prem Draft master player database
-// Primary position is always first; secondary positions follow in priority order.
-
+// Prem Draft v15 master database. All-Time Prem-specific positional differences live in allTimePremV15.js.
+// Never move this file into public/: the master database contains hidden tier metadata.
 const PACKS = {
   "all_time_prem": "All-Time Premier League",
   "current_prem": "Current Premier League (2026/27)",
   "current_world": "Current World",
   "all_time_world": "All-Time World"
 };
-
 const PLAYER_DB = [
   {
     "name": "Peter Schmeichel",
@@ -3739,7 +3737,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 295
@@ -3789,7 +3788,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 299
@@ -3814,7 +3814,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 301
@@ -3827,7 +3828,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 302
@@ -3853,7 +3855,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 1,
     "id": 304
@@ -3879,7 +3882,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 1,
     "id": 306
@@ -4070,7 +4074,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 322
@@ -4096,7 +4101,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 324
@@ -4108,7 +4114,8 @@ const PLAYER_DB = [
       "AM"
     ],
     "packs": [
-      "current_prem"
+      "current_prem",
+      "all_time_prem"
     ],
     "tier": 3,
     "id": 325
@@ -4557,7 +4564,8 @@ const PLAYER_DB = [
       "CB"
     ],
     "packs": [
-      "current_prem"
+      "current_prem",
+      "all_time_prem"
     ],
     "tier": 3,
     "id": 363
@@ -4860,7 +4868,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 388
@@ -5320,7 +5329,8 @@ const PLAYER_DB = [
       "CB"
     ],
     "packs": [
-      "current_prem"
+      "current_prem",
+      "all_time_prem"
     ],
     "tier": 3,
     "id": 427
@@ -5461,7 +5471,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 439
@@ -5519,7 +5530,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 444
@@ -5594,7 +5606,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 450
@@ -5652,7 +5665,8 @@ const PLAYER_DB = [
       "GK"
     ],
     "packs": [
-      "current_prem"
+      "current_prem",
+      "all_time_prem"
     ],
     "tier": 3,
     "id": 455
@@ -6398,7 +6412,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 518
@@ -6446,7 +6461,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 1,
     "id": 522
@@ -6459,7 +6475,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 1,
     "id": 523
@@ -6520,7 +6537,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 528
@@ -6546,7 +6564,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 1,
     "id": 530
@@ -6572,7 +6591,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 1,
     "id": 532
@@ -6585,7 +6605,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 1,
     "id": 533
@@ -6734,7 +6755,8 @@ const PLAYER_DB = [
       "CM"
     ],
     "packs": [
-      "current_prem"
+      "current_prem",
+      "all_time_prem"
     ],
     "tier": 3,
     "id": 545
@@ -6747,7 +6769,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 546
@@ -6760,7 +6783,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 1,
     "id": 547
@@ -6821,7 +6845,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 552
@@ -6882,7 +6907,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 557
@@ -6895,7 +6921,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 1,
     "id": 558
@@ -6945,7 +6972,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 562
@@ -6957,7 +6985,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 563
@@ -7136,7 +7165,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 578
@@ -7209,7 +7239,8 @@ const PLAYER_DB = [
       "ST"
     ],
     "packs": [
-      "current_prem"
+      "current_prem",
+      "all_time_prem"
     ],
     "tier": 3,
     "id": 584
@@ -7312,7 +7343,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 593
@@ -7476,7 +7508,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 607
@@ -7513,7 +7546,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 610
@@ -7552,7 +7586,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 613
@@ -7565,7 +7600,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 614
@@ -7615,7 +7651,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "current_prem",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 618
@@ -7727,7 +7764,8 @@ const PLAYER_DB = [
       "CB"
     ],
     "packs": [
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 1,
     "id": 628
@@ -8218,7 +8256,8 @@ const PLAYER_DB = [
       "AM"
     ],
     "packs": [
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 1,
     "id": 669
@@ -8405,7 +8444,8 @@ const PLAYER_DB = [
       "DM"
     ],
     "packs": [
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 685
@@ -8416,7 +8456,8 @@ const PLAYER_DB = [
       "ST"
     ],
     "packs": [
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 686
@@ -8588,7 +8629,8 @@ const PLAYER_DB = [
     ],
     "packs": [
       "all_time_world",
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 1,
     "id": 700
@@ -8637,7 +8679,8 @@ const PLAYER_DB = [
       "CM"
     ],
     "packs": [
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 704
@@ -8693,7 +8736,8 @@ const PLAYER_DB = [
       "AM"
     ],
     "packs": [
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 3,
     "id": 709
@@ -8787,7 +8831,8 @@ const PLAYER_DB = [
       "GK"
     ],
     "packs": [
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 717
@@ -9244,7 +9289,8 @@ const PLAYER_DB = [
       "ST"
     ],
     "packs": [
-      "current_world"
+      "current_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 756
@@ -9453,7 +9499,8 @@ const PLAYER_DB = [
       "GK"
     ],
     "packs": [
-      "all_time_world"
+      "all_time_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 775
@@ -10395,7 +10442,8 @@ const PLAYER_DB = [
       "ST"
     ],
     "packs": [
-      "all_time_world"
+      "all_time_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 857
@@ -10682,7 +10730,8 @@ const PLAYER_DB = [
       "RM"
     ],
     "packs": [
-      "all_time_world"
+      "all_time_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 882
@@ -10730,7 +10779,8 @@ const PLAYER_DB = [
       "LM"
     ],
     "packs": [
-      "all_time_world"
+      "all_time_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 886
@@ -10741,7 +10791,8 @@ const PLAYER_DB = [
       "ST"
     ],
     "packs": [
-      "all_time_world"
+      "all_time_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 887
@@ -10765,7 +10816,8 @@ const PLAYER_DB = [
       "ST"
     ],
     "packs": [
-      "all_time_world"
+      "all_time_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 889
@@ -11403,7 +11455,8 @@ const PLAYER_DB = [
       "AM"
     ],
     "packs": [
-      "all_time_world"
+      "all_time_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 944
@@ -11427,7 +11480,8 @@ const PLAYER_DB = [
       "LM"
     ],
     "packs": [
-      "all_time_world"
+      "all_time_world",
+      "all_time_prem"
     ],
     "tier": 1,
     "id": 946
@@ -11496,7 +11550,8 @@ const PLAYER_DB = [
       "CM"
     ],
     "packs": [
-      "all_time_world"
+      "all_time_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 952
@@ -11704,7 +11759,8 @@ const PLAYER_DB = [
       "ST"
     ],
     "packs": [
-      "all_time_world"
+      "all_time_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 970
@@ -11716,7 +11772,8 @@ const PLAYER_DB = [
       "AM"
     ],
     "packs": [
-      "all_time_world"
+      "all_time_world",
+      "all_time_prem"
     ],
     "tier": 2,
     "id": 971
@@ -12056,7 +12113,2119 @@ const PLAYER_DB = [
     ],
     "tier": 2,
     "id": 1000
+  },
+  {
+    "name": "Paul McGrath",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 1,
+    "id": 1001
+  },
+  {
+    "name": "Roberto Firmino",
+    "positions": [
+      "ST",
+      "AM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 1,
+    "id": 1002
+  },
+  {
+    "name": "Philippe Coutinho",
+    "positions": [
+      "AM",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1003
+  },
+  {
+    "name": "Daniel Sturridge",
+    "positions": [
+      "ST",
+      "RW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1004
+  },
+  {
+    "name": "Kasper Schmeichel",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1005
+  },
+  {
+    "name": "Nigel Winterburn",
+    "positions": [
+      "LB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1006
+  },
+  {
+    "name": "Paul Pogba",
+    "positions": [
+      "CM",
+      "AM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1007
+  },
+  {
+    "name": "Tim Flowers",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1008
+  },
+  {
+    "name": "Dan Petrescu",
+    "positions": [
+      "RB",
+      "RM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1009
+  },
+  {
+    "name": "Dimitri Payet",
+    "positions": [
+      "AM",
+      "LW",
+      "LM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1010
+  },
+  {
+    "name": "Ollie Watkins",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1011
+  },
+  {
+    "name": "Danny Rose",
+    "positions": [
+      "LB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1012
+  },
+  {
+    "name": "Eidur Gudjohnsen",
+    "positions": [
+      "ST",
+      "AM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1013
+  },
+  {
+    "name": "Rafael van der Vaart",
+    "positions": [
+      "AM",
+      "CM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1014
+  },
+  {
+    "name": "David Luiz",
+    "positions": [
+      "CB",
+      "DM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1015
+  },
+  {
+    "name": "Diogo Jota",
+    "positions": [
+      "ST",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1016
+  },
+  {
+    "name": "Marc Cucurella",
+    "positions": [
+      "LB",
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1017
+  },
+  {
+    "name": "Mark Bosnich",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1018
+  },
+  {
+    "name": "Nicolas Otamendi",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1019
+  },
+  {
+    "name": "Stephen Carr",
+    "positions": [
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1020
+  },
+  {
+    "name": "Wilfried Zaha",
+    "positions": [
+      "LW",
+      "RW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1021
+  },
+  {
+    "name": "Gabriel Jesus",
+    "positions": [
+      "ST",
+      "RW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1022
+  },
+  {
+    "name": "Gary Kelly",
+    "positions": [
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1023
+  },
+  {
+    "name": "Gary McAllister",
+    "positions": [
+      "CM",
+      "DM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1024
+  },
+  {
+    "name": "Ian Harte",
+    "positions": [
+      "LB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1025
+  },
+  {
+    "name": "Jonny Evans",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1026
+  },
+  {
+    "name": "Manuel Akanji",
+    "positions": [
+      "CB",
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1027
+  },
+  {
+    "name": "Nathan Ake",
+    "positions": [
+      "CB",
+      "LB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1028
+  },
+  {
+    "name": "Olof Mellberg",
+    "positions": [
+      "CB",
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1029
+  },
+  {
+    "name": "Paul Merson",
+    "positions": [
+      "AM",
+      "LM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1030
+  },
+  {
+    "name": "Rob Jones",
+    "positions": [
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1031
+  },
+  {
+    "name": "Stan Collymore",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1032
+  },
+  {
+    "name": "Wes Brown",
+    "positions": [
+      "RB",
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1033
+  },
+  {
+    "name": "Alexandre Lacazette",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1034
+  },
+  {
+    "name": "Ashley Williams",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1035
+  },
+  {
+    "name": "Chris Smalling",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1036
+  },
+  {
+    "name": "Dirk Kuyt",
+    "positions": [
+      "RW",
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1037
+  },
+  {
+    "name": "Henning Berg",
+    "positions": [
+      "CB",
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1038
+  },
+  {
+    "name": "Idrissa Gueye",
+    "positions": [
+      "DM",
+      "CM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1039
+  },
+  {
+    "name": "Jose Fonte",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1040
+  },
+  {
+    "name": "Mikael Silvestre",
+    "positions": [
+      "LB",
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1041
+  },
+  {
+    "name": "Nathaniel Clyne",
+    "positions": [
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1042
+  },
+  {
+    "name": "Paulo Ferreira",
+    "positions": [
+      "RB",
+      "LB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1043
+  },
+  {
+    "name": "Rafael da Silva",
+    "positions": [
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1044
+  },
+  {
+    "name": "Raul Jimenez",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1045
+  },
+  {
+    "name": "Ryan Bertrand",
+    "positions": [
+      "LB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1046
+  },
+  {
+    "name": "Yohan Cabaye",
+    "positions": [
+      "CM",
+      "AM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1047
+  },
+  {
+    "name": "Andreas Christensen",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1048
+  },
+  {
+    "name": "Celestine Babayaro",
+    "positions": [
+      "LB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1049
+  },
+  {
+    "name": "Christian Fuchs",
+    "positions": [
+      "LB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1050
+  },
+  {
+    "name": "Craig Bellamy",
+    "positions": [
+      "ST",
+      "RW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1051
+  },
+  {
+    "name": "Danny Ings",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1052
+  },
+  {
+    "name": "Dennis Wise",
+    "positions": [
+      "CM",
+      "DM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1053
+  },
+  {
+    "name": "Joseph Yobo",
+    "positions": [
+      "CB",
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1054
+  },
+  {
+    "name": "Mario Melchiot",
+    "positions": [
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1055
+  },
+  {
+    "name": "Matt Doherty",
+    "positions": [
+      "RB",
+      "RM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1056
+  },
+  {
+    "name": "Paul Robinson",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1057
+  },
+  {
+    "name": "Ryan Shawcross",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1058
+  },
+  {
+    "name": "Shaun Wright-Phillips",
+    "positions": [
+      "RW",
+      "RM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1059
+  },
+  {
+    "name": "Alex Song",
+    "positions": [
+      "DM",
+      "CM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1060
+  },
+  {
+    "name": "Andrew Johnson",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1061
+  },
+  {
+    "name": "Anthony Gordon",
+    "positions": [
+      "LW",
+      "RW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1062
+  },
+  {
+    "name": "Ben Mee",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1063
+  },
+  {
+    "name": "Gabriel Martinelli",
+    "positions": [
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1064
+  },
+  {
+    "name": "Gylfi Sigurdsson",
+    "positions": [
+      "AM",
+      "CM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1065
+  },
+  {
+    "name": "James Ward-Prowse",
+    "positions": [
+      "CM",
+      "RM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1066
+  },
+  {
+    "name": "Joao Palhinha",
+    "positions": [
+      "DM",
+      "CM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1067
+  },
+  {
+    "name": "John O'Shea",
+    "positions": [
+      "RB",
+      "LB",
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1068
+  },
+  {
+    "name": "Jose Enrique",
+    "positions": [
+      "LB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1069
+  },
+  {
+    "name": "Leandro Trossard",
+    "positions": [
+      "LW",
+      "AM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1070
+  },
+  {
+    "name": "Michael Dawson",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1071
+  },
+  {
+    "name": "Ricardo Pereira",
+    "positions": [
+      "RB",
+      "LB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1072
+  },
+  {
+    "name": "Richarlison",
+    "positions": [
+      "ST",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1073
+  },
+  {
+    "name": "Thomas Partey",
+    "positions": [
+      "DM",
+      "CM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1074
+  },
+  {
+    "name": "Tom Heaton",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1075
+  },
+  {
+    "name": "Victor Wanyama",
+    "positions": [
+      "DM",
+      "CM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 2,
+    "id": 1076
+  },
+  {
+    "name": "Ander Herrera",
+    "positions": [
+      "CM",
+      "DM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1077
+  },
+  {
+    "name": "Asmir Begovic",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1078
+  },
+  {
+    "name": "Duncan Ferguson",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1079
+  },
+  {
+    "name": "Fraser Forster",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1080
+  },
+  {
+    "name": "Hatem Ben Arfa",
+    "positions": [
+      "RW",
+      "AM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1081
+  },
+  {
+    "name": "Marouane Fellaini",
+    "positions": [
+      "AM",
+      "CM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1082
+  },
+  {
+    "name": "Michail Antonio",
+    "positions": [
+      "ST",
+      "RW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1083
+  },
+  {
+    "name": "Patrick van Aanholt",
+    "positions": [
+      "LB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1084
+  },
+  {
+    "name": "Simon Mignolet",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1085
+  },
+  {
+    "name": "Stewart Downing",
+    "positions": [
+      "LM",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1086
+  },
+  {
+    "name": "Xherdan Shaqiri",
+    "positions": [
+      "RW",
+      "AM",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1087
+  },
+  {
+    "name": "Abdoulaye Doucoure",
+    "positions": [
+      "CM",
+      "AM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1088
+  },
+  {
+    "name": "Andrey Arshavin",
+    "positions": [
+      "LW",
+      "AM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1089
+  },
+  {
+    "name": "Danny Drinkwater",
+    "positions": [
+      "CM",
+      "DM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1090
+  },
+  {
+    "name": "John Carew",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1091
+  },
+  {
+    "name": "Kevin Davies",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1092
+  },
+  {
+    "name": "Lee Bowyer",
+    "positions": [
+      "CM",
+      "AM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1093
+  },
+  {
+    "name": "Peter Odemwingie",
+    "positions": [
+      "ST",
+      "RW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1094
+  },
+  {
+    "name": "Robert Green",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1095
+  },
+  {
+    "name": "Salomon Kalou",
+    "positions": [
+      "RW",
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1096
+  },
+  {
+    "name": "Tim Krul",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1097
+  },
+  {
+    "name": "Victor Moses",
+    "positions": [
+      "RW",
+      "RM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1098
+  },
+  {
+    "name": "Alex Oxlade-Chamberlain",
+    "positions": [
+      "CM",
+      "RW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1099
+  },
+  {
+    "name": "Charles N'Zogbia",
+    "positions": [
+      "LW",
+      "RW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1100
+  },
+  {
+    "name": "David Dunn",
+    "positions": [
+      "AM",
+      "CM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1101
+  },
+  {
+    "name": "Gerard Deulofeu",
+    "positions": [
+      "RW",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1102
+  },
+  {
+    "name": "Jermaine Jenas",
+    "positions": [
+      "CM",
+      "AM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1103
+  },
+  {
+    "name": "Kevin Mirallas",
+    "positions": [
+      "RW",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1104
+  },
+  {
+    "name": "Morgan Schneiderlin",
+    "positions": [
+      "DM",
+      "CM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1105
+  },
+  {
+    "name": "Obafemi Martins",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1106
+  },
+  {
+    "name": "Allan Saint-Maximin",
+    "positions": [
+      "LW",
+      "RW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1107
+  },
+  {
+    "name": "Andros Townsend",
+    "positions": [
+      "RW",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1108
+  },
+  {
+    "name": "Kalvin Phillips",
+    "positions": [
+      "DM",
+      "CM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1109
+  },
+  {
+    "name": "Manuel Lanzini",
+    "positions": [
+      "AM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1110
+  },
+  {
+    "name": "Tom Huddlestone",
+    "positions": [
+      "CM",
+      "DM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1111
+  },
+  {
+    "name": "Yannick Bolasie",
+    "positions": [
+      "LW",
+      "RW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1112
+  },
+  {
+    "name": "Adama Traore",
+    "positions": [
+      "RW",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1113
+  },
+  {
+    "name": "Jesse Lingard",
+    "positions": [
+      "AM",
+      "RW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1114
+  },
+  {
+    "name": "Ryan Babel",
+    "positions": [
+      "LW",
+      "RW",
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1115
+  },
+  {
+    "name": "Shane Long",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1116
+  },
+  {
+    "name": "James Collins",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1117
+  },
+  {
+    "name": "Ki Sung-yueng",
+    "positions": [
+      "CM",
+      "DM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1118
+  },
+  {
+    "name": "Nathan Redmond",
+    "positions": [
+      "RW",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1119
+  },
+  {
+    "name": "Shinji Okazaki",
+    "positions": [
+      "ST",
+      "AM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1120
+  },
+  {
+    "name": "Harry Winks",
+    "positions": [
+      "CM",
+      "DM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1121
+  },
+  {
+    "name": "Jack Harrison",
+    "positions": [
+      "LW",
+      "RW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1122
+  },
+  {
+    "name": "Jadon Sancho",
+    "positions": [
+      "RW",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1123
+  },
+  {
+    "name": "Kenwyne Jones",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1124
+  },
+  {
+    "name": "Tom Cleverley",
+    "positions": [
+      "CM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1125
+  },
+  {
+    "name": "Demarai Gray",
+    "positions": [
+      "LW",
+      "RW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1126
+  },
+  {
+    "name": "Erik Pieters",
+    "positions": [
+      "LB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1127
+  },
+  {
+    "name": "Jack Cork",
+    "positions": [
+      "DM",
+      "CM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1128
+  },
+  {
+    "name": "Matt Jarvis",
+    "positions": [
+      "LM",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1129
+  },
+  {
+    "name": "Maya Yoshida",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1130
+  },
+  {
+    "name": "Michael Turner",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1131
+  },
+  {
+    "name": "Nicklas Bendtner",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1132
+  },
+  {
+    "name": "Wayne Hennessey",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1133
+  },
+  {
+    "name": "Adam Federici",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1134
+  },
+  {
+    "name": "Alan Hutton",
+    "positions": [
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1135
+  },
+  {
+    "name": "Anton Ferdinand",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1136
+  },
+  {
+    "name": "Arouna Koné",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1137
+  },
+  {
+    "name": "Calum Chambers",
+    "positions": [
+      "CB",
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1138
+  },
+  {
+    "name": "Ciaran Clark",
+    "positions": [
+      "CB",
+      "LB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1139
+  },
+  {
+    "name": "Danny Simpson",
+    "positions": [
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1140
+  },
+  {
+    "name": "David Marshall",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1141
+  },
+  {
+    "name": "Dwight Gayle",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1142
+  },
+  {
+    "name": "Jake Livermore",
+    "positions": [
+      "CM",
+      "DM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1143
+  },
+  {
+    "name": "Jeff Hendrick",
+    "positions": [
+      "CM",
+      "RM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1144
+  },
+  {
+    "name": "Junior Hoilett",
+    "positions": [
+      "LW",
+      "RW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1145
+  },
+  {
+    "name": "Mohamed Elneny",
+    "positions": [
+      "DM",
+      "CM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1146
+  },
+  {
+    "name": "Neal Maupay",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1147
+  },
+  {
+    "name": "Phil Bardsley",
+    "positions": [
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1148
+  },
+  {
+    "name": "Titus Bramble",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1149
+  },
+  {
+    "name": "Tom Davies",
+    "positions": [
+      "CM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1150
+  },
+  {
+    "name": "Boaz Myhill",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1151
+  },
+  {
+    "name": "Dale Stephens",
+    "positions": [
+      "CM",
+      "DM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1152
+  },
+  {
+    "name": "Javier Manquillo",
+    "positions": [
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1153
+  },
+  {
+    "name": "Karl Darlow",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1154
+  },
+  {
+    "name": "Paul Dummett",
+    "positions": [
+      "LB",
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1155
+  },
+  {
+    "name": "Roger Johnson",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1156
+  },
+  {
+    "name": "Ryan Fredericks",
+    "positions": [
+      "RB",
+      "RM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1157
+  },
+  {
+    "name": "Steven Caulker",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1158
+  },
+  {
+    "name": "Vito Mannone",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1159
+  },
+  {
+    "name": "Aiden McGeady",
+    "positions": [
+      "RW",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1160
+  },
+  {
+    "name": "Cameron Jerome",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1161
+  },
+  {
+    "name": "Connor Wickham",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1162
+  },
+  {
+    "name": "DeAndre Yedlin",
+    "positions": [
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1163
+  },
+  {
+    "name": "Divock Origi",
+    "positions": [
+      "ST",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 4,
+    "id": 1164
+  },
+  {
+    "name": "Fabio Borini",
+    "positions": [
+      "ST",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1165
+  },
+  {
+    "name": "Jack Colback",
+    "positions": [
+      "CM",
+      "DM"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1166
+  },
+  {
+    "name": "Jon Flanagan",
+    "positions": [
+      "RB",
+      "LB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1167
+  },
+  {
+    "name": "Joselu",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1168
+  },
+  {
+    "name": "Martin Kelly",
+    "positions": [
+      "RB",
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1169
+  },
+  {
+    "name": "Ritchie De Laet",
+    "positions": [
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1170
+  },
+  {
+    "name": "Rob Elliot",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1171
+  },
+  {
+    "name": "Rudy Gestede",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1172
+  },
+  {
+    "name": "Ryan Bennett",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1173
+  },
+  {
+    "name": "Sam Vokes",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 3,
+    "id": 1174
+  },
+  {
+    "name": "Ben Hamer",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 4,
+    "id": 1175
+  },
+  {
+    "name": "Carl Jenkinson",
+    "positions": [
+      "RB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 4,
+    "id": 1176
+  },
+  {
+    "name": "Danny Graham",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 4,
+    "id": 1177
+  },
+  {
+    "name": "Gabriel Obertan",
+    "positions": [
+      "RW",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 4,
+    "id": 1178
+  },
+  {
+    "name": "Hal Robson-Kanu",
+    "positions": [
+      "ST",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 4,
+    "id": 1179
+  },
+  {
+    "name": "Jordan Ibe",
+    "positions": [
+      "RW",
+      "LW"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 4,
+    "id": 1180
+  },
+  {
+    "name": "Kevin Wimmer",
+    "positions": [
+      "CB"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 4,
+    "id": 1181
+  },
+  {
+    "name": "Mark Bunn",
+    "positions": [
+      "GK"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 4,
+    "id": 1182
+  },
+  {
+    "name": "Roberto Soldado",
+    "positions": [
+      "ST"
+    ],
+    "packs": [
+      "all_time_prem"
+    ],
+    "tier": 4,
+    "id": 1183
   }
 ];
-
 module.exports = { PACKS, PLAYER_DB };
