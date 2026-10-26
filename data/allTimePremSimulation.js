@@ -1,3 +1,5 @@
+const { ALL_TIME_PREM_V15_QUALITY, ALL_TIME_PREM_V15_ROLES, ALL_TIME_PREM_V15_GK_STYLES, V14_ALL_TIME_PREM_IDS } = require('./allTimePremV15');
+const V14_ALL_TIME_PREM_ID_SET = new Set(V14_ALL_TIME_PREM_IDS);
 // Hidden multi-pack simulation profiles. The legacy filename is retained so upgrading from v5A only requires replacing the file.
 // These values never leave the server. Individual player ratings/traits are deliberately not sent to clients.
 // All-Time Prem: best 2-3 season Premier League peak + small sustained-excellence bonus.
@@ -1316,7 +1318,7 @@ const GK_STYLE = {
   sweeper:{shot:1,command:1,distribution:7},
   distributor:{shot:0,command:-1,distribution:10}
 };
-// v12 goalkeeper styles are global for a player, independent of pack.
+// v12 goalkeeper styles remain global outside the v15 All-Time Prem overlay.
 const V12_GLOBAL_GK_OVERRIDE = {
   "Alex Palmer": "traditional",
   "Alisson": "sweeper",
@@ -1368,18 +1370,27 @@ function qualityFor(player,pack='all_time_prem'){
         const [peak,bonus]=pair;
         return {pack:p,peak,bonus,quality:round1(clamp(peak+bonus,60,99))};
       }
+      // Chaos stays on the v14 legacy All-Time Prem profile; the v15 overhaul is pack-local.
+      if(p==='all_time_prem'){
+        const [peak,bonus]=QUALITY[player.name] || PACK_TIER_DEFAULTS.all_time_prem[player.tier];
+        return {pack:p,peak,bonus,quality:round1(clamp(peak+bonus,60,99))};
+      }
       return {pack:p,...qualityFor(player,p)};
     });
     if(!candidates.length) candidates.push({pack:'all_time_world',...qualityFor(player,'all_time_world')});
     return candidates.sort((a,b)=>b.quality-a.quality)[0];
   }
   let pair;
-  if(pack==='all_time_prem') pair=QUALITY[player.name];
+  if(pack==='all_time_prem'){
+    // Strict: every v15 All-Time Prem player must have an approved rating.
+    pair=ALL_TIME_PREM_V15_QUALITY[player.name];
+    if(!pair) throw new Error(`Unrated v15 All-Time Prem footballer: ${player.name}`);
+  }
   else if(pack==='current_prem' && CURRENT_PREM_QUALITY[player.name]!=null) pair=[CURRENT_PREM_QUALITY[player.name],0];
   else if(pack==='current_world' && CURRENT_WORLD_QUALITY[player.name]!=null) pair=[CURRENT_WORLD_QUALITY[player.name],0];
   else if(pack==='current_world' && V11_CURRENT_PREM_QUALITY[player.name]!=null) pair=[V11_CURRENT_PREM_QUALITY[player.name],0];
   else if(pack==='all_time_world' && ALL_TIME_WORLD_QUALITY[player.name]!=null) pair=[ALL_TIME_WORLD_QUALITY[player.name],0];
-  else if(pack==='all_time_world' && player.packs?.includes('all_time_prem')) pair=QUALITY[player.name] || PACK_TIER_DEFAULTS.all_time_prem[player.tier];
+  else if(pack==='all_time_world' && V14_ALL_TIME_PREM_ID_SET.has(player.id)) pair=QUALITY[player.name] || PACK_TIER_DEFAULTS.all_time_prem[player.tier];
   pair = pair || PACK_TIER_DEFAULTS[pack]?.[player.tier] || PACK_TIER_DEFAULTS.all_time_world[player.tier] || [81,0.25];
   const [peak,bonus]=pair;
   return {pack,peak,bonus,quality:round1(clamp(peak+bonus,60,99))};
@@ -1418,7 +1429,7 @@ function goalkeeperSkills(player,quality,pack){
     const profile=outfieldProfile(player,quality,pack);
     return {shotStopping:18,command:16,distribution:clamp(18+profile.traits.progression*0.25,18,42)};
   }
-  const style=V12_GLOBAL_GK_OVERRIDE[player.name]||GK_OVERRIDE[player.name]||GLOBAL_GK_OVERRIDE_EXTRA[player.name]||'balanced';
+  const style=(pack==='all_time_prem' && ALL_TIME_PREM_V15_GK_STYLES[player.name]) || V12_GLOBAL_GK_OVERRIDE[player.name]||GK_OVERRIDE[player.name]||GLOBAL_GK_OVERRIDE_EXTRA[player.name]||'balanced';
   const mod=GK_STYLE[style];
   return {
     shotStopping:round1(clamp(quality+mod.shot,55,99)),
@@ -1433,7 +1444,7 @@ function outfieldProfile(player,quality,pack){
     const traits=Object.fromEntries(TRAIT_NAMES.map((n,i)=>[n,t.traits[i]]));
     return {archetype:'goalkeeper_outfield',role:{defence:t.role[0],midfield:t.role[1],attack:t.role[2]},traits};
   }
-  const archetype=V12_GLOBAL_ARCHETYPE_OVERRIDE[player.name] || PACK_ARCHETYPE_OVERRIDE[pack]?.[player.name] || ARCHETYPE_OVERRIDE[player.name] || GLOBAL_ARCHETYPE_EXTRA[player.name] || defaultArchetype(player);
+  const archetype=(pack==='all_time_prem' && ALL_TIME_PREM_V15_ROLES[player.name]) || V12_GLOBAL_ARCHETYPE_OVERRIDE[player.name] || PACK_ARCHETYPE_OVERRIDE[pack]?.[player.name] || ARCHETYPE_OVERRIDE[player.name] || GLOBAL_ARCHETYPE_EXTRA[player.name] || defaultArchetype(player);
   const tpl=ARCHETYPES[archetype]||ARCHETYPES.controller_cm;
   const traits={}; TRAIT_NAMES.forEach((n,i)=>traits[n]=tpl.traits[i]);
   return {archetype,role:{defence:tpl.role[0],midfield:tpl.role[1],attack:tpl.role[2]},traits};
@@ -1442,11 +1453,13 @@ function outfieldProfile(player,quality,pack){
 function getProfile(player,pack='all_time_prem'){
   const q=qualityFor(player,pack);
   const effectivePack=pack==='chaos' ? q.pack : pack;
-  const out=outfieldProfile(player,q.quality,effectivePack);
+  // The Chaos profile intentionally keeps v14 roles for its unchanged legacy roster.
+  const stylePack=pack==='chaos' && effectivePack==='all_time_prem' ? 'chaos' : effectivePack;
+  const out=outfieldProfile(player,q.quality,stylePack);
   return {
     sourcePack:effectivePack, peak:q.peak, sustainedBonus:q.bonus, quality:q.quality,
     archetype:out.archetype, role:out.role, traits:out.traits,
-    goalkeeper:goalkeeperSkills(player,q.quality,effectivePack)
+    goalkeeper:goalkeeperSkills(player,q.quality,stylePack)
   };
 }
 
