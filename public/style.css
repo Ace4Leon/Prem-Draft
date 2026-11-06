@@ -710,3 +710,23 @@ body[data-theme="immersive"] .record-averages-table .record-sticky-name{backgrou
 .record-history-heading h2{margin:0}
 .record-history-heading>div{min-width:145px}
 .record-history-heading select{width:100%}
+
+/* Project MATCH beta — isolated opt-in tactical display */
+.match-beta-label{background:var(--accent,#436b92);color:#fff;padding:4px 9px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.05em}
+.match-tactics-card .match-role{margin-top:14px;padding-top:9px;border-top:1px solid var(--border,rgba(128,128,128,.25))}
+.match-tactics-card p{margin:5px 0 10px}
+.match-tactics-card select{width:100%}
+.match-tactics-summary{margin-top:17px;padding:12px;border-radius:10px;background:var(--surface2,rgba(128,128,128,.10));display:flex;flex-direction:column;gap:4px}
+.match-tactics-reveal{margin:15px 0;padding:14px;border:1px solid var(--border,rgba(128,128,128,.25));border-radius:12px}
+.match-tactics-reveal .budget{gap:10px}.match-tactics-reveal .budget strong{text-align:right}
+.match-reveal-roles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
+.match-reveal-roles>div{min-width:0;display:flex;flex-direction:column;gap:3px;background:var(--surface2,rgba(128,128,128,.10));padding:9px;border-radius:8px}
+.match-reveal-roles span,.match-reveal-roles small{color:var(--muted,#8c9baa);font-size:11px}
+.match-reveal-roles b{font-size:12px;overflow-wrap:anywhere}
+.match-beta-banner{border-left:4px solid var(--accent,#587eac)}
+@media(max-width:390px){.match-reveal-roles{grid-template-columns:1fr}}
+
+.match-style-effects{display:flex;flex-wrap:wrap;gap:9px;margin-top:10px}.match-style-effects span{display:inline-flex;gap:5px;font-size:12px;border:1px solid var(--border,rgba(128,128,128,.25));border-radius:7px;padding:7px}
+
+/* MATCH Beta private qualitative tactical guidance */
+.match-choice-indicators{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:9px}.match-choice-indicators>div{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid var(--border-color,rgba(150,150,150,.25));padding:10px;border-radius:9px}.match-choice-indicators span{font-size:.87rem}.match-choice-indicators strong{font-size:.96rem}@media(max-width:490px){.match-choice-indicators{grid-template-columns:1fr}}
