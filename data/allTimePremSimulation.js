@@ -2025,7 +2025,7 @@ function leaderboards(playerStats){
   };
 }
 
-function simulateCompetition(teamInputs){
+function simulateCompetition(teamInputs,{matchFn=simulateMatch}={}){
   const teams=teamInputs.map(t=>({...t,assessment:t.assessment}));
   const schedule=scheduleFor(teams);
   const matches=[];
@@ -2033,7 +2033,7 @@ function simulateCompetition(teamInputs){
   const progressTables=[];
   let matchNumber=1;
   for(const gw of schedule){
-    const gwMatches=gw.fixtures.map(([h,a])=>({...simulateMatch(h,a),matchNumber:matchNumber++,gameweekNumber:gw.number}));
+    const gwMatches=gw.fixtures.map(([h,a])=>({...matchFn(h,a),matchNumber:matchNumber++,gameweekNumber:gw.number}));
     matches.push(...gwMatches);
     gameweeks.push({number:gw.number,matches:gwMatches,byeIds:[...(gw.byeIds||[])]});
     progressTables.push(tableFromResults(teams,matches));
@@ -2049,7 +2049,7 @@ function simulateCompetition(teamInputs){
       const next=[];
       for(let i=0;i<pool.length;i+=2){
         if(i===pool.length-1){next.push(pool[i]);continue;}
-        const match=simulateMatch(pool[i],pool[i+1],{neutral:true,knockout:true});
+        const match=matchFn(pool[i],pool[i+1],{neutral:true,knockout:true});
         match.tiebreak=true;playoffs.push(match);
         next.push(teams.find(t=>t.id===match.winnerId));
       }
@@ -2061,4 +2061,4 @@ function simulateCompetition(teamInputs){
   return {matches,gameweeks,progressTables,table,playoffs,championId,playerStats,leaderboards:leaderboards(playerStats),teamOfSeason:teamOfSeason(playerStats)};
 }
 
-module.exports={qualityFor,getProfile,positionalFit,assessLineup,publicAssessment,simulateCompetition};
+module.exports={qualityFor,getProfile,positionalFit,assessLineup,publicAssessment,simulateCompetition,performanceRatings,playerOfMatch};
