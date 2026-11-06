@@ -8,6 +8,7 @@ try{({Pool:PgPool}=require('pg'));}catch{}
 const { PACKS, PLAYER_DB } = require('./data/players');
 const { ALL_TIME_PREM_V15_POSITIONS, V14_CHAOS_PACKS_BY_ID, V14_MASTER_MAX_ID } = require('./data/allTimePremV15');
 const { assessLineup, publicAssessment, simulateCompetition, positionalFit } = require('./data/allTimePremSimulation');
+const MATCH = require('./data/matchBeta');
 
 const app = express();
 const server = http.createServer(app);
@@ -679,7 +680,7 @@ function managerPublic(m,room,viewerId){
       hidden:true,
       finalFormation:null,
       lineup:[],
-      teamReady:m.teamReady
+      teamReady:m.teamReady,tactics:null
     };
   }
   return {
@@ -695,7 +696,8 @@ function managerPublic(m,room,viewerId){
     hidden:false,
     finalFormation:m.finalFormation,
     lineup:m.lineup,
-    teamReady:m.teamReady
+    teamReady:m.teamReady,
+    tactics:room.phase==='team_build' && m.id!==viewerId?null:(m.tactics||{})
   };
 }
 function freeformScarcityWarnings(room){
@@ -870,6 +872,10 @@ function roomPublic(room,viewerId){
     hostId: room.hostId,
     phase: room.phase,
     mode: room.mode,
+    simulationEngine:room.simulationEngine||'classic',
+    matchStyles:room.simulationEngine==='match_beta'?Object.fromEntries(Object.entries(MATCH.STYLE).map(([id,s])=>[id,s.label])):null,
+    tacticPreview:room.phase==='team_build'&&room.simulationEngine==='match_beta'?privateTacticalPreview(room,viewerId):null,
+    tacticalReveals:ratingsVisible&&room.simulationEngine==='match_beta'&&room.matchProfiles?Object.fromEntries([...room.matchProfiles.entries()].map(([id,v])=>[id,{style:v.style,styleLabel:v.styleLabel,styleFit:Math.round(v.styleFit*10)/10,impact:matchStyleImpact(v),roles:Object.fromEntries(Object.entries(v.picks).map(([role,d])=>[role,{name:d.player.name}]))}])):null,
     modeLabels: MODE_LABELS,
     priorityVisibility: room.priorityVisibility||'visible',
     pack: room.pack,
@@ -879,7 +885,7 @@ function roomPublic(room,viewerId){
     simulationAvailable: true,
     teamRatings,
     teamRanking,
-    simulation: room.phase==='results' ? room.simulation : null,
+    simulation: room.phase==='results' ? publicSimulation(room.simulation,room.simulationEngine) : null,
     simulationRevealCount: room.phase==='results' ? (room.simulationRevealCount||0) : 0,
     simulationKind:room.simulationKind||'official',
     exhibitionNumber:room.exhibitionNumber||0,
@@ -896,6 +902,16 @@ function roomPublic(room,viewerId){
     shownCount: room.shownCount || 0,
     poolSize: room.initialPoolSize || room.pool.length
   };
+}
+function publicSimulation(sim,engine){
+  if(!sim||engine!=='match_beta')return sim;
+  // The audit-only replay seed and internal xG/chance calculations must never
+  // leave the server in ordinary room state, including nested gameweek games.
+  const safeMatch=({matchSeed,betaAudit,...publicMatch})=>publicMatch;
+  return {...sim,
+    matches:(sim.matches||[]).map(safeMatch),
+    gameweeks:(sim.gameweeks||[]).map(g=>({...g,matches:(g.matches||[]).map(safeMatch)})),
+    playoffs:(sim.playoffs||[]).map(safeMatch)};
 }
 function emitState(room){
   for(const m of room.managers.values()){
@@ -1296,6 +1312,36 @@ function freeformLineupEntries(m){
     return {player,slot};
   });
 }
+function privateTacticalPreview(room,viewerId){
+  const m=room.managers.get(viewerId);if(!m||!m.finalFormation)return null;
+  try{
+    const entries=isFreeformLike(room.mode)?freeformLineupEntries(m):hardLineupEntries(m);
+    const assessment=assessLineup(entries,room.pack),style=m.tactics?.style||'balanced';
+    const roleOptions=MATCH.optionsFor(assessment,style);
+    // Do not reveal numerical suitability scores, hidden player ratings,
+    // traits, or an identified optimal alternative during team building.
+    const safeOptions=Object.fromEntries(Object.entries(roleOptions).map(([role,list])=>[role,list.map(({id,name,slot})=>({id,name,slot}))]));
+    return {options:safeOptions,indicators:MATCH.tacticalChoiceIndicators(assessment,m.tactics||{})};
+  }catch{return null;}
+}
+function matchStyleImpact(prepared){
+  const baseline=MATCH.prepare(prepared.assessment,{style:'balanced',...prepared.selection,style:'balanced'});
+  const pct=(x,y)=>Math.round(1000*(x/y-1))/10;
+  return {chanceCountPct:pct(prepared.chanceCount,baseline.chanceCount),
+    chanceQualityPct:pct(prepared.chanceQuality,baseline.chanceQuality),
+    defensiveExposurePct:pct(prepared.exposure,baseline.exposure)};
+}
+function teamsForSimulation(room){
+  return [...room.managers.values()].map(m=>({id:m.id,name:m.name,assessment:room.teamAssessments.get(m.id),
+    ...(room.simulationEngine==='match_beta'?{matchProfile:room.matchProfiles.get(m.id)}:{})}));
+}
+function runSelectedEngine(room){
+  const teams=teamsForSimulation(room);
+  if(room.simulationEngine!=='match_beta')return simulateCompetition(teams);
+  const out=simulateCompetition(teams,{matchFn:MATCH.simulateMatch});
+  out.betaVersion='MATCH-MVP1';
+  return out;
+}
 function buildTeamAssessments(room){
   const map=new Map();
   for(const m of room.managers.values()){
@@ -1306,17 +1352,19 @@ function buildTeamAssessments(room){
 }
 function enterReveal(room){
   room.teamAssessments=buildTeamAssessments(room);
+  room.matchProfiles=room.simulationEngine==='match_beta'?new Map([...room.managers.values()].map(m=>[m.id,MATCH.prepare(room.teamAssessments.get(m.id),m.tactics||{})])):null;
   room.simulation=null;
   room.phase='reveal';
   emitState(room);
 }
 function enterPostDraft(room){
   clearInterval(room.timer); room.timer=null; room.current=null;
-  if(isFreeformLike(room.mode)){
+  if(isFreeformLike(room.mode)||room.simulationEngine==='match_beta'){
     room.phase='team_build';
     for(const m of room.managers.values()){
-      m.finalFormation=null;
-      m.lineup=[];
+      if(isFreeformLike(room.mode)){m.finalFormation=null;m.lineup=[];}
+      else {m.finalFormation=m.formation;m.lineup=hardLineupEntries(m).map(x=>x.player.id);}
+      m.tactics={style:'balanced',creator:null,scorer:null,anchor:null};
       m.teamReady=false;
     }
     emitState(room);
@@ -1653,6 +1701,7 @@ function resetManagerForDraft(m){
   m.finalFormation=null;
   m.lineup=[];
   m.teamReady=false;
+  m.tactics={style:'balanced',creator:null,scorer:null,anchor:null};
 }
 function removeLobbyManager(room,managerId,{notify=true,message='You were removed from the lobby.'}={}){
   if(!room||room.phase!=='lobby')return false;
@@ -1762,9 +1811,9 @@ io.on('connection', socket=>{
     let profile=null;try{profile=profileCode?await profileByCode(profileCode):null;}catch{}
     if(profileCode&&historyDbReady&&!profile)return cb?.({ok:false,error:'Your saved manager profile could not be found. Recover or create a profile and try again.'});
     const managerId=newManagerId(), reconnectToken=newReconnectToken();
-    const m={id:managerId,profileId:profile?.profile_id||null,profileDefaultName:profile?.default_name||null,name:cleanName(name||profile?.default_name),color:MANAGER_COLOURS[0],formation:null,ready:false,budget:STARTING_BUDGET,squad:[],finalFormation:null,lineup:[],teamReady:false,reconnectToken,socketId:socket.id,connected:true,disconnectTimer:null};
+    const m={id:managerId,profileId:profile?.profile_id||null,profileDefaultName:profile?.default_name||null,name:cleanName(name||profile?.default_name),color:MANAGER_COLOURS[0],formation:null,ready:false,budget:STARTING_BUDGET,squad:[],finalFormation:null,lineup:[],teamReady:false,tactics:{style:'balanced',creator:null,scorer:null,anchor:null},reconnectToken,socketId:socket.id,connected:true,disconnectTimer:null};
     const room={
-      code,hostId:managerId,phase:'lobby',mode:DEFAULT_MODE,pack:DEFAULT_PACK,managers:new Map([[managerId,m]]),
+      code,hostId:managerId,phase:'lobby',mode:DEFAULT_MODE,simulationEngine:'classic',pack:DEFAULT_PACK,managers:new Map([[managerId,m]]),
       pool:[],initialPoolSize:0,auctionIndex:0,shownCount:0,current:null,timer:null,paused:false,
       teamAssessments:null,simulation:null,officialSimulation:null,simulationKind:'official',exhibitionNumber:0,simulationRevealCount:0,
       draftHistory:[],sessionHistory:{drafts:0,matches:[],titles:{}},historySaveStatus:null,historySaveMessage:null,officialCompetitionId:null,simulationStarting:false,saveToHistory:true,
@@ -1782,7 +1831,7 @@ io.on('connection', socket=>{
     if(profileCode&&historyDbReady&&!profile)return cb?.({ok:false,error:'Your saved manager profile could not be found. Recover or create a profile and try again.'});
     if(profile&&[...room.managers.values()].some(m=>m.profileId===profile.profile_id))return cb?.({ok:false,error:'That permanent manager profile is already in this room.'});
     const managerId=newManagerId(), reconnectToken=newReconnectToken();
-    const m={id:managerId,profileId:profile?.profile_id||null,profileDefaultName:profile?.default_name||null,name:cleanName(name||profile?.default_name),color:nextManagerColour(room),formation:null,ready:false,budget:STARTING_BUDGET,squad:[],finalFormation:null,lineup:[],teamReady:false,reconnectToken,socketId:socket.id,connected:true,disconnectTimer:null};
+    const m={id:managerId,profileId:profile?.profile_id||null,profileDefaultName:profile?.default_name||null,name:cleanName(name||profile?.default_name),color:nextManagerColour(room),formation:null,ready:false,budget:STARTING_BUDGET,squad:[],finalFormation:null,lineup:[],teamReady:false,tactics:{style:'balanced',creator:null,scorer:null,anchor:null},reconnectToken,socketId:socket.id,connected:true,disconnectTimer:null};
     room.managers.set(managerId,m);socket.join(code);socket.data.room=code;socket.data.managerId=managerId;
     cb?.({ok:true,managerId,reconnectToken,state:roomPublic(room,managerId)});emitState(room);
   });
@@ -1841,9 +1890,19 @@ io.on('connection', socket=>{
     room.priorityVisibility=visibility;for(const m of room.managers.values())m.ready=false;cb?.({ok:true});emitState(room);
   });
 
+  socket.on('setSimulationEngine', ({engine},cb)=>{
+    const room=rooms.get(socket.data.room);
+    if(!room||room.phase!=='lobby'||!socketIsHost(room,socket))return cb?.({ok:false,error:'Only the host can select the engine in the lobby.'});
+    if(!['classic','match_beta'].includes(engine))return cb?.({ok:false,error:'Invalid simulation engine.'});
+    room.simulationEngine=engine;room.saveToHistory=engine==='classic';
+    for(const m of room.managers.values())m.ready=false;
+    cb?.({ok:true});emitState(room);
+  });
+
   socket.on('setSaveToHistory', ({save},cb)=>{
     const room=rooms.get(socket.data.room);
     if(!room||room.phase!=='lobby'||!socketIsHost(room,socket))return cb?.({ok:false,error:'Only the host can change this before the draft starts.'});
+    if(room.simulationEngine==='match_beta')return cb?.({ok:false,error:'MATCH Beta is unranked and cannot be saved to permanent Records.'});
     room.saveToHistory=save!==false;cb?.({ok:true});emitState(room);
   });
 
@@ -1867,7 +1926,7 @@ io.on('connection', socket=>{
     if([...room.managers.values()].some(m=>!m.ready))return cb?.({ok:false,error:'Everyone must be ready.'});
     if(room.mode==='hard'&&[...room.managers.values()].some(m=>!m.formation))return cb?.({ok:false,error:'Everyone must choose a formation and be ready.'});
     for(const m of room.managers.values())resetManagerForDraft(m);
-    room.teamAssessments=null;room.simulation=null;room.officialSimulation=null;room.simulationKind='official';room.exhibitionNumber=0;room.simulationRevealCount=0;
+    room.teamAssessments=null;room.matchProfiles=null;room.simulation=null;room.officialSimulation=null;room.simulationKind='official';room.exhibitionNumber=0;room.simulationRevealCount=0;
     room.draftHistory=[];room.historySaveStatus=null;room.historySaveMessage=null;room.officialCompetitionId=null;room.simulationStarting=false;room.paused=false;room.current=null;clearInterval(room.timer);room.timer=null;
     try{room.pool=buildPool(room);}catch(e){return cb?.({ok:false,error:e.message});}
     room.initialPoolSize=room.pool.length;room.auctionIndex=0;room.shownCount=0;room.phase='draft';
@@ -2014,7 +2073,7 @@ io.on('connection', socket=>{
   socket.on('setFinalFormation', ({formation})=>{
     const room=rooms.get(socket.data.room);const m=managerForSocket(room,socket);
     if(!room||room.phase!=='team_build'||!isFreeformLike(room.mode)||!m||!FREEFORM_FORMATIONS[formation])return;
-    m.finalFormation=formation;m.teamReady=false;m.lineup=bestFitLineup(m,formation);emitState(room);
+    m.finalFormation=formation;m.teamReady=false;m.lineup=bestFitLineup(m,formation);m.tactics={style:'balanced',creator:null,scorer:null,anchor:null};emitState(room);
   });
 
   socket.on('setLineupSlot', ({slotIndex,playerId})=>{
@@ -2023,13 +2082,25 @@ io.on('connection', socket=>{
     const idx=Number(slotIndex),pid=Number(playerId);if(!Number.isInteger(idx)||idx<0||idx>10||!m.squad.some(p=>p.id===pid))return;
     if(!Array.isArray(m.lineup)||m.lineup.length!==11)m.lineup=m.squad.map(p=>p.id);
     const oldIndex=m.lineup.indexOf(pid),displaced=m.lineup[idx];if(oldIndex>=0&&oldIndex!==idx)m.lineup[oldIndex]=displaced;
-    m.lineup[idx]=pid;m.teamReady=false;emitState(room);
+    m.lineup[idx]=pid;m.teamReady=false;m.tactics={style:'balanced',creator:null,scorer:null,anchor:null};emitState(room);
+  });
+
+  socket.on('setTactics', ({style,creator,scorer,anchor}={},cb)=>{
+    const room=rooms.get(socket.data.room),m=managerForSocket(room,socket);
+    if(!room||room.simulationEngine!=='match_beta'||room.phase!=='team_build'||!m)return cb?.({ok:false,error:'Tactical choices are not currently open.'});
+    const normalized={style,creator:creator||null,scorer:scorer||null,anchor:anchor||null};
+    try{
+      const entries=isFreeformLike(room.mode)?freeformLineupEntries(m):hardLineupEntries(m);
+      MATCH.prepare(assessLineup(entries,room.pack),normalized);
+      m.tactics=normalized;m.teamReady=false;cb?.({ok:true});emitState(room);
+    }catch(e){cb?.({ok:false,error:e.message});}
   });
 
   socket.on('setTeamReady', ({ready},cb)=>{
     const room=rooms.get(socket.data.room);const m=managerForSocket(room,socket);
-    if(!room||room.phase!=='team_build'||!isFreeformLike(room.mode)||!m)return;
-    if(ready&&!validLineup(m))return cb?.({ok:false,error:'Choose a formation and place all 11 players before setting your team.'});
+    if(!room||room.phase!=='team_build'||!(isFreeformLike(room.mode)||room.simulationEngine==='match_beta')||!m)return;
+    if(ready&&isFreeformLike(room.mode)&&!validLineup(m))return cb?.({ok:false,error:'Choose a formation and place all 11 players before setting your team.'});
+    if(ready&&room.simulationEngine==='match_beta'){try{const entries=isFreeformLike(room.mode)?freeformLineupEntries(m):hardLineupEntries(m);MATCH.prepare(assessLineup(entries,room.pack),m.tactics||{});}catch(e){return cb?.({ok:false,error:e.message});}}
     m.teamReady=!!ready;cb?.({ok:true});if(allTeamsReady(room))enterReveal(room);else emitState(room);
   });
 
@@ -2069,7 +2140,7 @@ io.on('connection', socket=>{
   socket.on('commissionAbandonDraft', (_,cb)=>{
     const room=rooms.get(socket.data.room);if(!room||!['draft','team_build'].includes(room.phase)||!socketIsHost(room,socket))return;
     clearInterval(room.timer);room.timer=null;room.phase='lobby';room.pool=[];room.initialPoolSize=0;room.auctionIndex=0;room.shownCount=0;room.current=null;room.paused=false;
-    room.teamAssessments=null;room.simulation=null;room.officialSimulation=null;room.simulationRevealCount=0;room.draftHistory=[];room.historySaveStatus=null;room.historySaveMessage=null;room.officialCompetitionId=null;room.simulationStarting=false;
+    room.teamAssessments=null;room.matchProfiles=null;room.simulation=null;room.officialSimulation=null;room.simulationRevealCount=0;room.draftHistory=[];room.historySaveStatus=null;room.historySaveMessage=null;room.officialCompetitionId=null;room.simulationStarting=false;
     room.nominationAvailableIds=new Set();room.nominationOrder=[];room.nominationNominatorId=null;room.nominationTimeLeft=null;room.nominationFinalPickManagerId=null;
     for(const m of room.managers.values()){resetManagerForDraft(m);m.ready=false;if(room.mode!=='hard')m.formation=null;}
     cb?.({ok:true});emitState(room);
@@ -2079,13 +2150,13 @@ io.on('connection', socket=>{
     const room=rooms.get(socket.data.room);
     if(!room||room.phase!=='reveal'||!socketIsHost(room,socket)||!room.teamAssessments||room.simulationStarting)return;
     room.simulationStarting=true;
-    const teams=[...room.managers.values()].map(m=>({id:m.id,name:m.name,assessment:room.teamAssessments.get(m.id)}));
-    room.simulation=simulateCompetition(teams);room.officialSimulation=room.simulation;room.simulationKind='official';room.exhibitionNumber=0;room.simulationRevealCount=0;
-    recordSessionCompetition(room,room.simulation);room.phase='results';
-    if(room.saveToHistory===false){room.historySaveStatus='practice';room.historySaveMessage='Practice game — this official simulation will not affect permanent leaderboards.';}
+    room.simulation=runSelectedEngine(room);room.officialSimulation=room.simulation;room.simulationKind='official';room.exhibitionNumber=0;room.simulationRevealCount=0;
+    if(room.simulationEngine==='classic')recordSessionCompetition(room,room.simulation);room.phase='results';
+    if(room.simulationEngine==='match_beta'){room.historySaveStatus='practice';room.historySaveMessage='MATCH Beta · experimental and unranked. Permanent Records and Classic session statistics are unchanged.';}
+    else if(room.saveToHistory===false){room.historySaveStatus='practice';room.historySaveMessage='Practice game — this official simulation will not affect permanent leaderboards.';}
     else{room.historySaveStatus='saving';room.historySaveMessage='Saving official season to All-Time Records…';}
     emitState(room);
-    const saveResult=await saveOfficialCompetition(room,room.simulation);
+    const saveResult=room.simulationEngine==='match_beta'?{status:'practice',message:'MATCH Beta · experimental and unranked. Permanent Records and Classic session statistics are unchanged.'}:await saveOfficialCompetition(room,room.simulation);
     room.historySaveStatus=saveResult.status;room.historySaveMessage=saveResult.message;room.simulationStarting=false;
     cb?.({ok:true,historySaveStatus:saveResult.status});emitState(room);
   });
@@ -2093,8 +2164,7 @@ io.on('connection', socket=>{
   socket.on('resimulateSeason', (_,cb)=>{
     const room=rooms.get(socket.data.room);if(!room||room.phase!=='results'||!socketIsHost(room,socket)||!room.teamAssessments||!room.officialSimulation)return;
     const total=room.simulation?.gameweeks?.length||room.simulation?.matches?.length||0;if((room.simulationRevealCount||0)<total)return cb?.({ok:false,error:'Finish revealing the current simulation first.'});
-    const teams=[...room.managers.values()].map(m=>({id:m.id,name:m.name,assessment:room.teamAssessments.get(m.id)}));
-    room.simulation=simulateCompetition(teams);room.simulationKind='exhibition';room.exhibitionNumber=(room.exhibitionNumber||0)+1;room.simulationRevealCount=0;
+    room.simulation=runSelectedEngine(room);room.simulationKind='exhibition';room.exhibitionNumber=(room.exhibitionNumber||0)+1;room.simulationRevealCount=0;
     cb?.({ok:true});emitState(room);
   });
 
@@ -2113,10 +2183,36 @@ io.on('connection', socket=>{
     room.simulationRevealCount=room.simulation.gameweeks?.length||room.simulation.matches?.length||0;cb?.({ok:true});emitState(room);
   });
 
+  socket.on('exportMatchBetaAudit', ({code}={},cb)=>{
+    const room=rooms.get(socket.data.room),m=managerForSocket(room,socket);
+    if(!room||!m||room.phase!=='results'||room.simulationEngine!=='match_beta'||!room.officialSimulation)return cb?.({ok:false,error:'No completed MATCH Beta season to export.'});
+    if(!ADMIN_CODE)return cb?.({ok:false,error:'Developer audit is unavailable: ADMIN_CODE has not been configured.'});
+    // Security is enforced on the server on every request, not via a hidden
+    // button, cached browser token, or the Records admin screen's session flag.
+    const now=Date.now();
+    const attempts=socket.data.matchAuditAuthAttempts||{count:0,resetAt:now+5*60*1000};
+    if(now>attempts.resetAt){attempts.count=0;attempts.resetAt=now+5*60*1000;}
+    if(attempts.count>=5)return cb?.({ok:false,error:'Too many incorrect admin code attempts. Reconnect later to retry.'});
+    if(typeof code!=='string'||code.length>128||!adminCodeMatches(code)){
+      attempts.count++;socket.data.matchAuditAuthAttempts=attempts;
+      return cb?.({ok:false,error:'Incorrect admin code.'});
+    }
+    attempts.count=0;socket.data.matchAuditAuthAttempts=attempts;
+    const sim=room.officialSimulation;
+    const file={engine:'match_beta',betaVersion:sim.betaVersion,pack:room.pack,auctionMode:room.mode,
+      players:[...room.managers.values()].map(manager=>({manager:manager.name,formation:manager.finalFormation||manager.formation,
+        lineup:manager.lineup.map((id,i)=>({slot:(isFreeformLike(room.mode)?FREEFORM_FORMATIONS[manager.finalFormation]:HARD_FORMATIONS[manager.formation])[i],playerId:id,playerName:manager.squad.find(p=>p.id===id)?.name})),
+        tactics:room.matchProfiles.get(manager.id).selection,
+        ratings:Object.fromEntries(['overall','attack','midfield','defence','teamBalance','width','positionalFit'].map(k=>[k,room.teamAssessments.get(manager.id)[k]]))})),
+      matches:sim.matches.map(x=>({matchNumber:x.matchNumber,gameweek:x.gameweekNumber,home:x.homeName,away:x.awayName,homeGoals:x.homeGoals,awayGoals:x.awayGoals,seed:x.matchSeed,...x.betaAudit})),
+      champion:room.managers.get(sim.championId)?.name||null};
+    cb?.({ok:true,data:file});
+  });
+
   socket.on('playAgain', (_,cb)=>{
     const room=rooms.get(socket.data.room);if(!room||!['finished','reveal','results'].includes(room.phase)||!socketIsHost(room,socket))return;
     clearInterval(room.timer);room.timer=null;room.phase='lobby';room.pool=[];room.initialPoolSize=0;room.auctionIndex=0;room.shownCount=0;room.current=null;room.paused=false;
-    room.teamAssessments=null;room.simulation=null;room.officialSimulation=null;room.simulationKind='official';room.exhibitionNumber=0;room.simulationRevealCount=0;room.draftHistory=[];room.historySaveStatus=null;room.historySaveMessage=null;room.officialCompetitionId=null;room.simulationStarting=false;room.saveToHistory=true;
+    room.teamAssessments=null;room.matchProfiles=null;room.simulation=null;room.officialSimulation=null;room.simulationKind='official';room.exhibitionNumber=0;room.simulationRevealCount=0;room.draftHistory=[];room.historySaveStatus=null;room.historySaveMessage=null;room.officialCompetitionId=null;room.simulationStarting=false;room.saveToHistory=room.simulationEngine!=='match_beta';
     room.nominationAvailableIds=new Set();room.nominationOrder=[];room.nominationCursor=-1;room.nominationNominatorId=null;room.nominationTimeLeft=null;room.nominationFinalPickManagerId=null;
     for(const m of room.managers.values()){resetManagerForDraft(m);m.ready=false;if(room.mode!=='hard')m.formation=null;}
     cb?.({ok:true});emitState(room);
