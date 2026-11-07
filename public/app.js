@@ -573,7 +573,7 @@ function historicalCompetitionScreen(){
       body=`${nav}<div class="card"><div class="budget"><div><h2>Team of the Season</h2><p class="muted no-margin">The Team of the Season generated when this draft was played.</p></div><b>${esc(d.teamOfSeason?.formation||'XI')}</b></div><div class="spacer14"></div>${totsPitchHtml(d.teamOfSeason)}</div>`;
     }
   }
-  shell(`<div class="card records-header"><div><div class="muted small">SAVED OFFICIAL DRAFT · ${esc(adminDate(c.completedAt))}</div><h1>🏆 ${esc(champion?.displayName||'Completed draft')}</h1><p class="muted no-margin">${esc(pack)} · ${esc(mode)}</p></div><button class="secondary" id="historicalBack">Back to Records</button></div>${viewToggle}${body}`);
+  shell(`<div class="card records-header"><div><div class="muted small">SAVED OFFICIAL DRAFT · ${esc(adminDate(c.completedAt))}</div><h1>🏆 ${esc(champion?.displayName||'Completed draft')}</h1><p class="muted no-margin">${esc(pack)} · ${esc(mode)} · ${d.simulationEngine==='match_beta'?'Project MATCH':'Classic'}</p></div><button class="secondary" id="historicalBack">Back to Records</button></div>${viewToggle}${body}`);
   document.querySelector('#historicalBack').onclick=()=>{historicalCompetition=null;recordsScreen();};
   document.querySelectorAll('[data-historical-view]').forEach(b=>b.onclick=()=>{historicalView=b.dataset.historicalView;recordsScreen();});
   document.querySelectorAll('[data-historical-tab]').forEach(b=>b.onclick=()=>{historicalResultTab=b.dataset.historicalTab;recordsScreen();});
@@ -583,7 +583,7 @@ function historicalCompetitionScreen(){
 function adminGamesHtml(){
   if(!recordsAdminData)return '<div class="card"><h2>Saved games</h2><p class="muted">Loading saved games…</p></div>';
   const rows=recordsAdminData.competitions||[];
-  return `<div class="card"><h2>Saved games</h2><p class="muted">Excluded games stay in the database but do not count toward any leaderboard or Rivalry Group.</p>${rows.length?`<div class="admin-record-list">${rows.map(c=>`<div class="admin-record ${c.excluded?'excluded':''}"><div class="admin-record-main"><b>${esc((c.managers||[]).join(' / ')||'Unknown managers')}</b><div class="muted small">${esc(adminDate(c.completedAt))} · ${esc(recordsAdminData.modeLabels?.[c.mode]||c.mode)} · ${esc(recordsAdminData.packLabels?.[c.pack]||c.pack)}</div><div class="muted small">Champion: ${esc(c.champion||'—')} · ${c.excluded?'EXCLUDED':'Counting in records'}</div></div><button class="${c.excluded?'secondary':'danger-soft'} admin-record-toggle" data-comp="${esc(c.competitionId)}" data-excluded="${c.excluded?'1':'0'}">${c.excluded?'Restore':'Exclude'}</button></div>`).join('')}</div>`:'<p class="muted">No saved official games yet.</p>'}</div>`;
+  return `<div class="card"><h2>Saved games</h2><p class="muted">Excluded games stay in the database but do not count toward any leaderboard or Rivalry Group.</p>${rows.length?`<div class="admin-record-list">${rows.map(c=>`<div class="admin-record ${c.excluded?'excluded':''}"><div class="admin-record-main"><b>${esc((c.managers||[]).join(' / ')||'Unknown managers')}</b><div class="muted small">${esc(adminDate(c.completedAt))} · ${esc(recordsAdminData.modeLabels?.[c.mode]||c.mode)} · ${esc(recordsAdminData.packLabels?.[c.pack]||c.pack)} · ${c.simulationEngine==='match_beta'?'Project MATCH':'Classic'}</div><div class="muted small">Champion: ${esc(c.champion||'—')} · ${c.excluded?'EXCLUDED':'Counting in records'}</div></div><button class="${c.excluded?'secondary':'danger-soft'} admin-record-toggle" data-comp="${esc(c.competitionId)}" data-excluded="${c.excluded?'1':'0'}">${c.excluded?'Restore':'Exclude'}</button></div>`).join('')}</div>`:'<p class="muted">No saved official games yet.</p>'}</div>`;
 }
 function adminProfilesHtml(){
   if(!recordsAdminProfilesData)return '<div class="card"><h2>Manage Profiles</h2><p class="muted">Loading permanent manager profiles…</p></div>';
@@ -721,9 +721,9 @@ function lobby(){
   ${firstProfileReminder}
   <div class="card"><h2>Game mode</h2>${host?`<select id="mode">${modeOptions}</select>`:`<div class="pack-display"><b>${esc(modeName())}</b></div>`}<p class="muted small">${esc(descriptions[state.mode]||'')}</p>${legacyControl}</div>
   ${prioritySettings}
-  <div class="card"><h2>Simulation engine</h2>${host?`<select id="simulationEngine"><option value="classic" ${state.simulationEngine!=='match_beta'?'selected':''}>Classic · current simulation</option><option value="match_beta" ${state.simulationEngine==='match_beta'?'selected':''}>Project MATCH · Experimental Beta</option></select>`:`<div class="pack-display"><b>${state.simulationEngine==='match_beta'?'Project MATCH Beta':'Classic Simulation'}</b></div>`}<p class="muted small">${state.simulationEngine==='match_beta'?'Experimental player-driven chances, four playing styles and three player responsibilities. This draft is always unranked and cannot affect permanent Records.':'The existing match engine, unchanged.'}</p></div>
+  <div class="card"><h2>Simulation engine</h2>${host?`<select id="simulationEngine"><option value="classic" ${state.simulationEngine!=='match_beta'?'selected':''}>Classic · current simulation</option><option value="match_beta" ${state.simulationEngine==='match_beta'?'selected':''}>Project MATCH · Competitive</option></select>`:`<div class="pack-display"><b>${state.simulationEngine==='match_beta'?'Project MATCH':'Classic Simulation'}</b></div>`}<p class="muted small">${state.simulationEngine==='match_beta'?'Player-driven chances with four playing styles and three player responsibilities. Games can count towards permanent Records, just like Classic.':'The existing match engine, unchanged.'}</p></div>
   <div class="card"><h2>Player pack</h2>${host?`<select id="pack">${packOptions}</select><p class="muted small">Changing the pack makes everyone ready up again.</p>`:`<div class="pack-display"><b>${esc(packName())}</b><span class="muted">${state.packCounts?.[state.pack]||0} players</span></div>`}</div>
-  ${state.simulationEngine==='match_beta'?'':`<div class="card record-save-card"><label class="record-save-toggle"><input id="saveToHistory" type="checkbox" ${state.saveToHistory!==false?'checked':''} ${host?'':'disabled'}><span><b>Save this game to All-Time Records</b><small>${state.saveToHistory!==false?'Official game · completed simulation will count permanently.':'Practice / unranked · permanent leaderboards will not change.'}</small></span></label>${host?'':'<div class="muted small">Only the host can change this before the draft starts.</div>'}</div>`}
+  <div class="card record-save-card"><label class="record-save-toggle"><input id="saveToHistory" type="checkbox" ${state.saveToHistory!==false?'checked':''} ${host?'':'disabled'}><span><b>Save this game to All-Time Records</b><small>${state.saveToHistory!==false?'Official game · completed simulation will count permanently.':'Practice / unranked · permanent leaderboards will not change.'}</small></span></label>${host?'':'<div class="muted small">Only the host can change this before the draft starts.</div>'}</div>
   ${formationCard}
   <div class="card"><h2>Managers</h2>${managersHtml}</div>
   ${host?`<button class="primary big" id="start">Start draft</button>`:''}`);
@@ -995,7 +995,7 @@ function tacticsCardHtml(m){
   if(state.simulationEngine!=='match_beta')return '';
   const pr=state.tacticPreview,raw=m.tactics||{},style=raw.style||'balanced';
   const styleLabels=state.matchStyles||{balanced:'Balanced',possession:'Possession & Control',direct:'Direct & Counterattack',press:'High Press'};
-  const explanations={balanced:'Neutral: no style bonus, no style penalty. Best for versatile squads without a strong speciality.',possession:'More sustained chances, lower average shot quality, better control when your midfield and build-up are suited.',direct:'Fewer chances but more dangerous opportunities. Rewards direct forwards and supply.',press:'More opportunities through pressure, with defensive exposure if the press is broken.'};
+  const explanations={balanced:'Neutral: no style bonus and no style penalty. A reliable option for versatile squads without a strong speciality.',possession:'More sustained chances, lower average shot quality, better control when your midfield and build-up are suited.',direct:'Fewer chances but more dangerous opportunities. Rewards direct forwards and supply.',press:'More opportunities through pressure, with defensive exposure if the press is broken.'};
   const styleOptions=Object.entries(styleLabels).map(([k,label])=>`<option value="${esc(k)}" ${style===k?'selected':''}>${esc(label)}${k==='balanced'?' · neutral':''}</option>`).join('');
   const roles=[['creator','Primary Creator','Creates chances through creativity, progression and the chosen style.'],['scorer','Primary Scorer','Receives extra opportunities; quality, goal threat and style influence finishing.'],['anchor','Defensive Anchor','Organises protection; quality, protection and positional suitability limit exposure.']];
   const roleBoxes=roles.map(([key,label,hint])=>{
@@ -1003,10 +1003,10 @@ function tacticsCardHtml(m){
     const options=list.map(x=>`<option value="${esc(x.id)}" ${String(selected)===String(x.id)?'selected':''}>${esc(x.name)} (${esc(x.slot)})</option>`).join('');
     return `<div class="match-role"><label>${label}</label><p class="muted small">${hint}</p><select data-match-role="${key}"><option value="" ${selected===''?'selected':''}>Choose a player</option>${options}</select></div>`;
   }).join('');
-  return `<div class="card match-tactics-card"><div class="budget"><h2>Project MATCH · Team Identity</h2><span class="match-beta-label">BETA</span></div><p class="muted small">Choose a playing style and explicitly assign three different outfield players to Creator, Scorer and Anchor before setting your team. Your base overall remains unchanged.</p>
+  return `<div class="card match-tactics-card"><div class="budget"><h2>Project MATCH · Team Identity</h2><span class="match-beta-label">MATCH</span></div><p class="muted small">Choose a playing style and explicitly assign three different outfield players to Creator, Scorer and Anchor before setting your team. Your base overall remains unchanged.</p>
     <label>Playing style</label><select id="matchStyle">${styleOptions}</select><p class="muted small" id="matchStyleExplanation">${esc(explanations[style])}</p>
     ${pr?roleBoxes:'<p class="muted small">Finish choosing your formation and placing all 11 players to select tactical roles.</p>'}
-    ${pr?`<div class="match-tactics-summary"><div class="match-choice-indicators"><div><span>Playing Style Choice</span><strong>${esc(pr.indicators?.style||'—')}</strong></div><div><span>Player Roles Choice</span><strong>${esc(pr.indicators?.roles||'—')}</strong></div></div><span class="muted small">Compared with the strongest available general-purpose setup for this XI. Best is not necessarily best against every opponent. Balanced is a neutral option, not an automatic bonus.</span></div>`:''}
+    ${pr?`<div class="match-tactics-summary"><div class="match-choice-indicators"><div><span>Playing Style</span><strong>${esc(pr.indicators?.style||'—')}</strong></div><div><span>Primary Creator</span><strong>${esc(pr.indicators?.creator||'Choose a player')}</strong></div><div><span>Primary Scorer</span><strong>${esc(pr.indicators?.scorer||'Choose a player')}</strong></div><div><span>Defensive Anchor</span><strong>${esc(pr.indicators?.anchor||'Choose a player')}</strong></div></div><span class="muted small">Ratings describe how well your current choices suit this XI and playing style. They do not reveal the strongest possible combination. Balanced is neutral.</span></div>`:''}
   </div>`;
 }
 function wireTactics(){
@@ -1022,7 +1022,7 @@ function wireTactics(){
 }
 function hardBetaTeamBuild(){
   const m=me(),readyCount=state.managers.filter(x=>x.teamReady).length;
-  shell(`<div class="mode-strip">Hard Mode · MATCH Beta team builder</div><div class="card"><div class="budget"><h1>Set your team identity</h1><b>${readyCount}/${state.managers.length} set</b></div><p class="muted small">Hard Mode's players and positions are locked. Select tactics before running the experimental match engine.</p></div><div class="card">${pitchHtml(m,false)}</div>${tacticsCardHtml(m)}<button class="${m.teamReady?'secondary':'primary'} big" id="teamReady">${m.teamReady?'Unset team':'Set team'}</button>`);
+  shell(`<div class="mode-strip">Hard Mode · Project MATCH team builder</div><div class="card"><div class="budget"><h1>Set your team identity</h1><b>${readyCount}/${state.managers.length} set</b></div><p class="muted small">Hard Mode's players and positions are locked. Select tactics before running Project MATCH.</p></div><div class="card">${pitchHtml(m,false)}</div>${tacticsCardHtml(m)}<button class="${m.teamReady?'secondary':'primary'} big" id="teamReady">${m.teamReady?'Unset team':'Set team'}</button>`);
   wireTactics();document.querySelector('#teamReady').onclick=()=>socket.emit('setTeamReady',{ready:!m.teamReady},r=>{if(r&&!r.ok)showToast(r.error)});
 }
 function teamBuild(){
@@ -1121,8 +1121,8 @@ function historicalLeaderboardHtml(stats,metric){
 }
 function tacticalRevealHtml(m){
   const r=state.tacticalReveals?.[m.id];if(!r)return '';
-  const roles=[['creator','Creator'],['scorer','Scorer'],['anchor','Anchor']];
-  return `<div class="match-tactics-reveal"><div class="budget"><h3>Playing style</h3><strong>${esc(r.styleLabel)}</strong></div><div class="muted small">${r.style==='balanced'?'Neutral baseline':'Suitability '+Number(r.styleFit).toFixed(1)+'/100'} · base overall is unchanged</div><div class="match-style-effects"><span>Chances <b>${r.impact?.chanceCountPct>0?'+':''}${r.impact?.chanceCountPct??0}%</b></span><span>Shot quality <b>${r.impact?.chanceQualityPct>0?'+':''}${r.impact?.chanceQualityPct??0}%</b></span><span>Defensive exposure <b>${r.impact?.defensiveExposurePct>0?'+':''}${r.impact?.defensiveExposurePct??0}%</b></span></div><div class="muted small">Effects compared with Balanced using the same three player assignments.</div><div class="match-reveal-roles">${roles.map(([k,label])=>`<div><span>${label}</span><b>${esc(r.roles?.[k]?.name||'—')}</b></div>`).join('')}</div></div>`;
+  const roles=[['creator','Primary Creator'],['scorer','Primary Scorer'],['anchor','Defensive Anchor']];
+  return `<div class="match-tactics-reveal"><div class="budget"><h3>Playing style</h3><strong>${esc(r.styleLabel||'—')}</strong></div><div class="match-choice-indicators match-reveal-indicators"><div><span>Playing Style</span><strong>${esc(r.ratings?.style||'—')}</strong></div>${roles.map(([key,label])=>`<div><span>${label}</span><strong>${esc(r.ratings?.[key]||'—')}</strong></div>`).join('')}</div><div class="match-reveal-roles">${roles.map(([key,label])=>`<div><span>${label}</span><b>${esc(r.roles?.[key]?.name||'—')}</b></div>`).join('')}</div><div class="muted small">Qualitative tactical suitability · base overall is unchanged.</div></div>`;
 }
 function revealedTeamHtml(m){
   const rank=state.teamRanking?.find(x=>x.id===m.id);
@@ -1237,7 +1237,7 @@ function fullResults(){
     else body=sessionHtml();
     body=`${resultNav()}${body}`;
   }
-  const betaNote=state.simulationEngine==='match_beta'?'<div class="card match-beta-banner"><b>Project MATCH Beta · unranked</b><p class="muted small">Chance-based simulation. Permanent Records and Classic session stats are not affected.</p></div>':'';
+  const betaNote=state.simulationEngine==='match_beta'?'<div class="card match-beta-banner"><b>Project MATCH · competitive</b><p class="muted small">Chance-based simulation. Official seasons count towards permanent Records when saving is enabled.</p></div>':'';
   const simNote=exhibition?`<div class="card exhibition-banner"><b>Exhibition re-simulation #${state.exhibitionNumber||1}</b><div>This result is just for fun and does not change titles, head-to-heads or session history.</div></div>`:'';
   const controls=host?`<div class="post-sim-controls"><button class="secondary big" id="resimulate">${exhibition?'Re-simulate again':'Re-simulate season'}</button>${exhibition?'<button class="secondary big" id="officialResult">View official result</button>':''}<button class="primary big" id="again">Play again</button></div>`:'<div class="card muted">Waiting for the host to choose what happens next.</div>';
   shell(`${betaNote}${simNote}<div class="card champion"><div class="muted">${exhibition?'EXHIBITION WINNER':'SEASON CHAMPION'}</div><h1>🏆 ${esc(champion?.name||'Winner')}</h1><p class="muted">${esc(packName())} · ${esc(modeName())}</p></div>${!exhibition?permanentHistoryStatusHtml():''}${viewToggle}${body}${state.simulationEngine==='match_beta'?'<button class="secondary big" id="exportMatchBeta">🔒 Developer audit (admin code required)</button>':''}<button class="secondary big" id="viewRecords">View All-Time Records</button><div class="spacer10"></div>${controls}`);
@@ -1245,12 +1245,12 @@ function fullResults(){
   document.querySelectorAll('[data-post-view]').forEach(b=>b.onclick=()=>{postSimView=b.dataset.postView;fullResults();});
   document.querySelectorAll('[data-team-review]').forEach(b=>b.onclick=()=>{reviewManagerId=b.dataset.teamReview;fullResults();});
   const audit=document.querySelector('#exportMatchBeta');if(audit)audit.onclick=()=>{
-    const code=prompt('Enter the existing Prem Draft admin code to download the private MATCH Beta audit:','');
+    const code=prompt('Enter the existing Prem Draft admin code to download the private Project MATCH audit:','');
     if(code===null)return;
     socket.emit('exportMatchBetaAudit',{code},r=>{
       if(!r?.ok)return showToast(r?.error||'Developer audit unavailable');
       const blob=new Blob([JSON.stringify(r.data,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');
-      link.href=url;link.download='prem-draft-match-beta-audit.json';document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),3000);
+      link.href=url;link.download='prem-draft-match-audit.json';document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),3000);
     });
   };
   const recordsButton=document.querySelector('#viewRecords');if(recordsButton)recordsButton.onclick=openRecords;
