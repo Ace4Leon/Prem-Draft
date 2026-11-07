@@ -1339,7 +1339,7 @@ function runSelectedEngine(room){
   const teams=teamsForSimulation(room);
   if(room.simulationEngine!=='match_beta')return simulateCompetition(teams);
   const out=simulateCompetition(teams,{matchFn:MATCH.simulateMatch});
-  out.betaVersion='MATCH-MVP1';
+  out.betaVersion='MATCH-V7-v16.1';
   return out;
 }
 function buildTeamAssessments(room){
@@ -1352,7 +1352,7 @@ function buildTeamAssessments(room){
 }
 function enterReveal(room){
   room.teamAssessments=buildTeamAssessments(room);
-  room.matchProfiles=room.simulationEngine==='match_beta'?new Map([...room.managers.values()].map(m=>[m.id,MATCH.prepare(room.teamAssessments.get(m.id),m.tactics||{})])):null;
+  room.matchProfiles=room.simulationEngine==='match_beta'?new Map([...room.managers.values()].map(m=>{const a=room.teamAssessments.get(m.id);MATCH.validateManualSelections(a,m.tactics||{});return [m.id,MATCH.prepare(a,m.tactics||{})];})):null;
   room.simulation=null;
   room.phase='reveal';
   emitState(room);
@@ -2100,7 +2100,7 @@ io.on('connection', socket=>{
     const room=rooms.get(socket.data.room);const m=managerForSocket(room,socket);
     if(!room||room.phase!=='team_build'||!(isFreeformLike(room.mode)||room.simulationEngine==='match_beta')||!m)return;
     if(ready&&isFreeformLike(room.mode)&&!validLineup(m))return cb?.({ok:false,error:'Choose a formation and place all 11 players before setting your team.'});
-    if(ready&&room.simulationEngine==='match_beta'){try{const entries=isFreeformLike(room.mode)?freeformLineupEntries(m):hardLineupEntries(m);MATCH.prepare(assessLineup(entries,room.pack),m.tactics||{});}catch(e){return cb?.({ok:false,error:e.message});}}
+    if(ready&&room.simulationEngine==='match_beta'){try{const entries=isFreeformLike(room.mode)?freeformLineupEntries(m):hardLineupEntries(m);const assessment=assessLineup(entries,room.pack);MATCH.validateManualSelections(assessment,m.tactics||{});MATCH.prepare(assessment,m.tactics||{});}catch(e){return cb?.({ok:false,error:e.message});}}
     m.teamReady=!!ready;cb?.({ok:true});if(allTeamsReady(room))enterReveal(room);else emitState(room);
   });
 
