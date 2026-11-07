@@ -1001,9 +1001,9 @@ function tacticsCardHtml(m){
   const roleBoxes=roles.map(([key,label,hint])=>{
     const list=pr?.options?.[key]||[],selected=raw[key]??'';
     const options=list.map(x=>`<option value="${esc(x.id)}" ${String(selected)===String(x.id)?'selected':''}>${esc(x.name)} (${esc(x.slot)})</option>`).join('');
-    return `<div class="match-role"><label>${label}</label><p class="muted small">${hint}</p><select data-match-role="${key}"><option value="" ${selected===''?'selected':''}>Auto-assign</option>${options}</select></div>`;
+    return `<div class="match-role"><label>${label}</label><p class="muted small">${hint}</p><select data-match-role="${key}"><option value="" ${selected===''?'selected':''}>Choose a player</option>${options}</select></div>`;
   }).join('');
-  return `<div class="card match-tactics-card"><div class="budget"><h2>Project MATCH · Team Identity</h2><span class="match-beta-label">BETA</span></div><p class="muted small">Choose a coherent style and assign responsibilities. Roles change chances, not just who is credited with goals. Your base overall remains unchanged.</p>
+  return `<div class="card match-tactics-card"><div class="budget"><h2>Project MATCH · Team Identity</h2><span class="match-beta-label">BETA</span></div><p class="muted small">Choose a playing style and explicitly assign three different outfield players to Creator, Scorer and Anchor before setting your team. Your base overall remains unchanged.</p>
     <label>Playing style</label><select id="matchStyle">${styleOptions}</select><p class="muted small" id="matchStyleExplanation">${esc(explanations[style])}</p>
     ${pr?roleBoxes:'<p class="muted small">Finish choosing your formation and placing all 11 players to select tactical roles.</p>'}
     ${pr?`<div class="match-tactics-summary"><div class="match-choice-indicators"><div><span>Playing Style Choice</span><strong>${esc(pr.indicators?.style||'—')}</strong></div><div><span>Player Roles Choice</span><strong>${esc(pr.indicators?.roles||'—')}</strong></div></div><span class="muted small">Compared with the strongest available general-purpose setup for this XI. Best is not necessarily best against every opponent. Balanced is a neutral option, not an automatic bonus.</span></div>`:''}
