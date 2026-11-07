@@ -1,14 +1,14 @@
 'use strict';
-// Project MATCH MVP1 — experimental, optional and unranked.
+// Project MATCH mathematical V7 foundation — experimental; V4 styles + V6 roles unchanged.
 // A standalone player-driven match generator. Never imports manager/session history.
 const {playerOfMatch}=require('./allTimePremSimulation');
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const avg=a=>a.length?a.reduce((t,v)=>t+v,0)/a.length:0;
 const STYLE={
   balanced:   {label:'Balanced',chanceCount:1.00,chanceQuality:1.00,exposure:1.00},
-  possession: {label:'Possession & Control',chanceCount:1.12,chanceQuality:0.89,exposure:0.97},
-  direct:     {label:'Direct & Counterattack',chanceCount:0.84,chanceQuality:1.16,exposure:1.055},
-  press:      {label:'High Press',chanceCount:1.25,chanceQuality:0.90,exposure:1.095}
+  possession: {label:'Possession & Control',chanceCount:1.12,chanceQuality:1/1.12,exposure:1.00},
+  direct:     {label:'Direct & Counterattack',chanceCount:0.84,chanceQuality:1/0.84,exposure:1.00},
+  press:      {label:'High Press',chanceCount:1.25,chanceQuality:1/1.25,exposure:1.00}
 };
 const SHOOTER={ST:5.3,LW:3.6,RW:3.6,AM:2.3,LM:1.2,RM:1.2,CM:.55,DM:.2,LB:.11,RB:.11,CB:.09};
 const CREATOR={ST:.8,LW:2.2,RW:2.2,AM:3,LM:2.1,RM:2.1,CM:1.9,DM:.85,LB:.75,RB:.75,CB:.18};
@@ -17,20 +17,22 @@ const seedRandom=seed=>{
   let s=seed>>>0;return ()=>{s=(s+0x6D2B79F5)|0;let t=Math.imul(s^(s>>>15),1|s);t^=t+Math.imul(t^(t>>>7),61|t);return ((t^(t>>>14))>>>0)/4294967296;};
 };
 const trait=(d,key)=>Number(d.profile.traits[key])||0;
-const qualityFit=d=>d.slot==='GK'&&d.player.positions?.[0]!=='GK'?0:d.profile.quality*(0.45+0.55*d.fit);
+const qualityFit=d=>d.value; // already includes positional fit from the lineup assessment
 const roleScore=(d,role,style='balanced')=>{
   const q=qualityFit(d), p=trait(d,'protection'),g=trait(d,'goalThreat'),c=trait(d,'creativity'),r=trait(d,'progression'),w=trait(d,'width'),dir=trait(d,'directness');
   let score;
   if(role==='scorer'){
-    score=style==='direct'?(.46*q+.39*g+.15*dir):style==='press'?(.49*q+.35*g+.10*dir+.06*p):style==='possession'?(.54*q+.35*g+.11*c):(.56*q+.44*g);
+    score=style==='direct'?(.46*q+.39*g+.15*dir):style==='press'?(.50*q+.43*g+.07*dir):style==='possession'?(.54*q+.42*g+.04*c):(.56*q+.44*g);
   }else if(role==='creator'){
-    score=style==='possession'?(.29*q+.31*c+.30*r+.10*w):style==='direct'?(.28*q+.24*c+.12*r+.24*dir+.12*w):style==='press'?(.32*q+.26*c+.19*r+.15*dir+.08*p):(.33*q+.37*c+.22*r+.08*w);
+    score=style==='possession'?(.29*q+.49*c+.17*r+.05*w):style==='direct'?(.40*q+.35*c+.11*r+.10*dir+.04*w):style==='press'?(.40*q+.37*c+.17*r+.04*dir+.02*p):(.33*q+.49*c+.13*r+.05*w);
   }else if(role==='anchor'){
-    score=style==='possession'?(.46*q+.32*p+.22*r):style==='press'?(.43*q+.48*p+.09*r):style==='direct'?(.48*q+.47*p+.05*dir):(.52*q+.48*p);
+    score=style==='possession'?(.49*q+.41*p+.10*r):style==='press'?(.43*q+.48*p+.09*r):style==='direct'?(.48*q+.47*p+.05*dir):(.52*q+.48*p);
   }else throw Error('Unknown role');
-  return clamp(score*(.74+.26*d.fit),0,100);
+  if(role==='creator'&&style==='direct') score=80+1.35*(score-80);
+  if(role==='creator'&&style==='press') score=80+1.18*(score-80);
+  return clamp(score,0,100); // no second positional-fit penalty
 };
-const eligible=(d,role)=>d.slot!=='GK'&&(role==='scorer'?(SHOOTER[d.slot]||0)>0.4:role==='creator'?(CREATOR[d.slot]||0)>0.7:DEFENDER.has(d.slot));
+const eligible=(d,role)=>d.slot!=='GK'&&['creator','scorer','anchor'].includes(role);
 function weightedAvg(details,positions,key){return avg(details.filter(d=>positions.includes(d.slot)).map(d=>trait(d,key)));}
 function styleSuitability(assessment,style){
   if(!STYLE[style])throw Error('Unknown style');
@@ -38,14 +40,47 @@ function styleSuitability(assessment,style){
   const d=assessment.details,mid=['DM','CM','AM','LM','RM'],back=['CB','LB','RB'],fw=['ST','LW','RW'];
   const gk=d.find(x=>x.slot==='GK');const keeperDistribution=gk?.profile?.goalkeeper?.distribution||20;
   let score;
-  if(style==='possession')score=.30*weightedAvg(d,mid,'progression')+.23*weightedAvg(d,mid,'creativity')+.15*weightedAvg(d,back,'progression')+.12*keeperDistribution+.20*assessment.teamLinks.buildup.score;
-  else if(style==='direct')score=.31*weightedAvg(d,fw,'directness')+.28*weightedAvg(d,fw,'goalThreat')+.17*assessment.width+.24*weightedAvg(d,mid,'progression');
-  else score=.26*weightedAvg(d,mid,'protection')+.20*weightedAvg(d,back,'protection')+.18*weightedAvg(d,fw,'directness')+.18*assessment.teamLinks.shielding.score+.18*avg(d.filter(x=>x.slot!=='GK').map(x=>trait(x,'progression')));
+  if(style==='possession') {
+    // Two midfield creators can sustain attacks around a defensive midfielder.
+    const creators=d.filter(x=>mid.includes(x.slot)).map(x=>trait(x,'creativity')).sort((a,b)=>b-a);
+    score=.21*weightedAvg(d,mid,'progression')+.32*avg(creators.slice(0,2))+.15*weightedAvg(d,back,'progression')+.12*keeperDistribution+.20*assessment.teamLinks.buildup.score;
+  }
+  else if(style==='direct') {
+    // Counters require an outlet from defence, not only forward pace/goal threat.
+    score=.31*weightedAvg(d,fw,'directness')+.18*weightedAvg(d,fw,'goalThreat')+.17*assessment.width+.14*weightedAvg(d,mid,'progression')+.10*weightedAvg(d,back,'progression')+.10*weightedAvg(d,back,'protection');
+  }
+  else {
+    // A pressing midfield needs two competent ball winners, not universal defensive specialists.
+    // Allow a creative AM or wide midfielder to coexist with strong ball-winning partners.
+    const midProtect=d.filter(x=>mid.includes(x.slot)).map(x=>trait(x,'protection')).sort((a,b)=>b-a);
+    const ballWinners=avg(midProtect.slice(0,2));
+    // Quick transitions depend on the midfield progressing possession after a recovery;
+    // requiring high Progression from every CB/fullback/forward overconstrains the style.
+    score=.26*ballWinners+.20*weightedAvg(d,back,'protection')+.26*weightedAvg(d,fw,'directness')+.18*assessment.teamLinks.shielding.score+.10*weightedAvg(d,mid,'progression');
+  }
   return clamp(score,45,99);
 }
 function optionsFor(assessment,style){
   if(!STYLE[style])throw Error('Unknown style');
   return Object.fromEntries(['creator','scorer','anchor'].map(role=>[role,assessment.details.filter(d=>eligible(d,role)).map(d=>({id:d.player.id,name:d.player.name,slot:d.slot,score:Math.round(roleScore(d,role,style)*10)/10}))]));
+}
+// v16.1: Validate a manager's three EXPLICIT selections before locking a team.
+// Internal mathematical previews may still construct hypothetical trios using prepare(),
+// but no missing role can be silently assigned to a ready manager.
+function validateManualSelections(assessment,selection={}){
+  const style=selection.style||'balanced';
+  const options=optionsFor(assessment,style),used=new Set();
+  for(const role of ['creator','scorer','anchor']){
+    const id=selection[role];
+    if(id===undefined||id===null||id==='')
+      throw Error('Choose a Primary Creator, Primary Scorer and Defensive Anchor before setting your team.');
+    const player=options[role].find(item=>String(item.id)===String(id));
+    if(!player)throw Error('Your selected '+role+' must be a player in your current outfield XI.');
+    if(used.has(String(player.id)))
+      throw Error('Choose three different players for the three responsibilities.');
+    used.add(String(player.id));
+  }
+  return true;
 }
 function prepare(assessment,selection={}){
   const style=selection.style||'balanced',spec=STYLE[style];if(!spec)throw Error('Unknown style');
@@ -67,32 +102,43 @@ function prepare(assessment,selection={}){
     picks[role]=assessment.details.find(d=>d.player.id===best.id);chosen.add(best.id);
   }
   const styleFit=styleSuitability(assessment,style);
-  // A specialist with fit >78 should normally be better than neutral Balanced;
-  // one with poor fit can be worse. These are experimental and testable factors.
-  const styleMultiplier=style==='balanced'?1:Math.exp(.009*(styleFit-78));
+  // At synthetic neutral fit 80, styles have identical pre-match xG to Balanced.
+  // Different chance volumes and average quality remain as footballing character.
+  // Poorly fitting Press and Direct can still expose the defence via the fit penalty.
+  const styleMultiplier=style==='balanced'?1:Math.exp(.007*(styleFit-80));
   const ids={creator:picks.creator.player.id,scorer:picks.scorer.player.id,anchor:picks.anchor.player.id};
   const outfield=assessment.details.filter(d=>d.slot!=='GK');
-  const naturalAnchors=options.anchor.map(x=>x.score);
-  const anchorFactor=clamp(Math.exp(-.008*(roleScore(picks.anchor,'anchor',style)-avg(naturalAnchors))),.93,1.07);
-  return {
+  // One smooth, absolute-reference function shared by all three roles.
+  // Scores of 80 are neutral; elite role scores help regardless of teammates.
+  const roleLog=(role)=>0.065*Math.tanh((roleScore(picks[role],role,style)-80)/14);
+  const attackRoleLog=roleLog('creator')+roleLog('scorer');
+  const anchorLog=roleLog('anchor');
+  const styleLog=style==='balanced'?0:.007*(styleFit-80);
+  const anchorFactor=Math.exp(-anchorLog);
+  const result={
     assessment,style,styleLabel:spec.label,styleFit,selection:{style,...ids},picks,
     roleSuitability:Object.fromEntries(Object.keys(ids).map(k=>[k,Math.round(roleScore(picks[k],k,style)*10)/10])),
     chanceCount:spec.chanceCount*Math.pow(styleMultiplier,.58),
-    chanceQuality:spec.chanceQuality*Math.pow(styleMultiplier,.42),
-    exposure:spec.exposure*Math.pow(styleMultiplier,-.28)*anchorFactor,
+    chanceQuality:spec.chanceQuality*Math.pow(styleMultiplier,.42)*Math.exp(attackRoleLog),
+    exposure:spec.exposure*Math.pow(styleMultiplier,-.35)*anchorFactor,
     averageScorer:weightedMean(outfield,d=>shootWeight(d),d=>roleScore(d,'scorer',style)),
-    averageCreator:weightedMean(outfield,d=>createWeight(d),d=>roleScore(d,'creator',style))
+    averageCreator:weightedMean(outfield,d=>createWeight(d),d=>roleScore(d,'creator',style)),
+    roleLogEffects:{creator:roleLog('creator'),scorer:roleLog('scorer'),anchor:anchorLog},
+    shotNormalizer:null
   };
+  result.shotNormalizer=calculateShotNormalizer(result);
+  return result;
 }
 function weightedMean(d,weight,val){const sum=d.reduce((s,x)=>s+weight(x),0);return sum?d.reduce((s,x)=>s+weight(x)*val(x),0)/sum:0;}
 const shootWeight=d=>(SHOOTER[d.slot]||.02)*Math.pow(Math.max(.1,trait(d,'goalThreat')/80),.7);
 const createWeight=d=>(CREATOR[d.slot]||.02)*Math.pow(Math.max(.1,trait(d,'creativity')/80),.7);
 function baseXG(a,b,home){
-  // Quality first, residual unit specialisation second (not classic's overlapping nonlinear edges).
-  const o=a.overall-b.overall;
-  const attack=(a.attack-a.overall)-(b.defence-b.overall);
-  const mid=(a.midfield-a.overall)-(b.midfield-b.overall);
-  const log=Math.log(1.28)+.075*o+.014*attack+.008*mid+(home?.18:0);
+  // V7: Overall alone determines pre-tactical competitive strength.
+  // Attack-vs-Defence specialisation changes MATCH OPENNESS for both teams,
+  // not the ratio of their expected goals. Midfield already contributes to Overall.
+  const strength=a.overall-b.overall;
+  const openness=.007*((a.attack-a.defence)+(b.attack-b.defence));
+  const log=Math.log(1.28)+.075*strength+openness+(home?.18:0);
   const gk=b.details.find(d=>d.slot==='GK');
   return clamp(Math.exp(log)*(gk?.player.positions?.[0]!=='GK'?1.20:1),.10,5.5);
 }
@@ -111,10 +157,30 @@ function pickPlayers(team,rng){
   const creator=rng()<.78?weightedPick(available,d=>createWeight(d)*(d.player.id===team.selection.creator?1.85:1),rng):null;
   return {shooter,creator};
 }
-function shotProbability(base,team,{shooter,creator}){
+// Player-specific involvement changes *who* shoots/creates and the quality
+// of their individual chances. Analytic normalization prevents this allocation
+// layer from secretly adding/removing extra team xG after direct role effects.
+function shotRawMultiplier(team,shooter,creator){
   const a=roleScore(shooter,'scorer',team.style)-team.averageScorer;
   const b=creator?roleScore(creator,'creator',team.style)-team.averageCreator:0;
-  return clamp(base*clamp(Math.exp(.015*a+.010*b),.78,1.22),.002,.70);
+  return clamp(Math.exp(.015*a+.010*b),.78,1.22);
+}
+function calculateShotNormalizer(team){
+  const d=team.assessment.details.filter(x=>x.slot!=='GK');
+  const weights=d.map(x=>shootWeight(x)*(x.player.id===team.selection.scorer?1.85:1));
+  const total=weights.reduce((a,b)=>a+b,0);
+  let weighted=0;
+  for(let i=0;i<d.length;i++){
+    const others=d.filter(x=>x.player.id!==d[i].player.id);
+    const cw=others.map(x=>createWeight(x)*(x.player.id===team.selection.creator?1.85:1));
+    const ct=cw.reduce((a,b)=>a+b,0);
+    const withCreator=others.reduce((sum,x,j)=>sum+cw[j]/ct*shotRawMultiplier(team,d[i],x),0);
+    weighted+=weights[i]/total*(.78*withCreator+.22*shotRawMultiplier(team,d[i],null));
+  }
+  return weighted;
+}
+function shotProbability(base,team,{shooter,creator}){
+  return clamp(base*shotRawMultiplier(team,shooter,creator)/team.shotNormalizer,.002,.70);
 }
 function simulatedHalf(attacker,defender,home,rng,extra=false){
   const cfg=factors(attacker,defender,home);
@@ -216,11 +282,16 @@ function expectedPointsFromXG(forXG,againstXG){
 function indicatorLabel(delta){
   // Delta is expected points per fixture surrendered against the same neutral
   // opponent. Exact numerical scores are deliberately hidden in the UI.
-  if(delta<=.008) return 'Best';
+  if(delta<=1e-10) return 'Best';
   if(delta<=.03) return 'Great';
   if(delta<=.075) return 'Good';
   if(delta<=.15) return 'OK';
   return 'Bad';
+}
+function roleChoiceLabel(delta,selection={}){
+  if(['creator','scorer','anchor'].some(r=>selection[r]===undefined||selection[r]===null||selection[r]===''))
+    return 'Choose all 3';
+  return indicatorLabel(delta);
 }
 function tacticalChoiceIndicators(assessment,selection={}){
   const current=prepare(assessment,selection);
@@ -262,8 +333,8 @@ function tacticalChoiceIndicators(assessment,selection={}){
                 +expectedPointsFromXG(ownAway,baselineHome*concedeFactor))/2;
   return {
     style:indicatorLabel(highest-reference.points),
-    roles:indicatorLabel(reference.points-currentPoints),
+    roles:roleChoiceLabel(reference.points-currentPoints,selection),
   };
 }
 
-module.exports={STYLE,styleSuitability,roleScore,optionsFor,prepare,expectedMatchXG,baseXG,simulateMatch,seedRandom,tacticalChoiceIndicators};
+module.exports={validateManualSelections,STYLE,styleSuitability,roleScore,optionsFor,prepare,expectedMatchXG,baseXG,simulateMatch,seedRandom,tacticalChoiceIndicators,expectedPointsFromXG,shotProbability};
