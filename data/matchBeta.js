@@ -1,5 +1,5 @@
 'use strict';
-// Project MATCH mathematical V7 foundation — experimental; V4 styles + V6 roles unchanged.
+// Project MATCH mathematical V7 foundation — V4 styles + V6 roles unchanged.
 // A standalone player-driven match generator. Never imports manager/session history.
 const {playerOfMatch}=require('./allTimePremSimulation');
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -279,62 +279,38 @@ function expectedPointsFromXG(forXG,againstXG){
   }
   return 3*win+draw;
 }
-function indicatorLabel(delta){
-  // Delta is expected points per fixture surrendered against the same neutral
-  // opponent. Exact numerical scores are deliberately hidden in the UI.
-  if(delta<=1e-10) return 'Best';
-  if(delta<=.03) return 'Great';
-  if(delta<=.075) return 'Good';
-  if(delta<=.15) return 'OK';
-  return 'Bad';
+// Manager-facing absolute suitability bands (not a ranking of alternatives).
+// Deliberately classify the *unrounded* score to avoid crossing boundaries
+// when a score such as 94.96 is formatted for a different purpose as 95.0.
+function suitabilityLabel(score){
+  if(!Number.isFinite(score))return '—';
+  if(score>=95)return 'World Class';
+  if(score>=90)return 'Excellent';
+  if(score>=85)return 'Great';
+  if(score>=80)return 'Good';
+  if(score>=75)return 'OK';
+  if(score>=70)return 'Bad';
+  return 'Awful';
 }
-function roleChoiceLabel(delta,selection={}){
-  if(['creator','scorer','anchor'].some(r=>selection[r]===undefined||selection[r]===null||selection[r]===''))
-    return 'Choose all 3';
-  return indicatorLabel(delta);
-}
-function tacticalChoiceIndicators(assessment,selection={}){
-  const current=prepare(assessment,selection);
-  const baseline=prepare(assessment,{style:'balanced'});
-  const baselineHome=expectedMatchXG(baseline,baseline,true).xg;
-  const baselineAway=expectedMatchXG(baseline,baseline,false).xg;
-  const styleResults={};
-  let currentPoints=null;
-  let highest=-Infinity;
-  for(const style of Object.keys(STYLE)){
-    const opt=optionsFor(assessment,style);
-    const anchors=[...opt.anchor].sort((a,b)=>b.score-a.score||String(a.id).localeCompare(String(b.id)));
-    let best={points:-Infinity,selection:null};
-    // Each creator/scorer pair has a uniquely strongest eligible defender.
-    // This avoids pointlessly repeating the same offensive calculation for
-    // all possible anchors and keeps live preview evaluations lightweight.
-    for(const creator of opt.creator){
-      for(const scorer of opt.scorer){
-        if(String(creator.id)===String(scorer.id))continue;
-        const anchor=anchors.find(a=>String(a.id)!==String(creator.id)&&String(a.id)!==String(scorer.id));
-        if(!anchor)continue;
-        const candidate=prepare(assessment,{style,creator:creator.id,scorer:scorer.id,anchor:anchor.id});
-        const ownHome=expectedMatchXG(candidate,baseline,true).xg;
-        const ownAway=expectedMatchXG(candidate,baseline,false).xg;
-        const concedeFactor=candidate.exposure/baseline.exposure;
-        const points=(expectedPointsFromXG(ownHome,baselineAway*concedeFactor)
-                    +expectedPointsFromXG(ownAway,baselineHome*concedeFactor))/2;
-        if(points>best.points){best={points,selection:candidate.selection};}
-      }
+// One independently calculated label for style and for each selected role.
+// Never compare against the best available option: a 'Good' selection may
+// be the strongest one in the squad, and multiple choices may share a band.
+function tacticalSuitabilityLabels(assessment,selection={}){
+  const style=selection.style||'balanced';
+  const result={style:suitabilityLabel(styleSuitability(assessment,style))};
+  for(const role of ['creator','scorer','anchor']){
+    const id=selection[role];
+    if(id===undefined||id===null||id===''){
+      result[role]='Choose a player';
+      continue;
     }
-    styleResults[style]=best;
-    if(best.points>highest)highest=best.points;
+    const d=assessment.details.find(x=>x.slot!=='GK'&&String(x.player.id)===String(id));
+    result[role]=d?suitabilityLabel(roleScore(d,role,style)):'Choose a player';
   }
-  const reference=styleResults[current.style];
-  const ownHome=expectedMatchXG(current,baseline,true).xg;
-  const ownAway=expectedMatchXG(current,baseline,false).xg;
-  const concedeFactor=current.exposure/baseline.exposure;
-  currentPoints=(expectedPointsFromXG(ownHome,baselineAway*concedeFactor)
-                +expectedPointsFromXG(ownAway,baselineHome*concedeFactor))/2;
-  return {
-    style:indicatorLabel(highest-reference.points),
-    roles:roleChoiceLabel(reference.points-currentPoints,selection),
-  };
+  return result;
 }
+// Kept as a legacy entry point for callers that have not yet been migrated.
+// It now returns the same four absolute labels; never Best or ranked deltas.
+const tacticalChoiceIndicators=tacticalSuitabilityLabels;
 
-module.exports={validateManualSelections,STYLE,styleSuitability,roleScore,optionsFor,prepare,expectedMatchXG,baseXG,simulateMatch,seedRandom,tacticalChoiceIndicators,expectedPointsFromXG,shotProbability};
+module.exports={validateManualSelections,STYLE,styleSuitability,roleScore,optionsFor,prepare,expectedMatchXG,baseXG,simulateMatch,seedRandom,tacticalChoiceIndicators,tacticalSuitabilityLabels,suitabilityLabel,expectedPointsFromXG,shotProbability};
