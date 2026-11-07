@@ -393,6 +393,7 @@ async function adminCompetitionList(){
       completedAt:r.completed_at,
       mode:r.mode,
       pack:r.pack,
+      simulationEngine:d.simulationEngine||'classic',
       excluded:!!r.excluded,
       managers:participants.map(p=>p.displayName||'Manager'),
       champion:champion?.displayName||'—'
@@ -515,7 +516,7 @@ function historyCompetitionPayload(room,simulation){
     homeShotsOnTarget:m.homeShotsOnTarget,awayShotsOnTarget:m.awayShotsOnTarget,homeSaves:m.homeSaves,awaySaves:m.awaySaves,playerOfMatch:m.playerOfMatch
   }));
   return {
-    version:'v15',participants,championProfileId:toProfile(simulation.championId),matches,
+    version:'v15',simulationEngine:room.simulationEngine||'classic',participants,championProfileId:toProfile(simulation.championId),matches,
     playoffs:(simulation.playoffs||[]).map(m=>({
       homeProfileId:toProfile(m.homeId),awayProfileId:toProfile(m.awayId),homeName:m.homeName,awayName:m.awayName,
       homeGoals:m.homeGoals,awayGoals:m.awayGoals,homeScorers:m.homeScorers,awayScorers:m.awayScorers,
@@ -875,7 +876,7 @@ function roomPublic(room,viewerId){
     simulationEngine:room.simulationEngine||'classic',
     matchStyles:room.simulationEngine==='match_beta'?Object.fromEntries(Object.entries(MATCH.STYLE).map(([id,s])=>[id,s.label])):null,
     tacticPreview:room.phase==='team_build'&&room.simulationEngine==='match_beta'?privateTacticalPreview(room,viewerId):null,
-    tacticalReveals:ratingsVisible&&room.simulationEngine==='match_beta'&&room.matchProfiles?Object.fromEntries([...room.matchProfiles.entries()].map(([id,v])=>[id,{style:v.style,styleLabel:v.styleLabel,styleFit:Math.round(v.styleFit*10)/10,impact:matchStyleImpact(v),roles:Object.fromEntries(Object.entries(v.picks).map(([role,d])=>[role,{name:d.player.name}]))}])):null,
+    tacticalReveals:ratingsVisible&&room.simulationEngine==='match_beta'&&room.matchProfiles?Object.fromEntries([...room.matchProfiles.entries()].map(([id,v])=>[id,{style:v.style,styleLabel:v.styleLabel,ratings:MATCH.tacticalSuitabilityLabels(v.assessment,v.selection),roles:Object.fromEntries(Object.entries(v.picks).map(([role,d])=>[role,{name:d.player.name}]))}])):null,
     modeLabels: MODE_LABELS,
     priorityVisibility: room.priorityVisibility||'visible',
     pack: room.pack,
@@ -1321,16 +1322,10 @@ function privateTacticalPreview(room,viewerId){
     // Do not reveal numerical suitability scores, hidden player ratings,
     // traits, or an identified optimal alternative during team building.
     const safeOptions=Object.fromEntries(Object.entries(roleOptions).map(([role,list])=>[role,list.map(({id,name,slot})=>({id,name,slot}))]));
-    return {options:safeOptions,indicators:MATCH.tacticalChoiceIndicators(assessment,m.tactics||{})};
+    return {options:safeOptions,indicators:MATCH.tacticalSuitabilityLabels(assessment,m.tactics||{})};
   }catch{return null;}
 }
-function matchStyleImpact(prepared){
-  const baseline=MATCH.prepare(prepared.assessment,{style:'balanced',...prepared.selection,style:'balanced'});
-  const pct=(x,y)=>Math.round(1000*(x/y-1))/10;
-  return {chanceCountPct:pct(prepared.chanceCount,baseline.chanceCount),
-    chanceQualityPct:pct(prepared.chanceQuality,baseline.chanceQuality),
-    defensiveExposurePct:pct(prepared.exposure,baseline.exposure)};
-}
+
 function teamsForSimulation(room){
   return [...room.managers.values()].map(m=>({id:m.id,name:m.name,assessment:room.teamAssessments.get(m.id),
     ...(room.simulationEngine==='match_beta'?{matchProfile:room.matchProfiles.get(m.id)}:{})}));
@@ -1339,7 +1334,7 @@ function runSelectedEngine(room){
   const teams=teamsForSimulation(room);
   if(room.simulationEngine!=='match_beta')return simulateCompetition(teams);
   const out=simulateCompetition(teams,{matchFn:MATCH.simulateMatch});
-  out.betaVersion='MATCH-V7-v16.1';
+  out.betaVersion='MATCH-V7-v16.2';
   return out;
 }
 function buildTeamAssessments(room){
@@ -1894,7 +1889,7 @@ io.on('connection', socket=>{
     const room=rooms.get(socket.data.room);
     if(!room||room.phase!=='lobby'||!socketIsHost(room,socket))return cb?.({ok:false,error:'Only the host can select the engine in the lobby.'});
     if(!['classic','match_beta'].includes(engine))return cb?.({ok:false,error:'Invalid simulation engine.'});
-    room.simulationEngine=engine;room.saveToHistory=engine==='classic';
+    room.simulationEngine=engine;room.saveToHistory=true;
     for(const m of room.managers.values())m.ready=false;
     cb?.({ok:true});emitState(room);
   });
@@ -1902,7 +1897,6 @@ io.on('connection', socket=>{
   socket.on('setSaveToHistory', ({save},cb)=>{
     const room=rooms.get(socket.data.room);
     if(!room||room.phase!=='lobby'||!socketIsHost(room,socket))return cb?.({ok:false,error:'Only the host can change this before the draft starts.'});
-    if(room.simulationEngine==='match_beta')return cb?.({ok:false,error:'MATCH Beta is unranked and cannot be saved to permanent Records.'});
     room.saveToHistory=save!==false;cb?.({ok:true});emitState(room);
   });
 
@@ -2151,12 +2145,11 @@ io.on('connection', socket=>{
     if(!room||room.phase!=='reveal'||!socketIsHost(room,socket)||!room.teamAssessments||room.simulationStarting)return;
     room.simulationStarting=true;
     room.simulation=runSelectedEngine(room);room.officialSimulation=room.simulation;room.simulationKind='official';room.exhibitionNumber=0;room.simulationRevealCount=0;
-    if(room.simulationEngine==='classic')recordSessionCompetition(room,room.simulation);room.phase='results';
-    if(room.simulationEngine==='match_beta'){room.historySaveStatus='practice';room.historySaveMessage='MATCH Beta · experimental and unranked. Permanent Records and Classic session statistics are unchanged.';}
-    else if(room.saveToHistory===false){room.historySaveStatus='practice';room.historySaveMessage='Practice game — this official simulation will not affect permanent leaderboards.';}
+    recordSessionCompetition(room,room.simulation);room.phase='results';
+    if(room.saveToHistory===false){room.historySaveStatus='practice';room.historySaveMessage='Practice game — this official simulation will not affect permanent leaderboards.';}
     else{room.historySaveStatus='saving';room.historySaveMessage='Saving official season to All-Time Records…';}
     emitState(room);
-    const saveResult=room.simulationEngine==='match_beta'?{status:'practice',message:'MATCH Beta · experimental and unranked. Permanent Records and Classic session statistics are unchanged.'}:await saveOfficialCompetition(room,room.simulation);
+    const saveResult=await saveOfficialCompetition(room,room.simulation);
     room.historySaveStatus=saveResult.status;room.historySaveMessage=saveResult.message;room.simulationStarting=false;
     cb?.({ok:true,historySaveStatus:saveResult.status});emitState(room);
   });
@@ -2185,7 +2178,7 @@ io.on('connection', socket=>{
 
   socket.on('exportMatchBetaAudit', ({code}={},cb)=>{
     const room=rooms.get(socket.data.room),m=managerForSocket(room,socket);
-    if(!room||!m||room.phase!=='results'||room.simulationEngine!=='match_beta'||!room.officialSimulation)return cb?.({ok:false,error:'No completed MATCH Beta season to export.'});
+    if(!room||!m||room.phase!=='results'||room.simulationEngine!=='match_beta'||!room.officialSimulation)return cb?.({ok:false,error:'No completed Project MATCH season to export.'});
     if(!ADMIN_CODE)return cb?.({ok:false,error:'Developer audit is unavailable: ADMIN_CODE has not been configured.'});
     // Security is enforced on the server on every request, not via a hidden
     // button, cached browser token, or the Records admin screen's session flag.
@@ -2199,7 +2192,7 @@ io.on('connection', socket=>{
     }
     attempts.count=0;socket.data.matchAuditAuthAttempts=attempts;
     const sim=room.officialSimulation;
-    const file={engine:'match_beta',betaVersion:sim.betaVersion,pack:room.pack,auctionMode:room.mode,
+    const file={engine:'match_beta',engineVersion:sim.betaVersion,betaVersion:sim.betaVersion,pack:room.pack,auctionMode:room.mode,
       players:[...room.managers.values()].map(manager=>({manager:manager.name,formation:manager.finalFormation||manager.formation,
         lineup:manager.lineup.map((id,i)=>({slot:(isFreeformLike(room.mode)?FREEFORM_FORMATIONS[manager.finalFormation]:HARD_FORMATIONS[manager.formation])[i],playerId:id,playerName:manager.squad.find(p=>p.id===id)?.name})),
         tactics:room.matchProfiles.get(manager.id).selection,
@@ -2212,7 +2205,7 @@ io.on('connection', socket=>{
   socket.on('playAgain', (_,cb)=>{
     const room=rooms.get(socket.data.room);if(!room||!['finished','reveal','results'].includes(room.phase)||!socketIsHost(room,socket))return;
     clearInterval(room.timer);room.timer=null;room.phase='lobby';room.pool=[];room.initialPoolSize=0;room.auctionIndex=0;room.shownCount=0;room.current=null;room.paused=false;
-    room.teamAssessments=null;room.matchProfiles=null;room.simulation=null;room.officialSimulation=null;room.simulationKind='official';room.exhibitionNumber=0;room.simulationRevealCount=0;room.draftHistory=[];room.historySaveStatus=null;room.historySaveMessage=null;room.officialCompetitionId=null;room.simulationStarting=false;room.saveToHistory=room.simulationEngine!=='match_beta';
+    room.teamAssessments=null;room.matchProfiles=null;room.simulation=null;room.officialSimulation=null;room.simulationKind='official';room.exhibitionNumber=0;room.simulationRevealCount=0;room.draftHistory=[];room.historySaveStatus=null;room.historySaveMessage=null;room.officialCompetitionId=null;room.simulationStarting=false;room.saveToHistory=true;
     room.nominationAvailableIds=new Set();room.nominationOrder=[];room.nominationCursor=-1;room.nominationNominatorId=null;room.nominationTimeLeft=null;room.nominationFinalPickManagerId=null;
     for(const m of room.managers.values()){resetManagerForDraft(m);m.ready=false;if(room.mode!=='hard')m.formation=null;}
     cb?.({ok:true});emitState(room);
