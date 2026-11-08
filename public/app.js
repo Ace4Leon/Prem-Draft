@@ -150,6 +150,12 @@ function setVisualTheme(next){
   visualTheme=next==='immersive'?'immersive':'classic';
   try{localStorage.setItem(VISUAL_THEME_KEY,visualTheme)}catch{}
   applyVisualTheme();
+  // Only Home and Lobby use distinct Immersive markup. Preserve the v16.2
+  // in-session state, room identity and Classic views in all other phases.
+  if(!viewingRecords && (!state || state.phase==='lobby')){
+    render();
+    return;
+  }
   const button=document.querySelector('#themeToggle');
   if(button){
     button.textContent=themeButtonLabel();
@@ -287,7 +293,180 @@ function refreshRecordsStatus(){
   });
 }
 
+// v16.3 candidate: Phase 1 and Phase 2 Clean UI, opt-in via each browser's
+// existing Immersive preference. The Classic v16.2 views remain unchanged.
+// Lobby actions always use the current v16.2 server state and socket events.
+function phase12Shell(which){
+  applyVisualTheme();
+  const template=which==='home'?PHASE12_HOME_TEMPLATE:PHASE12_LOBBY_TEMPLATE;
+  const themed=template.replace(`<div class="phased-ui phased-${which}">`,`<div class="phased-ui phased-${which}">${PHASE12_ICONS}`);
+  app.innerHTML=`<div class="wrap phased-wrap">${themed}</div>`;
+  const themeToggle=document.getElementById('themeToggle');
+  if(themeToggle){themeToggle.textContent='◐ Immersive';themeToggle.title='Switch to Classic';themeToggle.setAttribute('aria-label','Switch to Classic');}
+  wireThemeToggle();
+}
+function phase12Launch(kind,name,code){
+  ensurePermanentProfile(name||'Manager',profileNow=>{
+    const payload={name,profileCode:profileNow?.recoveryCode||null};
+    if(kind==='create')socket.emit('createRoom',payload,r=>{
+      if(!r?.ok)return showToast(r?.error||'Could not create room');
+      meId=r.managerId||r.state?.viewerId;saveSession(r.code,r.reconnectToken,meId);
+      history.replaceState({},'',`?room=${r.code}`);state=r.state;render();showRecoveryOnboardingIfNeeded();
+    });
+    else{
+      payload.code=cleanRoomCodeInput(code);
+      socket.emit('joinRoom',payload,r=>{
+        if(!r?.ok)return showToast(r?.error||'Could not join room');
+        meId=r.managerId||r.state?.viewerId;saveSession(r.state.code,r.reconnectToken,meId);
+        state=r.state;history.replaceState({},'',`?room=${state.code}`);render();showRecoveryOnboardingIfNeeded();
+      });
+    }
+  });
+}
+function phase12Home(){
+  viewingRecords=false;
+  phase12Shell('home');
+  const $=id=>document.getElementById(id);
+  const profile=savedProfile(),savedRoom=readSavedSession(),invite=cleanRoomCodeInput(q('room')||'');
+  const returning=!!profile?.recoveryCode;
+  $('topProfileName').textContent=returning?(profile.defaultName||'Manager'):'Manager profile';
+  $('managerName').textContent=returning?(profile.defaultName||'Manager'):'No profile yet';
+  $('managerTag').textContent=returning?'Permanent manager':'First-time visitor';
+  $('managerDescription').textContent=returning?'Saved across games and Records.':'Created automatically when you join your first game.';
+  $('managerAvatar').classList.toggle('guest',!returning);
+  $('profileActionText').textContent=returning?'Edit default manager name':'Recover existing profile';
+  $('profileSecondary').hidden=!returning;
+  $('managerCode').hidden=true;
+  $('profileFooterText').textContent=returning?'Profile stored on this browser':'Permanent Records supported';
+  $('inviteBanner').hidden=!invite;
+  if(invite){$('inviteCode').textContent=invite;$('joinTile').style.borderColor='#c2e09a';}
+  $('resumeCard').hidden=!savedRoom?.room||!!invite;
+  if(savedRoom?.room){const h=$('resumeCard').querySelector('h3');if(h)h.textContent=`Room ${savedRoom.room}`;}
+  $('howCard').hidden=false;
+  const footer=$('profileFooterText').parentNode;
+  footer.insertAdjacentHTML('afterend',recordsConnectionHtml());refreshRecordsStatus();
+  $('profileAction').onclick=()=>returning?editDefaultProfileName():recoverProfileFlow();
+  $('profileSecondary').onclick=()=>{
+    if(!returning)return;
+    const shown=!$('managerCode').hidden;
+    $('managerCode').hidden=shown;
+    $('codeValue').textContent=shown?'':String(profile.recoveryCode);
+    $('profileSecondary').textContent=shown?'Show recovery code':'Hide recovery code';
+  };
+  $('hideCode').onclick=()=>{$('managerCode').hidden=true;$('profileSecondary').textContent='Show recovery code';};
+  $('topProfile').onclick=()=>{$('topProfile').setAttribute('aria-expanded','true');document.querySelector('.phased-ui .profile-card')?.scrollIntoView({behavior:'smooth',block:'center'});};
+  $('recordsTile').onclick=openRecords;
+  const resume=$('resumeButton');if(resume)resume.onclick=()=>resumeSavedRoom(true);
+  function closeDialog(){ $('phase12Overlay').hidden=true; }
+  function openDialog(kind){
+    const overlay=$('phase12Overlay'),dialogTitle=$('phase12DialogTitle'),dialogBody=$('phase12DialogBody');
+    $('phase12DialogKicker').textContent=kind==='create'?'HOST A ROOM':'ENTER A ROOM';
+    dialogTitle.textContent=kind==='create'?'Create game':'Join game';
+    dialogBody.innerHTML=`<p>${kind==='create'?'Set your name and create a new auction room.':'Enter your name and the room code from your invitation.'}</p><form id="phase12RoomForm"><label class="phase12-form-label" for="phase12RoomName">Name for this room</label><input class="phase12-form-input" id="phase12RoomName" maxlength="20" autocomplete="off" placeholder="Your name" value="${esc(profile?.defaultName||'')}">${kind==='join'?`<label class="phase12-form-label" for="phase12RoomCode">Room code</label><input class="phase12-form-input" id="phase12RoomCode" maxlength="6" value="${esc(invite)}" placeholder="e.g. K7XP2M" required>`:''}<p class="phase12-inline-note">Your permanent manager profile and history remain separate from this room name.</p><button type="submit" class="phase12-submit">${kind==='create'?'Create game':'Join game'}</button></form>`;
+    overlay.hidden=false;
+    if(kind==='join')wireRoomCodeInput($('phase12RoomCode'));
+    $('phase12RoomForm').onsubmit=e=>{
+      e.preventDefault();
+      const name=$('phase12RoomName').value.trim();
+      if(!name)return showToast('Please enter a manager name.');
+      const code=kind==='join'?cleanRoomCodeInput($('phase12RoomCode').value):'';
+      if(kind==='join'&&!code)return showToast('Please enter a room code.');
+      // Use the same production socket events and profile creation logic as Classic.
+      closeDialog();phase12Launch(kind,name,code);
+    };
+    $('phase12RoomName').focus();
+  }
+  $('createTile').onclick=()=>openDialog('create');
+  $('joinTile').onclick=()=>openDialog('join');
+  $('phase12DialogClose').onclick=closeDialog;
+  $('phase12Overlay').onclick=e=>{if(e.target===$('phase12Overlay'))closeDialog();};
+}
+let phase12SetupExpanded=null;
+function phase12Lobby(){
+  const m=me();if(!m)return;
+  const host=state.hostId===meId,managers=state.managers||[];
+  const $=id=>document.getElementById(id);
+  phase12Shell('lobby');
+  $('identityText').textContent=m.displayName||m.name||'Manager';
+  $('codeDisplay').textContent=state.code||'—';
+  const total=managers.length,readyCount=managers.filter(x=>x.ready).length;
+  const allReady=total>=2&&readyCount===total;
+  $('managerCount').textContent=`${readyCount} of ${total} ready`;
+  $('managerSummary').textContent=total<2?'Invite another manager.':allReady?'Everyone ready.':`${total-readyCount} still to ready up.`;
+  document.querySelector('.phased-lobby').dataset.hard=String(state.mode==='hard');
+  $('rosterMeter').innerHTML=managers.map(x=>`<span class="meter-bit ${x.ready?'filled':''}"></span>`).join('');
+  $('rosterBottom').textContent='Everyone must be ready to start.';
+  $('viewRoleCaption').textContent=host?'HOST VIEW':'MANAGER VIEW';
+  const modeLabel=state.modeLabels?.[state.mode]||({'hard':'Hard Mode (Legacy)'}[state.mode]||'Auction');
+  const packLabel=state.packLabels?.[state.pack]||'Current Premier League';
+  const modeDesc={freeform:'Draft any 11 players in an open auction, then build your XI.',nomination:'Managers nominate players for auction before bidding.',blind:'Every player is a sealed bid. Opponent bids stay secret until the auction ends.',priority:'Up to 14 rounds, with 3 optional skips per manager. Bid on each board of players.',hard:'Legacy mode: choose your formation before the auction.'};
+  $('managerList').innerHTML=managers.map(x=>{
+    const isMe=x.id===meId,connected=x.connected!==false;
+    return `<div class="manager-row ${isMe?'is-you':''} ${connected?'':'offline'}"><div class="manager-left"><span class="manager-portrait" style="border-color:${esc(x.color||'#658f65')}"><svg class="icon mini" aria-hidden="true"><use href="#i-user"></use></svg></span><div class="manager-details"><b>${esc(x.displayName||x.name||'Manager')}${x.id===state.hostId?' <span class="host-mark">HOST</span>':''}${isMe?' <span class="host-mark">YOU</span>':''}</b><small>${state.mode==='hard'?esc(x.formation||'No formation'):''}</small></div></div><div class="manager-right"><span class="status-badge ${!connected?'offline':x.ready?'yes':''}"><span class="status-dot"></span>${connected?(x.ready?'READY':'WAITING'):'OFFLINE'}</span>${host&&!isMe?`<button type="button" class="remove-button phase12-remove-manager" data-manager="${esc(x.id)}" aria-label="Remove ${esc(x.displayName||x.name||'manager')}">×</button>`:''}</div></div>`;
+  }).join('');
+  $('zoneTitle').textContent=m.ready?"You're ready":'Ready to draft?';
+  $('zoneSummary').textContent=m.ready?'Ready':'Not ready';
+  $('readyButton').classList.toggle('is-ready',!!m.ready);
+  $('readyButton').textContent=m.ready?'Undo ready':'Mark as ready';
+  $('readyNote').textContent='Game setup changes may reset readiness.';
+  if(state.mode==='hard'){
+    $('hardFormationSlot').innerHTML=`<label class="phase12-form-label" for="formation">Your formation (legacy mode)</label><select class="control-select" id="formation"><option value="">Choose formation</option>${HARD_FORMATIONS.map(f=>`<option value="${f}" ${m.formation===f?'selected':''}>${f}</option>`).join('')}</select>`;
+    $('formation').onchange=e=>socket.emit('setFormation',{formation:e.target.value});
+    $('readyButton').disabled=!m.formation;
+  }
+  $('readyButton').onclick=()=>socket.emit('setReady',{ready:!m.ready},r=>{if(r&&!r.ok)showToast(r.error)});
+  $('setupHeading').textContent='Game settings';
+  $('setupCaption').textContent=host?'Host controls':'View only';
+  const selectedVisibility=state.priorityVisibility||'visible';
+  const priorityHtml=state.mode==='priority'?`<div class="setting-line"><span class="field-title">Priority Bid visibility</span>${host?`<div class="visibility-choices"><button class="visibility-btn ${selectedVisibility==='visible'?'selected':''} priority-visibility" data-visibility="visible" type="button">◉ Visible</button><button class="visibility-btn ${selectedVisibility==='hidden'?'selected':''} priority-visibility" data-visibility="hidden" type="button">◉ Hidden</button></div>`:`<div class="summary-value">${selectedVisibility==='visible'?'Visible':'Hidden'}</div>`}<p class="setting-help">${selectedVisibility==='hidden'?"Opponent bids, squads, budgets, winners and prices stay hidden during the draft.":"Opponent squads and budgets are visible during the draft."}</p></div>`:'';
+  const officialChecked=state.saveToHistory!==false;
+  if(host){
+    const modes=Object.entries(state.modeLabels||{}).filter(([k])=>k!=='hard');
+    const modeOptions=(state.mode==='hard'?'<option value="hard" selected disabled>Hard Mode (Legacy)</option>':'')+modes.map(([k,label])=>`<option value="${esc(k)}" ${state.mode===k?'selected':''}>${esc(label)}</option>`).join('');
+    const packOptions=Object.entries(state.packLabels||{}).map(([k,label])=>`<option value="${esc(k)}" ${state.pack===k?'selected':''}>${esc(label)} (${state.packCounts?.[k]||0} players)</option>`).join('');
+    $('setupContent').innerHTML=`<div class="setting-rows"><div class="setting-line"><label for="mode">Game mode</label><div class="select-holder"><select class="control-select" id="mode">${modeOptions}</select></div><p class="setting-help">${esc(modeDesc[state.mode]||'')}</p></div><div class="setting-line"><label for="simulationEngine">Simulation engine</label><div class="select-holder"><select class="control-select" id="simulationEngine"><option value="classic" ${state.simulationEngine!=='match_beta'?'selected':''}>Classic</option><option value="match_beta" ${state.simulationEngine==='match_beta'?'selected':''}>Project MATCH</option></select></div><p class="setting-help">${state.simulationEngine==='match_beta'?'Competitive player-driven chances with tactics and roles.':'Original match simulation.'}</p></div><div class="setting-line"><label for="pack">Player pack</label><div class="select-holder"><select class="control-select" id="pack">${packOptions}</select></div></div>${priorityHtml}<div class="setting-divider"></div><label class="official-row"><input id="saveToHistory" type="checkbox" ${officialChecked?'checked':''}><div><b>Save to All-Time Records</b><span>${officialChecked?'Official game · counts towards permanent records.':'Practice / unranked · no changes to permanent leaderboards.'}</span></div></label><details class="legacy-mode-box"><summary>Legacy mode options</summary><button type="button" class="small-cta" id="legacyHard">Use Hard Mode (Legacy)</button></details></div>`;
+    $('mode').onchange=e=>socket.emit('setMode',{mode:e.target.value},r=>{if(r&&!r.ok)showToast(r.error)});
+    $('pack').onchange=e=>socket.emit('setPack',{pack:e.target.value},r=>{if(r&&!r.ok)showToast(r.error)});
+    $('simulationEngine').onchange=e=>socket.emit('setSimulationEngine',{engine:e.target.value},r=>{if(r&&!r.ok)showToast(r.error)});
+    $('saveToHistory').onchange=e=>socket.emit('setSaveToHistory',{save:e.target.checked},r=>{if(r&&!r.ok)showToast(r.error)});
+    $('legacyHard').onclick=()=>socket.emit('setMode',{mode:'hard'});
+    document.querySelectorAll('.phased-ui .priority-visibility').forEach(b=>b.onclick=()=>socket.emit('setPriorityVisibility',{visibility:b.dataset.visibility},r=>{if(r&&!r.ok)showToast(r.error)}));
+  }else{
+    $('setupContent').innerHTML=`<div class="summary-row"><span class="summary-label">Game mode</span><span class="summary-value">${esc(modeLabel)}</span></div><div class="summary-row"><span class="summary-label">Simulation</span><span class="summary-value">${state.simulationEngine==='match_beta'?'Project MATCH':'Classic'}</span></div><div class="summary-row"><span class="summary-label">Player pack</span><span class="summary-value">${esc(packLabel)}</span></div>${state.mode==='priority'?`<div class="summary-row"><span class="summary-label">Visibility</span><span class="summary-value">${selectedVisibility==='hidden'?'Hidden':'Visible'}</span></div>`:''}<div class="summary-row"><span class="summary-label">Records</span><span class="summary-value">${officialChecked?'Official game':'Practice / unranked'}</span></div><p class="setting-help">${esc(modeDesc[state.mode]||'')}</p>`;
+  }
+  // One glanceable line of setup information; the detailed editor is optional.
+  const shortPackLabel=packLabel.replace(/\s*\([^)]*\)/g,'').replace('Current Premier League','Current Prem');
+  const gameDetails=`${esc(modeLabel)} · ${esc(shortPackLabel)} · ${state.simulationEngine==='match_beta'?'Project MATCH':'Classic'} · ${officialChecked?'Official':'Practice'}${state.mode==='priority'?` · ${selectedVisibility==='hidden'?'Hidden':'Visible'}`:''}`;
+  $('launchArea').innerHTML=host
+    ? `<div class="launch-top"><strong>Auction</strong><span>${readyCount}/${total} ready</span></div><button class="launch-btn" id="start" ${allReady?'':'disabled'}>Start auction</button>${!allReady?`<p class="launch-hint">${total<2?'Invite at least one more manager.':'Waiting for everyone to ready up.'}</p>`:''}`
+    : `<div class="launch-top"><strong>${m.ready?'Waiting for host':'Waiting for players'}</strong><span>${readyCount}/${total} ready</span></div>`;
+  $('launchArea').insertAdjacentHTML('beforeend',`<div class="lobby-quick-settings" title="${gameDetails}">${gameDetails}</div><button type="button" class="review-settings-link" id="reviewSettings">${host?'Edit':'View'} game settings <span aria-hidden="true">›</span></button>`);
+  const setupDisclosure=$('setupDisclosure');
+  setupDisclosure.open=phase12SetupExpanded===null?false:phase12SetupExpanded;
+  setupDisclosure.addEventListener('toggle',()=>{phase12SetupExpanded=setupDisclosure.open});
+  $('reviewSettings').onclick=()=>{setupDisclosure.open=true;phase12SetupExpanded=true;$('setupPanel').scrollIntoView({behavior:'smooth',block:'start'});};
+  const start=$('start');if(start)start.onclick=()=>{firstSessionRecoveryCode=null;socket.emit('startDraft',{},r=>{if(r&&!r.ok)showToast(r.error)})};
+  const first=firstSessionRecoveryCode&&savedProfile()?.recoveryCode===firstSessionRecoveryCode;
+  if(first){const alert=document.createElement('div');alert.className='notice-strip';alert.innerHTML=`<b>NEW MANAGER PROFILE · RECOVERY CODE: ${esc(firstSessionRecoveryCode)}</b><p>Save your code to recover records from another device.</p>`;document.querySelector('.phased-ui .room-banner')?.after(alert);}
+  $('copyCode').onclick=async()=>{try{await navigator.clipboard.writeText(String(state.code));showToast('Room code copied')}catch{showToast(`Room code: ${state.code}`)}};
+  $('copyLink').onclick=async()=>{try{await navigator.clipboard.writeText(location.href);showToast('Invite link copied')}catch{showToast('Copy the page address from your browser')}};
+  $('identityButton').onclick=()=>showToast(`Playing as ${m.displayName||m.name||'Manager'}`);
+  $('recordsButton').onclick=openRecords;
+  $('leaveButton').onclick=()=>socket.emit('leaveLobby',{},r=>{
+    if(!r?.ok)return showToast(r?.error||'Could not leave the lobby');
+    clearSavedSession();state=null;meId=null;firstSessionRecoveryCode=null;
+    history.replaceState({},'',location.pathname);home();
+  });
+  document.querySelectorAll('.phase12-remove-manager').forEach(b=>b.onclick=()=>{
+    const target=managers.find(x=>x.id===b.dataset.manager);
+    if(!confirm(`Remove ${target?.displayName||target?.name||'this manager'} from the lobby? They can rejoin later.`))return;
+    socket.emit('removeLobbyManager',{managerId:b.dataset.manager},r=>{if(!r?.ok)showToast(r?.error||'Could not remove manager')});
+  });
+}
+
+
 function home(){
+  if(visualTheme==='immersive' && !viewingRecords){phase12Home();return;}
   viewingRecords=false;
   const code=q('room')||'';
   const profile=savedProfile();
@@ -699,6 +878,7 @@ function recordsScreen(){
 }
 
 function lobby(){
+  if(visualTheme==='immersive'){phase12Lobby();return;}
   const m=me(),host=state.hostId===meId;
   const packOptions=Object.entries(state.packLabels||{}).map(([key,label])=>`<option value="${key}" ${state.pack===key?'selected':''}>${esc(label)} (${state.packCounts?.[key]||0} players)</option>`).join('');
   const mainModeEntries=Object.entries(state.modeLabels||{}).filter(([key])=>key!=='hard');
